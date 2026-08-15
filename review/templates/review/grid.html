@@ -38,7 +38,16 @@
   .tile[data-cls="none"] polygon.mask { fill:none; stroke:#ff8f97; }
   line.base { stroke:var(--base); stroke-width:2.5; vector-effect:non-scaling-stroke; }
   .tile[data-partial="1"] line.base { stroke:#ff6b6b; stroke-dasharray:6 4; }
-  circle.h { fill:var(--base); stroke:#000; stroke-width:1.5; cursor:grab; }
+  /* **집히는 범위는 보이는 점보다 넓다.** 640 뷰박스가 190px 타일로 줄어드니
+     배율이 0.29 다 — 뷰박스 r 은 화면에서 그 만큼으로 보인다. 보이는 점(r 11 →
+     화면 3px)은 격자를 안 어지럽히는 크기로 두고, 투명한 원(r 34 → 화면 10px)
+     으로 집는 자리만 넓힌다. 둘을 갈라 놓지 않으면 점을 키우는 수밖에 없고,
+     그러면 점이 밑동을 가려 정작 어디에 찍는지가 안 보인다. */
+  g.h { cursor:grab; }
+  g.h circle.hit { fill:transparent; stroke:none; pointer-events:all; }
+  g.h circle.dot { fill:var(--base); stroke:#000; stroke-width:1.5;
+                   vector-effect:non-scaling-stroke; pointer-events:none; }
+  g.h:active circle.dot { fill:#fff; }
   .lab { position:absolute; left:5px; top:5px; padding:1px 7px; border-radius:5px;
          font-size:11px; font-weight:700; background:#000b; }
   .edg { position:absolute; right:5px; top:5px; padding:1px 7px; border-radius:5px;
@@ -60,6 +69,11 @@
                   margin-left:8px; }
   .rule ul { margin:7px 0 2px; padding-left:20px; color:#d9cba9; }
   .rule li { margin:3px 0; }
+  /* 손 안 댄 묶음을 Enter 로 넘기려 할 때 뜬다. 규칙줄과 색을 달리해 눈에 걸리게
+     한다 — 이것을 못 보고 지나가면 기본값 24장이 판정으로 들어간다 */
+  .warn { flex-basis:100%; background:#2a1416; border:1px solid #5c2a2f;
+          border-left:3px solid var(--none); border-radius:6px;
+          padding:6px 11px; font-size:13px; color:#ffc9cd; }
 </style>
 
 <header>
@@ -71,7 +85,9 @@
     <kbd>5</kbd>아님 · <kbd>e</kbd>날 <kbd>x</kbd>교정필요 <kbd>p</kbd>아래경계불완전
     · 점을 끌면 밑동 · <kbd>Enter</kbd> 저장
   </span>
-  <button class="primary" onclick="save()">저장하고 다음 (Enter)</button>
+  <button class="primary" onclick="save(true)">저장하고 다음 (Enter)</button>
+
+  <div class="warn" id="warn" hidden></div>
 
   <div class="rule">
     {{ rule }}
@@ -93,12 +109,32 @@ const EDGES   = {{ edges|safe }};
 const CLS_KO = Object.fromEntries(CLASSES), EDG_KO = Object.fromEntries(EDGES);
 const CLS_KEYS = CLASSES.map(c => c[0]), EDG_KEYS = EDGES.map(e => e[0]);
 let tiles = [], hover = null;
+// **이 묶음에 손을 댔나.** 아무것도 안 건드린 묶음을 Enter 로 저장하면 기본값
+// 24장이 사람의 판정인 척 들어간다 — 실제로 그렇게 24장이 들어간 적이 있다.
+let touched = false;
+// 마우스가 마지막으로 있던 자리. 격자를 새로 그린 뒤 hover 를 되찾는 데 쓴다
+const ptr = {x: -1, y: -1};
+addEventListener("pointermove", e => { ptr.x = e.clientX; ptr.y = e.clientY; },
+                 {passive: true});
 
 const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+
+function setHover(d) {
+  hover = d || null;
+  document.querySelectorAll(".tile.sel").forEach(x => x.classList.remove("sel"));
+  if (hover) hover.classList.add("sel");
+}
+
+function warn(msg) {
+  const el = document.getElementById("warn");
+  el.textContent = msg || "";
+  el.hidden = !msg;
+}
 
 async function load() {
   const r = await fetch("/api/batch?n=24").then(r => r.json());
   tiles = r.tiles;
+  touched = false; warn("");
   const g = document.getElementById("grid");
   g.innerHTML = "";
   const empty = document.getElementById("empty");
@@ -116,18 +152,23 @@ async function load() {
        <svg viewBox="0 0 ${t.size} ${t.size}" preserveAspectRatio="none">
          <polygon class="mask"></polygon>
          <line class="base"></line>
-         <circle class="h" data-i="0" r="9"></circle>
-         <circle class="h" data-i="1" r="9"></circle>
+         <g class="h" data-i="0"><circle class="hit" r="34"></circle>
+                                 <circle class="dot" r="11"></circle></g>
+         <g class="h" data-i="1"><circle class="hit" r="34"></circle>
+                                 <circle class="dot" r="11"></circle></g>
        </svg>
        <span class="lab"></span><span class="edg"></span>
        ${t.hint ? `<span class="hint">${t.hint}</span>` : ""}
        ${t.conf != null ? `<span class="conf">${t.conf.toFixed(2)}</span>` : ""}`;
-    d.onmouseenter = () => { hover = d; document.querySelectorAll(".tile.sel")
-      .forEach(x => x.classList.remove("sel")); d.classList.add("sel"); };
+    d.onmouseenter = () => setHover(d);
     g.appendChild(d);
     draw(d, t);
     drag(d, t);
   }
+  // **격자를 새로 그렸으니 hover 를 되찾는다.** 안 하면 hover 가 사라진 옛 타일을
+  // 가리킨 채로 남아, 마우스를 움직이기 전까지 모든 키가 조용히 죽는다 —
+  // mouseenter 는 마우스가 실제로 움직여야 다시 나기 때문이다.
+  setHover(document.elementFromPoint(ptr.x, ptr.y)?.closest(".tile"));
   stat();
 }
 
@@ -162,9 +203,11 @@ function draw(d, t) {
   line.style.display = isFin ? "" : "none";
   line.setAttribute("x1", a[0]); line.setAttribute("y1", a[1]);
   line.setAttribute("x2", b[0]); line.setAttribute("y2", b[1]);
-  svg.querySelectorAll("circle.h").forEach((c, i) => {
-    c.style.display = isFin ? "" : "none";
-    c.setAttribute("cx", t.base[i][0]); c.setAttribute("cy", t.base[i][1]);
+  // 자리는 <g> 를 옮겨서 준다 — 안의 두 원(보이는 점·집히는 범위)이 늘 같이 간다
+  svg.querySelectorAll("g.h").forEach(h => {
+    const i = +h.dataset.i;
+    h.style.display = isFin ? "" : "none";
+    h.setAttribute("transform", `translate(${t.base[i][0]},${t.base[i][1]})`);
   });
   d.querySelector(".lab").textContent =
     d.dataset.cls === "fin" ? "" : CLS_KO[d.dataset.cls];
@@ -179,12 +222,13 @@ function drag(d, t) {
     return [(ev.clientX - r.left) / r.width * t.size,
             (ev.clientY - r.top) / r.height * t.size];
   };
-  svg.querySelectorAll("circle.h").forEach(c => {
-    c.onpointerdown = ev => {
-      ev.preventDefault(); c.setPointerCapture(ev.pointerId);
-      const i = +c.dataset.i;
-      const move = e => { t.base[i] = at(e); t.base_moved = true; draw(d, t); };
-      const up = e => { c.releasePointerCapture(ev.pointerId);
+  svg.querySelectorAll("g.h").forEach(h => {
+    h.onpointerdown = ev => {
+      ev.preventDefault(); h.setPointerCapture(ev.pointerId);
+      const i = +h.dataset.i;
+      const move = e => { t.base[i] = at(e); t.base_moved = true; touched = true;
+                          draw(d, t); };
+      const up = e => { h.releasePointerCapture(ev.pointerId);
                         svg.removeEventListener("pointermove", move);
                         svg.removeEventListener("pointerup", up);
                         // 밑동을 옮긴 것은 그 자체로 '교정함' 이다
@@ -202,23 +246,35 @@ function cycle(d, t, key, list) {
 }
 
 addEventListener("keydown", e => {
-  if (e.key === "Enter") { e.preventDefault(); return save(); }
+  if (e.key === "Enter") { e.preventDefault(); return save(false); }
+  // **되묻는 데 Enter 를 쓰지 않는다.** Enter 가 사고의 원인인데 그것으로 확인을
+  // 받으면 두 번째 Enter 가 곧바로 확인이 되어 아무것도 막지 못한다
+  if (e.key === "y" && !touched) { e.preventDefault(); return save(true); }
   if (!hover) return;
   const t = tiles.find(x => x.box_id == hover.dataset.box);
   if (!t) return;
   const n = "12345".indexOf(e.key);
-  if (n >= 0) { hover.dataset.cls = CLS_KEYS[n]; draw(hover, t); }
-  else if (e.key === "e") cycle(hover, t, "edges", EDG_KEYS);
+  if (n >= 0) { hover.dataset.cls = CLS_KEYS[n]; touched = true; draw(hover, t); }
+  else if (e.key === "e") { cycle(hover, t, "edges", EDG_KEYS); touched = true; }
   else if (e.key === "x") {
     hover.dataset.verdict = hover.dataset.verdict === "fix" ? "ok" : "fix";
+    touched = true;
   } else if (e.key === "p") {
     hover.dataset.partial = hover.dataset.partial === "1" ? "0" : "1";
-    draw(hover, t);
+    touched = true; draw(hover, t);
   }
+  if (touched) warn("");
 });
 
-async function save() {
+async function save(force) {
   if (!tiles.length) return;
+  // **손 안 댄 묶음은 Enter 로 안 넘어간다.** 기본값이 맞는 묶음도 있을 수 있어
+  // 막지는 않지만, 한 번 더 뜻을 물어야 지나간다 — 저장 단추나 y.
+  if (!touched && !force) {
+    warn(`이 ${tiles.length}장은 아무것도 안 건드렸다. 기본값(등지느러미·양날·통과·`
+       + `상자 모서리 밑동) 그대로 저장된다 — 정말이면 y 또는 저장 단추.`);
+    return;
+  }
   const items = tiles.map(t => {
     const d = document.querySelector(`.tile[data-box="${t.box_id}"]`);
     return { box_id: t.box_id, mask_id: t.mask_id, cls: d.dataset.cls,
