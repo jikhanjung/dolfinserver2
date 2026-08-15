@@ -37,12 +37,18 @@
 
 ## 구조
 
+Django 5.2 + SQLite. **파이프라인은 전부 management command 다** — 스키마의
+주인을 ORM 하나로 두려고 `sqlite3` 직접 + FastAPI 에서 옮겼다 (`devlog/…_001` 5절).
+
 ```
-finseg/db.py       fin.db 스키마. 판정이 왜 여러 축인지 여기 적혀 있다
-finseg/rules.py    **판정 규칙 한 곳.** 검토 UI 와 내보내기가 같은 함수를 부른다
+finseg/models.py   스키마. 판정이 왜 네 축인지 여기 적혀 있다
+finseg/rules.py    **판정 규칙 한 곳.** 검토 화면과 내보내기가 같은 함수를 부른다
+finseg/geometry.py 폴리곤 표기와 **원본↔크롭 사상 — 이 식은 여기 둘뿐이다**
 finseg/baseline.py 아래 경계(밑동 현). **자동 탐지 실패 기록이 여기 있다**
-finseg/import_boxes.py · crops.py · segment.py · export_yolo.py · train.py · infer.py · eval.py
-finseg/review/     격자 검토 — 기본값으로 두고 예외만 누른다
+finseg/management/commands/  import_boxes · crops · segment · export_yolo ·
+                             train · infer · eval_masks
+finweb/            Django 프로젝트 (settings · urls). 자료 경로는 settings 에 있다
+review/            격자 검토 앱 — 기본값으로 두고 예외만 누른다
 ```
 
 ## 명령
@@ -51,14 +57,17 @@ finseg/review/     격자 검토 — 기본값으로 두고 예외만 누른다
 pip install -r requirements.txt                            # 검토·자료 준비
 pip install -r requirements.txt -r requirements-gpu.txt    # 2080ti
 
-python -m finseg.import_boxes --dry-run     # 표본을 먼저 눈으로 본다
-python -m finseg.import_boxes
-python -m finseg.crops
-python -m finseg.segment                                   # [GPU]
-uvicorn finseg.review.app:app --host 0.0.0.0 --port 8900
-python -m finseg.export_yolo --out datasets/v1
-python -m finseg.train --data datasets/v1                  # [GPU]
-python -m finseg.eval --runs <sam2> <yolo> --date <val_date>
+python manage.py migrate
+python manage.py import_boxes --dry-run     # 표본을 먼저 눈으로 본다
+python manage.py import_boxes
+python manage.py crops
+python manage.py segment                                   # [GPU]
+python manage.py runserver 0.0.0.0:8900                    # 검토
+python manage.py export_yolo --out datasets/v1
+python manage.py train --data datasets/v1                  # [GPU]
+python manage.py eval_masks --runs <sam2> <yolo> --date <val_date>
+
+python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fin.db 를 안 건드린다)
 ```
 
 ## 자주 빠지는 함정
@@ -68,11 +77,12 @@ python -m finseg.eval --runs <sam2> <yolo> --date <val_date>
 - **`fin.db` 를 두 기계에서 함께 열지 않는다.** 형제 프로젝트가 그것으로
   프레임 229장을 잃었다. 운영 자리는 2080ti 한 곳이다
 - **2080ti 는 Turing(sm_75) 이라 bf16 이 없다.** AMP 는 fp16 이어야 한다
-  (`segment.py:autocast_dtype()`)
+  (`finseg/management/commands/segment.py:autocast_dtype()`)
 - **성적은 `val` 이 아니라 `val_date` 로 읽는다.** `val` 만 좋으면 그 날의
   바다 상태를 외운 것이다
-- **`CREATE TABLE IF NOT EXISTS` 는 있는 표를 고치지 않는다.** 칸을 더할 때는
-  `db.migrate()` 에도 적는다
+- **모델을 고치면 `makemigrations` 를 함께 커밋한다.** 마이그레이션은 사람의
+  판정이 든 `fin.db` 위에서 돌고, 그것은 다시 만들 수 없다 — 지우거나 좁히는
+  변경은 백업을 먼저 뜬다
 - **재현율에는 늘 한정이 붙는다** — "옛 YOLOv5 상자 범위 안에서". 그 검출기가
   못 본 지느러미는 이 루프 안에서 표시할 방법이 없다
 

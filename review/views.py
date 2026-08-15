@@ -14,11 +14,14 @@ SAM2 는 그 안의 것 하나를 딸 뿐이라, 사람이 하는 일은 틀린 
 것이 곧 학습 자료여야 하기 때문이다.
 """
 import json
+import re
 
 from django.conf import settings
 from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.utils.html import escape
+from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_GET, require_POST
 
 from finseg import baseline, geometry, rules
@@ -68,10 +71,20 @@ def _tile(state, crop):
     }
 
 
+def _emph(s):
+    """`**굵게**` 만 알아듣는다. 규칙 문구를 파이썬 쪽에 두려고 쓴다."""
+    return mark_safe(re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escape(s)))
+
+
 def index(request):
+    # **규칙은 화면에 늘 떠 있어야 한다.** 밑동 현이라는 것을 화면이 말하지
+    # 않으면 검토가 스스로와 어긋나고, 어긋난 검토는 나중에 되살릴 수 없다.
+    # 문구는 `finseg.baseline` 에 있다 — 규칙을 고치면 화면이 따라온다.
     return render(request, "review/grid.html", {
         "classes": json.dumps(CLASSES, ensure_ascii=False),
         "edges": json.dumps(EDGES, ensure_ascii=False),
+        "rule": _emph(baseline.RULE),
+        "rule_points": [_emph(p) for p in baseline.RULE_POINTS],
     })
 
 

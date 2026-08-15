@@ -8,8 +8,12 @@
 #   --index-url https://download.pytorch.org/whl/cpu
 #
 # **2080ti 는 Turing(sm_75) 이라 bf16 이 없다.** AMP 는 fp16 이어야 한다 —
-# 그 판단은 segment.py 의 autocast_dtype() 에 들어 있다.
+# 그 판단은 finseg/management/commands/segment.py 의 autocast_dtype() 에 있다.
+# `torch.cuda.is_bf16_supported()` 는 2080ti 에서도 True 를 낸다(에뮬레이션).
+# 그래서 그것을 묻지 않고 **연산능력을 직접 본다.**
 torch
 torchvision
-sam2 @ git+https://github.com/facebookresearch/sam2.git
 ultralytics
+# 이름을 `sam2 @ ...` 로 적으면 안 된다. 저장소의 메타데이터 이름이 `sam-2` 라
+# pip 가 이름이 어긋난다며 거절한다 (실제로 그렇게 막혔다).
+sam-2 @ git+https://github.com/facebookresearch/sam2.git

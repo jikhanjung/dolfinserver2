@@ -25,3 +25,6 @@ venv/
 
 # 형제 devdocs 클론으로 가는 링크 — 이 저장소에는 커밋하지 않는다
 .guides
+# 저장소 안에 잘못 클론된 devdocs. 자리는 `..` 이고 링크는 `.guides` 다.
+# 지우기 전까지 `git add -A` 에 딸려 들어가지 않게 막아 둔다
+devdocs/

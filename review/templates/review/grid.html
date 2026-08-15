@@ -4,7 +4,7 @@
 <style>
   :root { --bg:#12161c; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
           --fin:#3fb27f; --fluke:#4aa3ff; --rostrum:#c88bff; --other:#e0a63f;
-          --none:#e05561; --fix:#ffb300; }
+          --none:#e05561; --fix:#ffb300; --base:#ffe23c; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:14px/1.5 system-ui,'Noto Sans KR',sans-serif; }
@@ -36,9 +36,9 @@
   polygon.mask { fill:rgba(63,178,127,.20); stroke:#4dffb0; stroke-width:2.5;
                  vector-effect:non-scaling-stroke; }
   .tile[data-cls="none"] polygon.mask { fill:none; stroke:#ff8f97; }
-  line.base { stroke:#ffe23c; stroke-width:2.5; vector-effect:non-scaling-stroke; }
+  line.base { stroke:var(--base); stroke-width:2.5; vector-effect:non-scaling-stroke; }
   .tile[data-partial="1"] line.base { stroke:#ff6b6b; stroke-dasharray:6 4; }
-  circle.h { fill:#ffe23c; stroke:#000; stroke-width:1.5; cursor:grab; }
+  circle.h { fill:var(--base); stroke:#000; stroke-width:1.5; cursor:grab; }
   .lab { position:absolute; left:5px; top:5px; padding:1px 7px; border-radius:5px;
          font-size:11px; font-weight:700; background:#000b; }
   .edg { position:absolute; right:5px; top:5px; padding:1px 7px; border-radius:5px;
@@ -49,6 +49,17 @@
   .conf { position:absolute; right:5px; bottom:5px; font-size:10px; color:#cfd8e3;
           background:#000b; padding:1px 6px; border-radius:5px; }
   #empty { padding:48px 16px; color:var(--dim); }
+  /* **규칙은 늘 떠 있는다.** 화면이 밑동 현이라고 말하지 않으면 검토가
+     스스로와 어긋난다 — 문구는 finseg/baseline.py 에 있다 */
+  .rule { flex-basis:100%; background:#1b1710; border:1px solid #3a2f14;
+          border-left:3px solid var(--base); border-radius:6px;
+          padding:6px 11px; font-size:13px; color:#f0dcae; }
+  .rule b { color:var(--base); }
+  .rule details { display:inline; }
+  .rule summary { display:inline; cursor:pointer; color:var(--dim);
+                  margin-left:8px; }
+  .rule ul { margin:7px 0 2px; padding-left:20px; color:#d9cba9; }
+  .rule li { margin:3px 0; }
 </style>
 
 <header>
@@ -61,6 +72,16 @@
     · 점을 끌면 밑동 · <kbd>Enter</kbd> 저장
   </span>
   <button class="primary" onclick="save()">저장하고 다음 (Enter)</button>
+
+  <div class="rule">
+    {{ rule }}
+    <details>
+      <summary>자세히</summary>
+      <ul>
+        {% for p in rule_points %}<li>{{ p }}</li>{% endfor %}
+      </ul>
+    </details>
+  </div>
 </header>
 
 <div id="grid"></div>
