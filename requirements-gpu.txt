@@ -1,0 +1,15 @@
+# 2080ti 에서만 — SAM2.1 추론과 YOLO 학습
+#
+#   pip install -r requirements.txt -r requirements-gpu.txt
+#
+# torch 는 드라이버에 맞는 판을 골라야 한다. CUDA 12.1 이면
+#   --extra-index-url https://download.pytorch.org/whl/cu121
+# CPU 로 시험만 할 때는
+#   --index-url https://download.pytorch.org/whl/cpu
+#
+# **2080ti 는 Turing(sm_75) 이라 bf16 이 없다.** AMP 는 fp16 이어야 한다 —
+# 그 판단은 segment.py 의 autocast_dtype() 에 들어 있다.
+torch
+torchvision
+sam2 @ git+https://github.com/facebookresearch/sam2.git
+ultralytics
