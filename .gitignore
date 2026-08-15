@@ -1,0 +1,24 @@
+# 원본 자료 — 저장소 밖에 둔다
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+
+# 학습 자료·가중치·산출물
+datasets/
+runs/
+weights/
+*.pt
+*.onnx
+crops/
+out/
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 환경
+.env
