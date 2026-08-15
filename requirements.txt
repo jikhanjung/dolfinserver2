@@ -1,8 +1,6 @@
 # 검토 UI 와 자료 준비 — GPU 가 없어도 되는 쪽
-# (import_boxes · crops · review · export_yolo)
+# (import_boxes · crops · export_yolo · 검토 웹)
+Django==5.2
 pillow
 numpy
 opencv-python-headless
-fastapi
-uvicorn
-jinja2

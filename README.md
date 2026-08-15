@@ -40,6 +40,19 @@ DiaRUGA 는 SAM2 AMG(프롬프트 없는 자동 분할)로 시작해 재현율 5
 하나. SAM2.1 의 인터페이스(상자 넣으면 마스크가 나온다)와 같은 모양이라, 학습한
 모델을 SAM2.1 자리에 그대로 끼울 수 있다. 검출기 자체의 교체는 별개의 일로 둔다.
 
+## 아래 경계 — 밑동 현
+
+**위 윤곽은 실제 경계를 따라간다. 아래는 앞·뒤 삽입점을 잇는 직선으로 자른다.**
+photo-ID 에서 쓰는 fin base chord 와 같고, 점 두 개면 결정되므로 사람이 고칠 때도
+끄는 것이 둘뿐이다.
+
+삽입점을 마스크 기하만으로 찾으려다 두 번 실패했다. **뒷날은 기울기가 등과 같은
+크기라 문턱으로 갈리지 않는다** — 근거는 `finseg/baseline.py` 와
+`devlog/…_001` 3절. 그래서 사람이 찍고, 300장쯤 쌓이면 키포인트 모델로 제안한다.
+
+삽입점이 물에 잠겨 안 보이면 `base_partial` 로 표시한다 — 학습에는 그대로 쓰되
+형태 계측에서는 뺀다. 표본에서 **절반은 한쪽이 안 보였다.**
+
 ## 규칙
 
 DiaRUGA 가 값을 치르고 얻은 것을 그대로 가져온다.
@@ -57,37 +70,36 @@ DiaRUGA 가 값을 치르고 얻은 것을 그대로 가져온다.
 
 ## 구성
 
+Django 5.2 + SQLite. 파이프라인은 전부 management command 다.
+
 ```
-import_boxes → crops → segment(SAM2.1) → review → export_yolo → train → infer
-                 ↑                                                        │
-                 └────────────────── 다음 바퀴 ───────────────────────────┘
+import_boxes → crops → segment(SAM2.1) → 검토 → export_yolo → train → infer
+                 ↑                                                      │
+                 └───────────────── 다음 바퀴 ─────────────────────────┘
 ```
 
 | | |
 |---|---|
-| `finseg/db.py` | `fin.db` 스키마. **판정을 상자와 마스크로 나눈 이유**가 여기 적혀 있다 |
-| `finseg/rules.py` | **판정 규칙 한 곳.** 검토 UI 와 내보내기가 같은 함수를 부른다 |
-| `finseg/import_boxes.py` | 옛 `db.sqlite3` → 관찰일 층화 표본 (읽기 전용으로만 연다) |
-| `finseg/crops.py` | 상자마다 정사각형 640 크롭. **원본↔크롭 사상도 여기 둘뿐이다** |
-| `finseg/segment.py` | SAM2.1 박스 프롬프트 → 후보 마스크 **[GPU]** |
-| `finseg/review/` | 격자 검토 — 기본 통과, 누르는 것이 예외 |
-| `finseg/export_yolo.py` | 확정 마스크 → YOLO-seg 꾸러미 + `MANIFEST.json` |
-| `finseg/train.py` | 학습. **증강 선택의 근거가 표로 적혀 있다** **[GPU]** |
-| `finseg/infer.py` | 학습한 모델 → 후보 마스크. SAM2.1 자리에 그대로 낀다 **[GPU]** |
-| `finseg/eval.py` | 두 엔진에 같은 자를 댄다 |
+| `finseg/models.py` | 스키마. **판정이 왜 네 축인지** 여기 적혀 있다 |
+| `finseg/rules.py` | **판정 규칙 한 곳.** 검토 화면과 내보내기가 같은 함수를 부른다 |
+| `finseg/geometry.py` | 폴리곤 표기와 **원본↔크롭 사상 — 이 식은 여기 둘뿐이다** |
+| `finseg/baseline.py` | 아래 경계(밑동 현). **자동 탐지 실패 기록이 여기 있다** |
+| `finseg/management/commands/` | import_boxes · crops · segment · export_yolo · train · infer · eval_masks |
+| `review/` | 격자 검토 — 기본값으로 두고 예외만 누른다 |
 
 ```bash
-pip install -r requirements.txt                    # 검토·자료 준비
-pip install -r requirements.txt -r requirements-gpu.txt   # 2080ti
+pip install -r requirements.txt                          # 검토·자료 준비
+pip install -r requirements.txt -r requirements-gpu.txt  # 2080ti
 
-python -m finseg.import_boxes --dry-run
-python -m finseg.import_boxes
-python -m finseg.crops
-python -m finseg.segment                           # [GPU]
-uvicorn finseg.review.app:app --host 0.0.0.0 --port 8900
-python -m finseg.export_yolo --out datasets/v1
-python -m finseg.train --data datasets/v1          # [GPU]
-python -m finseg.eval --runs <sam2> <yolo> --date <val_date>
+python manage.py migrate
+python manage.py import_boxes --dry-run    # 표본을 먼저 눈으로 본다
+python manage.py import_boxes
+python manage.py crops
+python manage.py segment                                 # [GPU]
+python manage.py runserver 0.0.0.0:8900                  # 검토
+python manage.py export_yolo --out datasets/v1
+python manage.py train --data datasets/v1                # [GPU]
+python manage.py eval_masks --runs <sam2> <yolo> --date <val_date>
 ```
 
 ## 자료

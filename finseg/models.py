@@ -1,0 +1,206 @@
+"""`fin.db` 의 스키마.
+
+**원본은 이 데이터베이스다.** 사진도 가중치도 학습 자료도 다시 만들 수 있지만
+사람의 판정은 못 만든다.
+
+## 판정이 여러 축인 이유
+
+한 칸에 예/아니오 하나가 아니라 축이 넷이다. 각각 **아래로 흘러가는 곳이
+다르기 때문**이고, 하나로 뭉치면 나중에 되살릴 수 없다.
+
+| 축 | 값 | 어디에 쓰나 |
+|---|---|---|
+| `cls` | fin · fluke · rostrum · other · none | 학습의 분류. `none` 만 배경이다 |
+| `verdict` | ok · fix | 마스크 윤곽이 맞나 |
+| `edges` | both · leading · trailing · neither | **re-ID.** 어느 날로 매칭할 수 있나 |
+| `base_line`·`base_partial` | 두 점 · 참/거짓 | 아래 경계. 형태 계측을 낼 수 있나 |
+
+**꼬리지느러미를 배경으로 두지 않는 이유**가 여기 있다. 물 위의 검은 삼각형이라
+등지느러미와 실루엣이 거의 같은데, 배경으로 가르치면 모델이 "이 삼각형은 아니다"
+라는 날카로운 결정을 배워야 한다. 명시적 분류로 주면 훨씬 쉽게 배운다 —
+시각적으로 가까운 어려운 음성은 배경보다 별도 분류가 낫다.
+
+`edges` 는 **지금 안 적어 두면 re-ID 갈 때 전부 다시 검토해야 하는 것**이다.
+photo-ID 는 주로 뒷날의 결각으로 개체를 가리므로, 뒷날만 보이는 지느러미는
+여전히 쓸모가 있고 앞날만 보이는 것은 값어치가 훨씬 떨어진다.
+
+## 판정을 상자와 마스크로 나눈 이유
+
+형제 프로젝트는 판정이 하나였다 — 자동 분할이 개체와 마스크를 함께 냈으니
+"이것이 대상인가" 와 "이 마스크가 맞는가" 를 가를 이유가 없었다. 여기는 상자가
+먼저 있고 마스크가 뒤에 붙으므로 두 판단이 갈린다.
+
+- **`cls='none'`** — 상자 안에 아무것도 없다. 옛 YOLOv5 의 오검출이다.
+  **엔진을 갈아도 유효하다**
+- **`verdict='fix'`** — 대상은 맞는데 마스크가 틀렸다. **엔진에 딸린 판정**이라
+  분할기를 바꾸면 다시 받아야 한다
+
+## 여러 사람이 볼 것을 전제로 한다
+
+`Review` 는 **덮어쓰지 않고 쌓인다.** 한 상자에 여러 사람의 판정이 붙을 수 있고
+같은 사람이 고쳐 매길 수도 있다. 무엇이 유효한지 고르는 규칙은 `rules.py`
+하나에만 있다 — 지금은 "사람마다 최신, 그 뒤 합의" 이고, 사람이 늘면 그 함수만
+바꾼다.
+"""
+from django.conf import settings
+from django.db import models
+
+# 기본값이 맨 앞이다 — 검토는 **누르지 않으면 등지느러미·양날 온전·통과**다.
+CLASSES = [
+    ("fin", "등지느러미"),
+    ("fluke", "꼬리지느러미"),
+    ("rostrum", "주둥이"),
+    ("other", "기타"),
+    ("none", "아무것도아님"),
+]
+EDGES = [
+    ("both", "양날"),
+    ("leading", "앞날만"),
+    ("trailing", "뒷날만"),
+    ("neither", "둘 다 가림"),
+]
+VERDICTS = [("ok", "통과"), ("fix", "교정 필요")]
+RUN_KINDS = [("import", "들이기"), ("crop", "크롭"), ("sam2", "SAM2.1"),
+             ("yolo", "YOLO"), ("export", "내보내기"), ("train", "학습")]
+
+
+class Image(models.Model):
+    """사진 한 장. 화소는 저장소 밖(NAS)에 있고 여기는 경로만 든다."""
+    src_id = models.IntegerField(unique=True, null=True,
+                                 help_text="옛 dolfinrest_dolfinimage.id")
+    path = models.CharField(max_length=300, unique=True,
+                            help_text="사진 뿌리 기준 상대경로")
+    obsdate = models.DateField(null=True, db_index=True)
+    exifdatetime = models.DateTimeField(null=True, blank=True)
+    width = models.IntegerField(null=True)
+    height = models.IntegerField(null=True)
+
+    class Meta:
+        ordering = ["obsdate", "path"]
+
+    def __str__(self):
+        return self.path
+
+
+class Box(models.Model):
+    """SAM2 에 넣을 프롬프트 상자. 지금은 옛 YOLOv5 가 낸 것이다."""
+    src_id = models.IntegerField(unique=True, null=True,
+                                 help_text="옛 dolfinrest_dolfinbox.id")
+    image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="boxes")
+    x1 = models.IntegerField()
+    y1 = models.IntegerField()
+    x2 = models.IntegerField()
+    y2 = models.IntegerField()
+    area = models.IntegerField(null=True)
+    source = models.CharField(max_length=30, default="yolov5")
+    # 옛 DB 에 이미 붙어 있던 것. **버리지 않고 들고 온다** — 개체명은 re-ID 의
+    # 씨앗이고, 시민과학자가 남긴 표시는 공짜로 얻는 어려운 음성이다.
+    boxname = models.CharField(max_length=100, blank=True, default="",
+                               db_index=True, help_text="JTA### 개체명")
+    src_not_fin = models.BooleanField(default=False)
+    src_not_identifiable = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["id"]
+
+    @property
+    def box(self):
+        return self.x1, self.y1, self.x2, self.y2
+
+
+class Crop(models.Model):
+    """원본에서 잘라 낸 자리. 마스크 좌표를 원본으로 되돌리는 데 쓴다.
+
+    사진 가장자리에서는 정사각형이 못 되므로 **실제 잘린 사각형**을 그대로 적는다.
+    """
+    box = models.OneToOneField(Box, on_delete=models.CASCADE, related_name="crop")
+    path = models.CharField(max_length=300, help_text="크롭 뿌리 기준 상대경로")
+    x0 = models.IntegerField()
+    y0 = models.IntegerField()
+    x1 = models.IntegerField()
+    y1 = models.IntegerField()
+    w = models.IntegerField()
+    h = models.IntegerField()
+
+    @property
+    def scale(self):
+        """크롭 한 변 / 원본에서 잘린 한 변."""
+        return self.w / (self.x1 - self.x0)
+
+
+class Run(models.Model):
+    """무엇이 언제 무엇으로 돌았나. 마스크는 반드시 하나에 매인다.
+
+    **어떤 코드가 만든 자료인지 나중에 반드시 묻게 된다.**
+    """
+    kind = models.CharField(max_length=20, choices=RUN_KINDS, db_index=True)
+    model = models.CharField(max_length=300, blank=True, default="",
+                             help_text="모델 id 또는 가중치 경로")
+    git_sha = models.CharField(max_length=40, blank=True, default="")
+    host = models.CharField(max_length=100, blank=True, default="")
+    params = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    note = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"run {self.id} {self.kind}"
+
+
+class Mask(models.Model):
+    """후보 마스크. **덮어쓰지 않고 쌓는다** — 엔진을 갈아도 같은 상자 위에서
+    나란히 견줄 수 있어야 한다.
+
+    폴리곤은 **원본 화소 좌표**다. 크롭 좌표로 두면 크롭 여유(`--pad`)를 바꾸는
+    순간 저장된 것이 전부 뜻을 잃는다.
+
+    아래를 자를 직선은 **마스크를 잘라서 저장하지 않고 따로 든다** — 삽입점을
+    정하는 규칙을 고쳐도 SAM2 가 낸 것을 잃지 않고, 사람이 고칠 것도 점 두 개로
+    끝난다.
+    """
+    box = models.ForeignKey(Box, on_delete=models.CASCADE, related_name="masks")
+    run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="masks")
+    polygon = models.TextField(help_text='"x,y x,y ..." 원본 화소 좌표. 자르기 전')
+    area = models.IntegerField(null=True)
+    conf = models.FloatField(null=True)
+    base_line = models.TextField(blank=True, default="",
+                                 help_text='"x,y x,y" 앞·뒤 삽입점')
+    base_partial = models.BooleanField(default=False,
+                                       help_text="삽입점을 다 못 봤다")
+    is_current = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [models.Index(fields=["box", "is_current"])]
+
+
+class Review(models.Model):
+    """사람의 판정. **쌓인다** — 고쳐 매긴 자취가 남아야 하고, 여러 사람이
+    같은 상자를 볼 수 있다.
+
+    지운 것도 남는다 — 어려운 음성 표본이고 재현율의 분모다.
+    """
+    box = models.ForeignKey(Box, on_delete=models.CASCADE, related_name="reviews")
+    mask = models.ForeignKey(Mask, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="reviews")
+    cls = models.CharField(max_length=10, choices=CLASSES)
+    verdict = models.CharField(max_length=10, choices=VERDICTS, blank=True,
+                               default="", help_text="cls='none' 이면 빈 값")
+    edges = models.CharField(max_length=10, choices=EDGES, blank=True, default="")
+    polygon = models.TextField(blank=True, default="",
+                               help_text="위 윤곽 교정본. 없으면 마스크 그대로")
+    base_line = models.TextField(blank=True, default="",
+                                 help_text="아래 직선 교정본. 없으면 제안 그대로")
+    base_partial = models.BooleanField(null=True, blank=True,
+                                       help_text="사람의 판단. NULL 이면 제안 그대로")
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                                 null=True, blank=True, related_name="reviews")
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [models.Index(fields=["box", "-id"]),
+                   models.Index(fields=["reviewer", "-id"])]

@@ -1,0 +1,229 @@
+{% load static %}<!doctype html>
+<meta charset="utf-8">
+<title>finseg 검토</title>
+<style>
+  :root { --bg:#12161c; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
+          --fin:#3fb27f; --fluke:#4aa3ff; --rostrum:#c88bff; --other:#e0a63f;
+          --none:#e05561; --fix:#ffb300; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui,'Noto Sans KR',sans-serif; }
+  header { position:sticky; top:0; z-index:10; background:var(--bg);
+           border-bottom:1px solid var(--line); padding:9px 16px;
+           display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  .stat { color:var(--dim); font-size:13px; }
+  .stat b { color:var(--fg); }
+  button { background:#1d242e; color:var(--fg); border:1px solid var(--line);
+           border-radius:6px; padding:6px 13px; font:inherit; cursor:pointer; }
+  button.primary { background:var(--fin); border-color:var(--fin); color:#06120c;
+                   font-weight:600; }
+  kbd { background:#1d242e; border:1px solid var(--line); border-radius:4px;
+        padding:1px 6px; font-size:12px; }
+  #grid { display:grid; gap:10px; padding:14px;
+          grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
+  .tile { position:relative; border-radius:8px; overflow:hidden; aspect-ratio:1;
+          border:3px solid var(--fin); background:#000; cursor:crosshair; }
+  .tile.sel { outline:2px solid #fff; outline-offset:2px; }
+  .tile[data-cls="fluke"]   { border-color:var(--fluke); }
+  .tile[data-cls="rostrum"] { border-color:var(--rostrum); }
+  .tile[data-cls="other"]   { border-color:var(--other); }
+  .tile[data-cls="none"]    { border-color:var(--none); }
+  .tile[data-cls="none"] img, .tile[data-cls="none"] svg { opacity:.3; }
+  .tile[data-verdict="fix"] { box-shadow:inset 0 0 0 3px var(--fix); }
+  .tile img { width:100%; height:100%; display:block; }
+  .tile svg { position:absolute; inset:0; width:100%; height:100%; }
+  polygon.mask { fill:rgba(63,178,127,.20); stroke:#4dffb0; stroke-width:2.5;
+                 vector-effect:non-scaling-stroke; }
+  .tile[data-cls="none"] polygon.mask { fill:none; stroke:#ff8f97; }
+  line.base { stroke:#ffe23c; stroke-width:2.5; vector-effect:non-scaling-stroke; }
+  .tile[data-partial="1"] line.base { stroke:#ff6b6b; stroke-dasharray:6 4; }
+  circle.h { fill:#ffe23c; stroke:#000; stroke-width:1.5; cursor:grab; }
+  .lab { position:absolute; left:5px; top:5px; padding:1px 7px; border-radius:5px;
+         font-size:11px; font-weight:700; background:#000b; }
+  .edg { position:absolute; right:5px; top:5px; padding:1px 7px; border-radius:5px;
+         font-size:11px; background:#000b; color:#ffd479; }
+  .hint { position:absolute; left:5px; bottom:5px; font-size:10px; color:#cfd8e3;
+          background:#000b; padding:1px 6px; border-radius:5px; max-width:90%;
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .conf { position:absolute; right:5px; bottom:5px; font-size:10px; color:#cfd8e3;
+          background:#000b; padding:1px 6px; border-radius:5px; }
+  #empty { padding:48px 16px; color:var(--dim); }
+</style>
+
+<header>
+  <h1>finseg 검토</h1>
+  <span class="stat" id="stat">…</span>
+  <span style="flex:1"></span>
+  <span class="stat">
+    <kbd>1</kbd>등 <kbd>2</kbd>꼬리 <kbd>3</kbd>주둥이 <kbd>4</kbd>기타
+    <kbd>5</kbd>아님 · <kbd>e</kbd>날 <kbd>x</kbd>교정필요 <kbd>p</kbd>아래경계불완전
+    · 점을 끌면 밑동 · <kbd>Enter</kbd> 저장
+  </span>
+  <button class="primary" onclick="save()">저장하고 다음 (Enter)</button>
+</header>
+
+<div id="grid"></div>
+<div id="empty" hidden></div>
+
+<script>
+const CLASSES = {{ classes|safe }};        // [[key, 한글], …]
+const EDGES   = {{ edges|safe }};
+const CLS_KO = Object.fromEntries(CLASSES), EDG_KO = Object.fromEntries(EDGES);
+const CLS_KEYS = CLASSES.map(c => c[0]), EDG_KEYS = EDGES.map(e => e[0]);
+let tiles = [], hover = null;
+
+const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+
+async function load() {
+  const r = await fetch("/api/batch?n=24").then(r => r.json());
+  tiles = r.tiles;
+  const g = document.getElementById("grid");
+  g.innerHTML = "";
+  const empty = document.getElementById("empty");
+  empty.hidden = tiles.length > 0;
+  if (!tiles.length)
+    empty.textContent = "검토할 것이 없다. 마스크가 없으면 manage.py segment 를 먼저 돌릴 것.";
+  for (const t of tiles) {
+    const d = document.createElement("div");
+    d.className = "tile";
+    d.dataset.box = t.box_id;
+    d.dataset.cls = t.cls; d.dataset.edges = t.edges;
+    d.dataset.verdict = t.verdict; d.dataset.partial = t.base_partial ? "1" : "0";
+    d.innerHTML =
+      `<img src="${t.crop}" loading="lazy" alt="">
+       <svg viewBox="0 0 ${t.size} ${t.size}" preserveAspectRatio="none">
+         <polygon class="mask"></polygon>
+         <line class="base"></line>
+         <circle class="h" data-i="0" r="9"></circle>
+         <circle class="h" data-i="1" r="9"></circle>
+       </svg>
+       <span class="lab"></span><span class="edg"></span>
+       ${t.hint ? `<span class="hint">${t.hint}</span>` : ""}
+       ${t.conf != null ? `<span class="conf">${t.conf.toFixed(2)}</span>` : ""}`;
+    d.onmouseenter = () => { hover = d; document.querySelectorAll(".tile.sel")
+      .forEach(x => x.classList.remove("sel")); d.classList.add("sel"); };
+    g.appendChild(d);
+    draw(d, t);
+    drag(d, t);
+  }
+  stat();
+}
+
+// **자르기는 미리보기다.** 실제 자료는 서버가 래스터로 자른다(finseg.baseline);
+// 여기서는 반평면 클리핑으로 같은 모양을 대충 보여 준다.
+function clip(pts, a, b) {
+  if (!pts.length || !a || !b) return pts;
+  const side = p => (b[0]-a[0]) * (p[1]-a[1]) - (b[1]-a[1]) * (p[0]-a[0]);
+  const keep = p => side(p) <= 0;
+  const cross = (p, q) => {
+    const s1 = side(p), s2 = side(q), t = s1 / (s1 - s2);
+    return [p[0] + t*(q[0]-p[0]), p[1] + t*(q[1]-p[1])];
+  };
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i+1) % pts.length];
+    if (keep(p)) { out.push(p); if (!keep(q)) out.push(cross(p, q)); }
+    else if (keep(q)) out.push(cross(p, q));
+  }
+  return out.length >= 3 ? out : pts;
+}
+
+function draw(d, t) {
+  const svg = d.querySelector("svg");
+  const [a, b] = t.base;
+  // 밑동 현은 등지느러미에만 뜻이 있다 — 꼬리·주둥이에는 긋지 않는다
+  const isFin = d.dataset.cls === "fin";
+  const shown = isFin ? clip(t.points, a, b) : t.points;
+  svg.querySelector("polygon").setAttribute("points",
+    shown.map(p => p.join(",")).join(" "));
+  const line = svg.querySelector("line");
+  line.style.display = isFin ? "" : "none";
+  line.setAttribute("x1", a[0]); line.setAttribute("y1", a[1]);
+  line.setAttribute("x2", b[0]); line.setAttribute("y2", b[1]);
+  svg.querySelectorAll("circle.h").forEach((c, i) => {
+    c.style.display = isFin ? "" : "none";
+    c.setAttribute("cx", t.base[i][0]); c.setAttribute("cy", t.base[i][1]);
+  });
+  d.querySelector(".lab").textContent =
+    d.dataset.cls === "fin" ? "" : CLS_KO[d.dataset.cls];
+  d.querySelector(".edg").textContent =
+    d.dataset.edges === "both" ? "" : EDG_KO[d.dataset.edges];
+}
+
+function drag(d, t) {
+  const svg = d.querySelector("svg");
+  const at = ev => {
+    const r = svg.getBoundingClientRect();
+    return [(ev.clientX - r.left) / r.width * t.size,
+            (ev.clientY - r.top) / r.height * t.size];
+  };
+  svg.querySelectorAll("circle.h").forEach(c => {
+    c.onpointerdown = ev => {
+      ev.preventDefault(); c.setPointerCapture(ev.pointerId);
+      const i = +c.dataset.i;
+      const move = e => { t.base[i] = at(e); t.base_moved = true; draw(d, t); };
+      const up = e => { c.releasePointerCapture(ev.pointerId);
+                        svg.removeEventListener("pointermove", move);
+                        svg.removeEventListener("pointerup", up);
+                        // 밑동을 옮긴 것은 그 자체로 '교정함' 이다
+                        d.dataset.verdict = "fix"; };
+      svg.addEventListener("pointermove", move);
+      svg.addEventListener("pointerup", up);
+    };
+  });
+}
+
+function cycle(d, t, key, list) {
+  const i = list.indexOf(d.dataset[key]);
+  d.dataset[key] = list[(i + 1) % list.length];
+  draw(d, t);
+}
+
+addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); return save(); }
+  if (!hover) return;
+  const t = tiles.find(x => x.box_id == hover.dataset.box);
+  if (!t) return;
+  const n = "12345".indexOf(e.key);
+  if (n >= 0) { hover.dataset.cls = CLS_KEYS[n]; draw(hover, t); }
+  else if (e.key === "e") cycle(hover, t, "edges", EDG_KEYS);
+  else if (e.key === "x") {
+    hover.dataset.verdict = hover.dataset.verdict === "fix" ? "ok" : "fix";
+  } else if (e.key === "p") {
+    hover.dataset.partial = hover.dataset.partial === "1" ? "0" : "1";
+    draw(hover, t);
+  }
+});
+
+async function save() {
+  if (!tiles.length) return;
+  const items = tiles.map(t => {
+    const d = document.querySelector(`.tile[data-box="${t.box_id}"]`);
+    return { box_id: t.box_id, mask_id: t.mask_id, cls: d.dataset.cls,
+             edges: d.dataset.edges, verdict: d.dataset.verdict,
+             base_partial: d.dataset.partial === "1",
+             base: t.base, base_moved: !!t.base_moved };
+  });
+  const r = await fetch("/api/review", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
+    body: JSON.stringify({items}),
+  }).then(r => r.json());
+  if (r.error) { alert(r.error); return; }
+  load();
+}
+
+async function stat() {
+  const p = await fetch("/api/progress").then(r => r.json());
+  const el = document.getElementById("stat");
+  el.innerHTML = `<b>${(p["검토함"]||0).toLocaleString()}</b> / `
+    + `${(p["상자"]||0).toLocaleString()} 검토`
+    + ` · 양성 <b>${(p.positive||0).toLocaleString()}</b>`
+    + ` 배경 <b>${(p.background||0).toLocaleString()}</b>`
+    + (p.drop ? ` 뺌 <b>${p.drop.toLocaleString()}</b>` : "")
+    + (p["마스크없음"] ? ` · 마스크없음 ${p["마스크없음"].toLocaleString()}` : "");
+}
+
+load();
+</script>
