@@ -147,6 +147,38 @@ def close_neighbors(src, chosen, pad, margin, min_overlap=0.3):
     return out, added
 
 
+def dedup(chosen, iou_min=0.9):
+    """같은 사진 안에서 거의 겹치는 상자를 하나로 줄인다.
+
+    옛 DB 에 IoU 1.0 짜리 쌍이 남아 있다 (표본 2,318 개에 3쌍). 그냥 두면
+    **같은 크롭이 두 벌 생기고** 내보낼 때 한 지느러미에 폴리곤이 겹쳐 붙는다.
+    나란히 헤엄치는 개체는 IoU 가 0.3~0.5 라 문턱을 높게 잡아 살려 둔다.
+    """
+    by_img = {}
+    for item in chosen:
+        by_img.setdefault(item[0]["dolfin_image_id"], []).append(item)
+    out, removed = [], 0
+    for items in by_img.values():
+        keep = []
+        for r, bb, area in sorted(items, key=lambda t: t[0]["id"]):
+            hit = False
+            for kr, kbb, karea in keep:
+                ox = min(bb[2], kbb[2]) - max(bb[0], kbb[0])
+                oy = min(bb[3], kbb[3]) - max(bb[1], kbb[1])
+                if ox <= 0 or oy <= 0:
+                    continue
+                inter = ox * oy
+                if inter / (area + karea - inter) >= iou_min:
+                    hit = True
+                    break
+            if hit:
+                removed += 1
+            else:
+                keep.append((r, bb, area))
+        out.extend(keep)
+    return out, removed
+
+
 def spread(items, n):
     """정렬된 것에서 n 개를 고르게 집는다 (앞뒤 끝을 포함한다)."""
     if n >= len(items):
@@ -209,6 +241,10 @@ def main():
         chosen, added = close_neighbors(src, chosen, args.pad, args.margin)
         print(f"크롭에 들어오는 이웃 {added:,} 개를 함께 들인다 "
               f"→ 모두 {len(chosen):,} 개")
+
+    chosen, dropped = dedup(chosen)
+    if dropped:
+        print(f"거의 겹치는 중복 상자 {dropped:,} 개를 걸렀다 → {len(chosen):,} 개")
 
     if args.dry_run:
         print("\n관찰일별:")

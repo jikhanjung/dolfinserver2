@@ -57,15 +57,38 @@ DiaRUGA 가 값을 치르고 얻은 것을 그대로 가져온다.
 
 ## 구성
 
-*(작성 예정 — 아직 뼈대만 잡은 단계다)*
+```
+import_boxes → crops → segment(SAM2.1) → review → export_yolo → train → infer
+                 ↑                                                        │
+                 └────────────────── 다음 바퀴 ───────────────────────────┘
+```
 
 | | |
 |---|---|
-| `finseg/import_boxes.py` | 기존 `db.sqlite3` → 표본 추출 (읽기 전용으로만 연다) |
+| `finseg/db.py` | `fin.db` 스키마. **판정을 상자와 마스크로 나눈 이유**가 여기 적혀 있다 |
+| `finseg/rules.py` | **판정 규칙 한 곳.** 검토 UI 와 내보내기가 같은 함수를 부른다 |
+| `finseg/import_boxes.py` | 옛 `db.sqlite3` → 관찰일 층화 표본 (읽기 전용으로만 연다) |
+| `finseg/crops.py` | 상자마다 정사각형 640 크롭. **원본↔크롭 사상도 여기 둘뿐이다** |
 | `finseg/segment.py` | SAM2.1 박스 프롬프트 → 후보 마스크 **[GPU]** |
-| `finseg/review/` | 채택·거부·다시그리기 |
-| `finseg/export_yolo.py` | 확정 마스크 → YOLO-seg 자료 + `MANIFEST.json` |
-| `finseg/train.py` · `infer.py` · `eval.py` | 학습 · 추론 · 견주기 **[GPU]** |
+| `finseg/review/` | 격자 검토 — 기본 통과, 누르는 것이 예외 |
+| `finseg/export_yolo.py` | 확정 마스크 → YOLO-seg 꾸러미 + `MANIFEST.json` |
+| `finseg/train.py` | 학습. **증강 선택의 근거가 표로 적혀 있다** **[GPU]** |
+| `finseg/infer.py` | 학습한 모델 → 후보 마스크. SAM2.1 자리에 그대로 낀다 **[GPU]** |
+| `finseg/eval.py` | 두 엔진에 같은 자를 댄다 |
+
+```bash
+pip install -r requirements.txt                    # 검토·자료 준비
+pip install -r requirements.txt -r requirements-gpu.txt   # 2080ti
+
+python -m finseg.import_boxes --dry-run
+python -m finseg.import_boxes
+python -m finseg.crops
+python -m finseg.segment                           # [GPU]
+uvicorn finseg.review.app:app --host 0.0.0.0 --port 8900
+python -m finseg.export_yolo --out datasets/v1
+python -m finseg.train --data datasets/v1          # [GPU]
+python -m finseg.eval --runs <sam2> <yolo> --date <val_date>
+```
 
 ## 자료
 
