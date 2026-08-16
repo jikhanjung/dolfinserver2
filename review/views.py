@@ -18,10 +18,12 @@ import re
 
 from django.conf import settings
 from django.db import transaction
-from django.http import JsonResponse
-from django.shortcuts import render
+from django.db.models import Max
+from django.http import Http404, JsonResponse
+from django.shortcuts import get_object_or_404, render
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from finseg import baseline, geometry, rules
@@ -76,6 +78,11 @@ def _emph(s):
     return mark_safe(re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escape(s)))
 
 
+# **이 화면이 `csrftoken` 쿠키의 유일한 출처다.** 저장은 fetch 로 하므로 폼이
+# 없고, 폼이 없으니 `{% csrf_token %}` 도 없다 — 그러면 Django 는 쿠키를 낼 일이
+# 없고 `/api/review` 가 403 으로 막힌다. 한동안 됐던 것은 브라우저에 `/admin/`
+# 에서 받은 쿠키가 남아 있었기 때문이고, 그것이 지워지자 저장이 통째로 멈췄다.
+@ensure_csrf_cookie
 def index(request):
     # **규칙은 화면에 늘 떠 있어야 한다.** 밑동 현이라는 것을 화면이 말하지
     # 않으면 검토가 스스로와 어긋나고, 어긋난 검토는 나중에 되살릴 수 없다.
@@ -88,24 +95,76 @@ def index(request):
     })
 
 
+def _tiles_for(boxes):
+    """상자 목록 → 칸 목록. 크롭 없는 상자는 뺀다 (화면에 낼 것이 없다)."""
+    out = []
+    for box in boxes:
+        crop = getattr(box, "crop", None)
+        if crop is not None:
+            out.append(_tile(rules.resolve(box), crop))
+    return out
+
+
+def _reviewed_order():
+    """검토를 **마친 순서**대로 상자 번호. 앞이 먼저 본 것이다.
+
+    `Review` 는 쌓이므로 한 상자에 여러 건이 붙는다. **처음 본 때**로 자리를
+    잡는다 — 고쳐 매겼다고 순서가 바뀌면 "1페이지" 가 어제와 달라진다.
+    """
+    seen, order = set(), []
+    for box_id in (Review.objects.order_by("at", "id")
+                   .values_list("box_id", flat=True)):
+        if box_id not in seen:
+            seen.add(box_id)
+            order.append(box_id)
+    return order
+
+
 @require_GET
 def batch(request):
+    """`mode=todo` 는 아직 안 본 것을 앞에서부터, `mode=done` 은 **이미 본 것을
+    본 순서대로 페이지로** 낸다.
+
+    되짚어 보는 길이 있어야 하는 이유는 하나다 — **기준은 검토하면서 선다.**
+    첫 페이지를 매길 때의 기준과 열 번째 페이지의 기준이 같은지는 돌아가 봐야만
+    알 수 있고, 그것이 이 자료에서 가장 되살리기 어려운 것이다.
+    """
     n = min(int(request.GET.get("n", 24)), 100)
-    redo = request.GET.get("redo") == "1"
-    qs = (Box.objects.filter(masks__is_current=True)
-          .select_related("crop").prefetch_related("masks", "reviews")
-          .distinct().order_by("id"))
-    if not redo:
-        qs = qs.filter(reviews__isnull=True)
-    tiles = []
-    for box in qs[:n * 2]:
-        crop = getattr(box, "crop", None)
-        if crop is None:
-            continue
-        tiles.append(_tile(rules.resolve(box), crop))
-        if len(tiles) >= n:
-            break
-    return JsonResponse({"tiles": tiles})
+    page = max(int(request.GET.get("page", 1)), 1)
+    mode = request.GET.get("mode", "todo")
+    if mode not in ("todo", "done", "stuck"):
+        mode = "todo"
+    base = (Box.objects.filter(masks__is_current=True)
+            .select_related("crop").prefetch_related("masks", "reviews"))
+
+    if mode == "stuck":
+        # **고쳐야 한다고 해 놓고 안 고친 것.** 판정이 붙어 있어 `todo` 에 안
+        # 나오고, 자료로도 안 나간다 — 여기 말고는 다시 만날 길이 없다.
+        latest = (Review.objects.values("box_id")
+                  .annotate(mid=Max("id")).values_list("mid", flat=True))
+        ids = list(Review.objects.filter(
+            id__in=latest, verdict="fix", polygon="", base_line="")
+            .exclude(cls="none").exclude(cls="")
+            .order_by("at", "id").values_list("box_id", flat=True))
+        total = len(ids)
+        want = ids[(page - 1) * n:page * n]
+        by_id = {b.id: b for b in base.filter(id__in=want)}
+        tiles = _tiles_for([by_id[i] for i in want if i in by_id])
+    elif mode == "done":
+        order = _reviewed_order()
+        total = len(order)
+        want = order[(page - 1) * n:page * n]
+        by_id = {b.id: b for b in base.filter(id__in=want)}
+        tiles = _tiles_for([by_id[i] for i in want if i in by_id])
+    else:
+        qs = base.filter(reviews__isnull=True).distinct().order_by("id")
+        total = qs.count()
+        tiles = _tiles_for(qs[(page - 1) * n:(page - 1) * n + n * 2])[:n]
+
+    return JsonResponse({
+        "tiles": tiles, "mode": mode, "page": page, "total": total,
+        "pages": max((total + n - 1) // n, 1),
+    })
 
 
 @require_POST
@@ -134,8 +193,14 @@ def save(request):
             if verdict not in ("ok", "fix"):
                 return JsonResponse({"error": f"모르는 판정: {verdict}"}, status=400)
 
-        base_str = ""
+        base_str = poly_str = ""
         crop = crops.get(it["box_id"])
+        # **윗윤곽 교정본도 사람이 그린 것만 저장한다** — 밑동과 같은 규칙이다.
+        # 안 그리면 `mask.polygon` 이 그대로 쓰이고(`rules.resolve`), 그래야
+        # 나중에 마스크를 다시 뽑았을 때 옛 윤곽이 사람의 것인 척 남지 않는다.
+        if it.get("polygon_edited") and crop is not None \
+                and len(it.get("polygon") or []) >= 3:
+            poly_str = geometry.dumps(geometry.to_orig(it["polygon"], crop))
         # **사람이 끈 것만 저장한다.** 안 건드린 제안까지 적으면 나중에 제안
         # 규칙을 고쳐도 옛 제안이 사람의 판단인 척 남는다.
         if it.get("base_moved") and crop is not None and len(it.get("base") or []) == 2:
@@ -143,11 +208,60 @@ def save(request):
 
         Review.objects.create(
             box_id=it["box_id"], mask_id=it.get("mask_id"), cls=cls,
-            verdict=verdict, edges=edges, base_line=base_str,
+            verdict=verdict, edges=edges, base_line=base_str, polygon=poly_str,
             base_partial=bool(it.get("base_partial")),
             reviewer=request.user if request.user.is_authenticated else None)
         n += 1
     return JsonResponse({"saved": n, "progress": dict(rules.progress())})
+
+
+@require_GET
+def edit(request, box_id):
+    """윗윤곽 고치기 — **격자에서는 못 한다.** 190px 칸에서 꼭짓점을 집는 것은
+    밑동 점이 화면에서 2.6px 였던 것과 같은 문제다. 크게 띄우고 확대까지 되어야
+    비로소 고칠 수 있다.
+
+    격자와 같은 `_tile` 을 쓴다 — 화면에 보이는 것이 곧 저장될 것이어야 한다.
+    """
+    box = get_object_or_404(
+        Box.objects.select_related("crop").prefetch_related("masks", "reviews"),
+        pk=box_id)
+    crop = getattr(box, "crop", None)
+    if crop is None:
+        raise Http404("크롭이 없는 상자다")
+    return render(request, "review/edit.html", {
+        "tile": json.dumps(_tile(rules.resolve(box), crop), ensure_ascii=False),
+        "box": box, "img": box.image,
+        "classes": json.dumps(CLASSES, ensure_ascii=False),
+    })
+
+
+@require_GET
+def photo(request, box_id):
+    """원본 사진 한 장 — **크롭만 봐서는 못 가리는 것들이 있다.**
+
+    640 크롭은 상자 둘레를 `pad` 만큼만 담는다. 겹쳐 헤엄치는 무리에서 어느
+    지느러미가 어느 몸에 붙었는지, 물보라인지 뒷날인지는 **둘레를 봐야** 갈린다.
+    그래서 상자를 표시한 원본을 따로 띄운다 — 이 상자는 노랑, 같은 사진의 다른
+    상자는 흐리게. 어느 것을 보다 왔는지 잃지 않는다.
+
+    사진은 저장소 밖(`FIN_PHOTOS`)에 있고 NAS 가 안 붙어 있을 수 있다. **없으면
+    없다고 말한다** — 깨진 이미지 아이콘은 왜 안 뜨는지 말해 주지 않는다.
+    """
+    box = get_object_or_404(Box.objects.select_related("image"), pk=box_id)
+    img = box.image
+    src = settings.FIN_PHOTOS / img.path
+    rect = lambda b: {"id": b.id, "x1": b.x1, "y1": b.y1, "x2": b.x2, "y2": b.y2}
+    others = [rect(b) for b in Box.objects.filter(image=img).exclude(pk=box.pk)]
+    return render(request, "review/photo.html", {
+        "box": box, "img": img,
+        "exists": src.exists(),
+        "src": f"/photos/{img.path}",
+        "expect": str(src),
+        "here": json.dumps(rect(box)),
+        "others": json.dumps(others),
+        "crop": f"/crops/{box.crop.path}" if hasattr(box, "crop") else "",
+    })
 
 
 @require_GET

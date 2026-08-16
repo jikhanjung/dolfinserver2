@@ -4,6 +4,7 @@
 <style>
   :root { --bg:#12161c; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
           --fin:#3fb27f; --fluke:#4aa3ff; --rostrum:#c88bff; --other:#e0a63f;
+          --head:#ff8ab5; --body:#7f8cff; --bird:#5fd0d8;
           --none:#e05561; --fix:#ffb300; --base:#ffe23c; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
@@ -27,10 +28,18 @@
   .tile.sel { outline:2px solid #fff; outline-offset:2px; }
   .tile[data-cls="fluke"]   { border-color:var(--fluke); }
   .tile[data-cls="rostrum"] { border-color:var(--rostrum); }
+  .tile[data-cls="head"]    { border-color:var(--head); }
+  .tile[data-cls="body"]    { border-color:var(--body); }
+  .tile[data-cls="bird"]    { border-color:var(--bird); }
   .tile[data-cls="other"]   { border-color:var(--other); }
   .tile[data-cls="none"]    { border-color:var(--none); }
   .tile[data-cls="none"] img, .tile[data-cls="none"] svg { opacity:.3; }
-  .tile[data-verdict="fix"] { box-shadow:inset 0 0 0 3px var(--fix); }
+  /* **`::after` 라야 보인다.** `box-shadow:inset` 은 배경 위·자식 아래에 그려지는데
+     `img` 가 타일을 꽉 채우므로 통째로 덮인다 — 값은 바뀌는데 화면은 그대로라
+     `x` 가 안 먹는 것처럼 보였다. 자식보다 뒤에 오는 `::after` 로 덮어씌운다 */
+  .tile[data-verdict="fix"]::after {
+    content:""; position:absolute; inset:0; pointer-events:none;
+    box-shadow:inset 0 0 0 3px var(--fix); }
   .tile img { width:100%; height:100%; display:block; }
   .tile svg { position:absolute; inset:0; width:100%; height:100%; }
   polygon.mask { fill:rgba(63,178,127,.20); stroke:#4dffb0; stroke-width:2.5;
@@ -74,18 +83,41 @@
   .warn { flex-basis:100%; background:#2a1416; border:1px solid #5c2a2f;
           border-left:3px solid var(--none); border-radius:6px;
           padding:6px 11px; font-size:13px; color:#ffc9cd; }
+  .nav { display:flex; gap:6px; align-items:center; flex-basis:100%; }
+  .nav button { padding:4px 10px; }
+  .nav button.on { background:var(--fin); border-color:var(--fin); color:#06120c;
+                   font-weight:600; }
+  .nav button:disabled { opacity:.35; cursor:default; }
+  #menu { position:fixed; z-index:50; min-width:210px; padding:4px;
+          background:#1a212b; border:1px solid #33404f; border-radius:8px;
+          box-shadow:0 10px 28px #000a; }
+  #menu button { display:flex; width:100%; gap:10px; align-items:center;
+                 justify-content:space-between; background:none; border:0;
+                 border-radius:5px; padding:5px 9px; text-align:left; }
+  #menu button:hover { background:#2b3646; }
+  #menu kbd { color:var(--dim); }
+  #menu hr { border:0; border-top:1px solid var(--line); margin:4px 6px; }
 </style>
 
 <header>
   <h1>finseg 검토</h1>
   <span class="stat" id="stat">…</span>
   <span style="flex:1"></span>
-  <span class="stat">
-    <kbd>1</kbd>등 <kbd>2</kbd>꼬리 <kbd>3</kbd>주둥이 <kbd>4</kbd>기타
-    <kbd>5</kbd>아님 · <kbd>e</kbd>날 <kbd>x</kbd>교정필요 <kbd>p</kbd>아래경계불완전
-    · 점을 끌면 밑동 · <kbd>Enter</kbd> 저장
-  </span>
+  <!-- **안내는 CLASSES 에서 만든다.** 손으로 적어 두면 분류를 늘릴 때 화면만
+       옛말을 한다 — 오늘 `e`/`x` 를 못 찾은 것이 그 값이다 -->
+  <span class="stat" id="keys"></span>
   <button class="primary" onclick="save(true)">저장하고 다음 (Enter)</button>
+
+  <span class="nav">
+    <button id="mtodo" onclick="load({mode:'todo'})">검토할 것</button
+    ><button id="mdone" onclick="load({mode:'done'})">검토한 것</button
+    ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button>
+    <button id="prev" onclick="load({page:page-1})">←</button>
+    <span id="pg" class="stat">1 / 1</span>
+    <button id="next" onclick="load({page:page+1})">→</button>
+    <span id="nsum" class="stat"></span>
+    <kbd>[</kbd><kbd>]</kbd>
+  </span>
 
   <div class="warn" id="warn" hidden></div>
 
@@ -102,6 +134,7 @@
 
 <div id="grid"></div>
 <div id="empty" hidden></div>
+<div id="menu" hidden></div>
 
 <script>
 const CLASSES = {{ classes|safe }};        // [[key, 한글], …]
@@ -119,6 +152,12 @@ addEventListener("pointermove", e => { ptr.x = e.clientX; ptr.y = e.clientY; },
 
 const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
 
+document.getElementById("keys").innerHTML =
+  CLASSES.map(([k, ko], i) =>
+    `<kbd style="border-color:var(--${k})">${i + 1}</kbd>${ko}`).join(" ")
+  + ` · <kbd>e</kbd>날 <kbd>x</kbd>교정필요 <kbd>p</kbd>아래경계불완전`
+  + ` · 점을 끌면 밑동 · <kbd>우클릭</kbd>메뉴 · <kbd>Enter</kbd>저장`;
+
 function setHover(d) {
   hover = d || null;
   document.querySelectorAll(".tile.sel").forEach(x => x.classList.remove("sel"));
@@ -131,9 +170,17 @@ function warn(msg) {
   el.hidden = !msg;
 }
 
-async function load() {
-  const r = await fetch("/api/batch?n=24").then(r => r.json());
+// `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
+// 되짚어 보는 길이 있어야 첫 페이지와 열 번째 페이지의 기준이 같은지 알 수 있다
+let mode = "todo", page = 1, pages = 1, total = 0;
+
+async function load(opts = {}) {
+  if (opts.mode && opts.mode !== mode) { mode = opts.mode; page = 1; }
+  if (opts.page) page = Math.max(opts.page, 1);
+  const r = await fetch(`/api/batch?n=24&mode=${mode}&page=${page}`)
+    .then(r => r.json());
   tiles = r.tiles;
+  mode = r.mode; page = r.page; pages = r.pages; total = r.total;
   touched = false; warn("");
   const g = document.getElementById("grid");
   g.innerHTML = "";
@@ -161,6 +208,9 @@ async function load() {
        ${t.hint ? `<span class="hint">${t.hint}</span>` : ""}
        ${t.conf != null ? `<span class="conf">${t.conf.toFixed(2)}</span>` : ""}`;
     d.onmouseenter = () => setHover(d);
+    d.oncontextmenu = ev => {
+      ev.preventDefault(); setHover(d); showMenu(d, t, ev.clientX, ev.clientY);
+    };
     g.appendChild(d);
     draw(d, t);
     drag(d, t);
@@ -169,7 +219,21 @@ async function load() {
   // 가리킨 채로 남아, 마우스를 움직이기 전까지 모든 키가 조용히 죽는다 —
   // mouseenter 는 마우스가 실제로 움직여야 다시 나기 때문이다.
   setHover(document.elementFromPoint(ptr.x, ptr.y)?.closest(".tile"));
+  nav();
   stat();
+}
+
+function nav() {
+  document.getElementById("mtodo").classList.toggle("on", mode === "todo");
+  document.getElementById("mdone").classList.toggle("on", mode === "done");
+  document.getElementById("mstuck").classList.toggle("on", mode === "stuck");
+  document.getElementById("pg").textContent = `${page} / ${pages}`;
+  document.getElementById("prev").disabled = page <= 1;
+  document.getElementById("next").disabled = page >= pages;
+  document.getElementById("nsum").textContent =
+    mode === "done" ? `검토한 것 ${total.toLocaleString()}`
+    : mode === "stuck" ? `교정 대기 ${total.toLocaleString()}`
+    : `남은 것 ${total.toLocaleString()}`;
 }
 
 // **자르기는 미리보기다.** 실제 자료는 서버가 래스터로 자른다(finseg.baseline);
@@ -227,7 +291,7 @@ function drag(d, t) {
       ev.preventDefault(); h.setPointerCapture(ev.pointerId);
       const i = +h.dataset.i;
       const move = e => { t.base[i] = at(e); t.base_moved = true; touched = true;
-                          draw(d, t); };
+                          d.dataset.touched = "1"; draw(d, t); };
       const up = e => { h.releasePointerCapture(ev.pointerId);
                         svg.removeEventListener("pointermove", move);
                         svg.removeEventListener("pointerup", up);
@@ -245,25 +309,90 @@ function cycle(d, t, key, list) {
   draw(d, t);
 }
 
+// **키와 우클릭 메뉴가 같은 함수를 부른다.** 둘로 갈라 두면 한쪽만 고쳐지고,
+// 그것이 곧 화면과 자료가 어긋나는 길이다 (`rules.py` 를 하나로 둔 것과 같은 뜻).
+function act(d, t, key) {
+  // 숫자키는 CLASSES 순서 그대로다 — 분류가 늘면 키도 저절로 는다
+  const n = key.length === 1 && key >= "1" && key <= "9"
+          ? +key - 1 : -1;
+  if (n >= 0 && n < CLS_KEYS.length) d.dataset.cls = CLS_KEYS[n];
+  else if (n >= 0) return false;
+  else if (key === "e") cycle(d, t, "edges", EDG_KEYS);
+  else if (key === "x")
+    d.dataset.verdict = d.dataset.verdict === "fix" ? "ok" : "fix";
+  else if (key === "p")
+    d.dataset.partial = d.dataset.partial === "1" ? "0" : "1";
+  else if (key === "photo")
+    // 이름을 준 창이라 우클릭을 거듭해도 창이 쌓이지 않고 같은 창이 바뀐다
+    return open(`/photo/${d.dataset.box}`, "finphoto"), true;
+  else if (key === "edit")
+    return open(`/edit/${d.dataset.box}`, "finedit",
+                "width=1100,height=900"), true;
+  else return false;
+  // **칸마다도 표시해 둔다.** '검토한 것' 을 넘겨볼 때는 손댄 칸만 저장해야
+  // 한다 — 안 그러면 페이지를 넘길 때마다 똑같은 판정이 24건씩 다시 쌓인다
+  d.dataset.touched = "1";
+  touched = true; warn(""); draw(d, t);
+  return true;
+}
+
+// 메뉴는 키가 하는 일을 **보여 주는** 자리다. 오늘 `e`(날)와 `x`(교정필요)를
+// 못 찾아 헤맨 것이 안내줄에 적혀 있었는데도 그랬다 — 우클릭이 더 눈에 띈다
+const MENU = [["원본 사진 — 둘레를 본다", "photo"],
+              ["윤곽 고치기 — 크게 띄운다", "edit"], null,
+              ...CLASSES.map(([k, ko], i) => [ko, String(i + 1)]), null,
+              ["교정 필요", "x"], ["날 (다음 값)", "e"],
+              ["아래경계 불완전", "p"]];
+
+function hideMenu() { document.getElementById("menu").hidden = true; }
+
+function showMenu(d, t, x, y) {
+  const m = document.getElementById("menu");
+  m.innerHTML = MENU.map(it => it === null ? `<hr>`
+    : `<button data-key="${it[1]}">${it[0]}<kbd>${
+         it[1] === "photo" ? "우클릭" : it[1]}</kbd></button>`).join("");
+  m.querySelectorAll("button").forEach(b => {
+    b.onclick = () => { act(d, t, b.dataset.key); hideMenu(); };
+  });
+  m.hidden = false;
+  // 창 밖으로 나가지 않게 접어 넣는다
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 6) + "px";
+  m.style.top = Math.min(y, innerHeight - r.height - 6) + "px";
+}
+
+// **고친 윤곽을 격자가 받아 든다.** 새로고침을 시키면 아직 저장 안 한 다른
+// 칸들이 통째로 날아간다. 받아 두어야 이 칸을 나중에 저장할 때도 교정본이
+// 함께 나간다 — 안 그러면 뒤에 쌓이는 판정이 교정본 없는 것이 되어 덮인다.
+addEventListener("message", ev => {
+  if (ev.origin !== location.origin || ev.data?.type !== "polygon") return;
+  const t = tiles.find(x => x.box_id == ev.data.box_id);
+  const d = document.querySelector(`.tile[data-box="${ev.data.box_id}"]`);
+  if (!t || !d) return;
+  t.points = ev.data.points;
+  t.poly_edited = true;
+  d.dataset.verdict = "fix";
+  d.dataset.touched = "1";
+  draw(d, t);
+  warn("");
+});
+
+addEventListener("pointerdown", e => {
+  if (!e.target.closest("#menu")) hideMenu();
+}, true);
+addEventListener("scroll", hideMenu, {passive: true});
+
 addEventListener("keydown", e => {
+  if (e.key === "Escape") return hideMenu();
   if (e.key === "Enter") { e.preventDefault(); return save(false); }
   // **되묻는 데 Enter 를 쓰지 않는다.** Enter 가 사고의 원인인데 그것으로 확인을
   // 받으면 두 번째 Enter 가 곧바로 확인이 되어 아무것도 막지 못한다
   if (e.key === "y" && !touched) { e.preventDefault(); return save(true); }
+  if (e.key === "[") { e.preventDefault(); return load({page: page - 1}); }
+  if (e.key === "]") { e.preventDefault(); return load({page: page + 1}); }
   if (!hover) return;
   const t = tiles.find(x => x.box_id == hover.dataset.box);
-  if (!t) return;
-  const n = "12345".indexOf(e.key);
-  if (n >= 0) { hover.dataset.cls = CLS_KEYS[n]; touched = true; draw(hover, t); }
-  else if (e.key === "e") { cycle(hover, t, "edges", EDG_KEYS); touched = true; }
-  else if (e.key === "x") {
-    hover.dataset.verdict = hover.dataset.verdict === "fix" ? "ok" : "fix";
-    touched = true;
-  } else if (e.key === "p") {
-    hover.dataset.partial = hover.dataset.partial === "1" ? "0" : "1";
-    touched = true; draw(hover, t);
-  }
-  if (touched) warn("");
+  if (t) act(hover, t, e.key);
 });
 
 async function save(force) {
@@ -275,19 +404,46 @@ async function save(force) {
        + `상자 모서리 밑동) 그대로 저장된다 — 정말이면 y 또는 저장 단추.`);
     return;
   }
+  // **'검토한 것' 에서는 손댄 칸만 보낸다.** 이미 판정이 붙어 있는 칸이라
+  // 안 건드린 것을 다시 보내면 같은 값이 한 벌 더 쌓일 뿐이다. 반대로 '검토할
+  // 것' 에서는 안 누른 것도 판정이다 — 기본값으로 두고 예외만 누르는 화면이다.
   const items = tiles.map(t => {
     const d = document.querySelector(`.tile[data-box="${t.box_id}"]`);
+    if (mode !== "todo" && d.dataset.touched !== "1") return null;
     return { box_id: t.box_id, mask_id: t.mask_id, cls: d.dataset.cls,
              edges: d.dataset.edges, verdict: d.dataset.verdict,
              base_partial: d.dataset.partial === "1",
-             base: t.base, base_moved: !!t.base_moved };
-  });
-  const r = await fetch("/api/review", {
-    method: "POST",
-    headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
-    body: JSON.stringify({items}),
-  }).then(r => r.json());
-  if (r.error) { alert(r.error); return; }
+             base: t.base, base_moved: !!t.base_moved,
+             polygon: t.points, polygon_edited: !!t.poly_edited };
+  }).filter(Boolean);
+  if (!items.length) { warn("고친 칸이 없다 — 저장할 것이 없다."); return; }
+  // **저장 실패는 반드시 화면에 뜬다.** 전에는 `.then(r => r.json())` 이 곧바로
+  // 붙어 있어서, 403 이 HTML 을 내면 json() 이 던지고 그 예외를 아무도 안 받았다.
+  // 화면은 그대로 있고 `load()` 도 안 불려서 **Enter 가 안 먹는 것처럼만** 보였다 —
+  // 실제로는 한 묶음도 안 들어가고 있었다. 자료가 조용히 사라지는 쪽이 아니라
+  // 조용히 안 들어가는 쪽이라 다행이었을 뿐이다.
+  let res;
+  try {
+    res = await fetch("/api/review", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
+      body: JSON.stringify({items}),
+    });
+  } catch (err) {
+    warn(`저장 실패 — 서버에 닿지 못했다 (${err}). 이 묶음은 **아직 안 들어갔다.** `
+       + `화면을 그대로 두고 서버가 떠 있는지 볼 것.`);
+    return;
+  }
+  if (!res.ok) {
+    warn(`저장 실패 — 서버가 ${res.status} 를 냈다. 이 묶음은 **아직 안 들어갔다.**`
+       + (res.status === 403
+          ? " CSRF 쿠키가 없다 — 새로고침하면 다시 받는다"
+            + " (이 묶음을 지키려면 새 탭에서 /admin/ 을 한 번 열고 돌아와 Enter)."
+          : " 새로고침하면 이 묶음의 판정이 사라진다."));
+    return;
+  }
+  const r = await res.json();
+  if (r.error) { warn(`저장 실패 — ${r.error}`); return; }
   load();
 }
 

@@ -1,0 +1,239 @@
+{% load static %}<!doctype html>
+<meta charset="utf-8">
+<title>윤곽 고치기 — 상자 {{ box.id }}</title>
+<style>
+  :root { --bg:#0d1116; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
+          --fin:#3fb27f; --base:#ffe23c; --fix:#ffb300; --none:#e05561; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); display:flex;
+         flex-direction:column;
+         font:14px/1.5 system-ui,'Noto Sans KR',sans-serif; }
+  header { border-bottom:1px solid var(--line); padding:7px 13px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .stat { color:var(--dim); font-size:13px; }
+  .stat b { color:var(--fg); }
+  button { background:#1d242e; color:var(--fg); border:1px solid var(--line);
+           border-radius:6px; padding:5px 12px; font:inherit; cursor:pointer; }
+  button.primary { background:var(--fin); border-color:var(--fin); color:#06120c;
+                   font-weight:600; }
+  button:disabled { opacity:.35; cursor:default; }
+  kbd { background:#1d242e; border:1px solid var(--line); border-radius:4px;
+        padding:1px 6px; font-size:12px; }
+  #stage { flex:1; position:relative; overflow:hidden; background:#000;
+           touch-action:none; cursor:grab; }
+  #stage.panning { cursor:grabbing; }
+  #stage svg { position:absolute; inset:0; width:100%; height:100%; }
+  image { image-rendering:auto; }
+  polygon.mask { fill:rgba(63,178,127,.18); stroke:#4dffb0; stroke-width:2;
+                 vector-effect:non-scaling-stroke; }
+  line.base { stroke:var(--base); stroke-width:2; stroke-dasharray:7 5;
+              vector-effect:non-scaling-stroke; opacity:.8; }
+  /* **보이는 점은 집지 않는다.** `.vtx` 가 `.hit` 위에 덮여 있는데 핸들러는
+     `.hit` 에만 달려 있다 — `pointer-events:none` 이 없으면 점을 정확히 겨눌수록
+     `.vtx` 가 먹고, 핸들러가 없으니 `#stage` 까지 올라가 화면이 밀린다.
+     격자의 `circle.dot` 과 같은 이유다 */
+  circle.vtx { fill:#4dffb0; stroke:#04150d; stroke-width:1.5;
+               vector-effect:non-scaling-stroke; pointer-events:none; }
+  circle.hit { fill:transparent; pointer-events:all; cursor:grab; }
+  circle.mid { fill:#4dffb0; opacity:.35; pointer-events:all; cursor:copy; }
+  .warn { flex-basis:100%; background:#2a1416; border:1px solid #5c2a2f;
+          border-left:3px solid var(--none); border-radius:6px;
+          padding:6px 11px; font-size:13px; color:#ffc9cd; }
+</style>
+
+<header>
+  <span class="stat">상자 <b>{{ box.id }}</b> · {{ img.obsdate }} ·
+    <span id="np"></span>점</span>
+  <span style="flex:1"></span>
+  <span class="stat">
+    <kbd>휠</kbd>확대 <kbd>끌기</kbd>이동 · 꼭짓점 <kbd>끌기</kbd>
+    <kbd>더블클릭</kbd>사이에 점 추가 <kbd>우클릭</kbd>삭제 ·
+    <kbd>Ctrl+Z</kbd>되돌리기 <kbd>0</kbd>맞추기
+  </span>
+  <button id="undo" onclick="undo()">되돌리기</button>
+  <button onclick="fit()">전체 보기</button>
+  <button class="primary" onclick="commit()">저장하고 닫기</button>
+  <div class="warn" id="warn" hidden></div>
+</header>
+
+<div id="stage">
+  <svg id="svg" preserveAspectRatio="xMidYMid meet">
+    <image id="img" x="0" y="0"></image>
+    <line class="base" id="base"></line>
+    <polygon class="mask" id="poly"></polygon>
+    <g id="mids"></g>
+    <g id="vtxs"></g>
+  </svg>
+</div>
+
+<script>
+const T = {{ tile|safe }};
+const SIZE = T.size;
+let pts = T.points.map(p => p.slice());     // 크롭 좌표. **끝까지 이것만 쓴다**
+const stack = [];                            // 되돌리기
+let view = {x: 0, y: 0, w: SIZE};            // 보고 있는 사각형 (크롭 좌표)
+
+const svg = document.getElementById("svg"), stage = document.getElementById("stage");
+document.getElementById("img").setAttribute("href", T.crop);
+document.getElementById("img").setAttribute("width", SIZE);
+document.getElementById("img").setAttribute("height", SIZE);
+
+function warn(m) {
+  const el = document.getElementById("warn");
+  el.textContent = m || ""; el.hidden = !m;
+}
+
+// **좌표 변환은 브라우저에게 묻는다.** 손으로 계산하면 안 된다 — `svg` 는
+// `preserveAspectRatio="xMidYMid meet"` 이고 `#stage` 는 정사각형이 아니라서
+// 정사각 뷰박스가 레터박스로 가운데 정렬된다. 그 여백을 빼먹으면 클릭 자리가
+// 가운데를 기준으로 좌우 수십 픽셀씩 어긋난다. `getScreenCTM()` 은 그 여백까지
+// 포함한 실제 변환이라 `preserveAspectRatio` 를 나중에 바꿔도 안 깨진다.
+const inv = () => svg.getScreenCTM().inverse();
+const at = ev => {
+  const p = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(inv());
+  return [p.x, p.y];
+};
+
+// 화면 1px 이 크롭 좌표로 몇인가. **꼭짓점 크기를 여기에 매단다** — 안 그러면
+// 확대할수록 점이 커져 정작 고치려는 윤곽을 가린다 (격자에서 겪은 것과 같다).
+// 이것도 같은 변환에서 뽑는다
+const u = () => 1 / (svg.getScreenCTM()?.a || 1);
+
+function push() { stack.push(pts.map(p => p.slice())); if (stack.length > 60) stack.shift(); }
+function undo() { if (stack.length) { pts = stack.pop(); draw(); } }
+
+function fit() { view = {x: 0, y: 0, w: SIZE}; draw(); }
+
+function draw() {
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.w}`);
+  document.getElementById("poly").setAttribute("points",
+    pts.map(p => p.join(",")).join(" "));
+  const [a, b] = T.base;
+  const bl = document.getElementById("base");
+  // 밑동 현은 **여기서 고치지 않는다** — 격자에서 두 점을 끄는 것이 그 자리다.
+  // 참고로만 그린다: 어차피 이 선 아래는 내보낼 때 잘린다
+  bl.style.display = T.cls === "fin" ? "" : "none";
+  bl.setAttribute("x1", a[0]); bl.setAttribute("y1", a[1]);
+  bl.setAttribute("x2", b[0]); bl.setAttribute("y2", b[1]);
+
+  const s = u();
+  document.getElementById("vtxs").innerHTML = pts.map((p, i) =>
+    `<circle class="hit" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="${13 * s}"></circle>
+     <circle class="vtx" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="${5 * s}"></circle>`
+  ).join("");
+  // 변의 한가운데 — 더블클릭 대신 눌러서 점을 더할 수 있게 눈에 보이게 둔다
+  document.getElementById("mids").innerHTML = pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    return `<circle class="mid" data-i="${i}" cx="${(p[0]+q[0])/2}"
+             cy="${(p[1]+q[1])/2}" r="${4 * s}"></circle>`;
+  }).join("");
+  document.getElementById("np").textContent = pts.length;
+  document.getElementById("undo").disabled = !stack.length;
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll("#vtxs .hit").forEach(c => {
+    const i = +c.dataset.i;
+    c.onpointerdown = ev => {
+      if (ev.button !== 0) return;
+      ev.preventDefault(); ev.stopPropagation();
+      push();
+      // **잡을 것을 window 에 건다.** `draw()` 가 끌 때마다 `#vtxs` 를 다시
+      // 만들어 이 원 자체를 없애므로 `setPointerCapture` 는 곧바로 풀린다.
+      // `svg` 에 걸면 점을 화면 밖으로 끌었을 때 `pointerup` 을 못 받아
+      // 드래그가 붙은 채로 남는다
+      const move = e => { pts[i] = at(e); draw(); };
+      const up = () => { removeEventListener("pointermove", move);
+                         removeEventListener("pointerup", up); };
+      addEventListener("pointermove", move);
+      addEventListener("pointerup", up);
+    };
+    c.oncontextmenu = ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      // 삼각형보다 적어지면 폴리곤이 아니다
+      if (pts.length <= 3) return warn("점이 셋뿐이라 더 지울 수 없다.");
+      push(); pts.splice(i, 1); warn(""); draw();
+    };
+  });
+  document.querySelectorAll("#mids .mid").forEach(c => {
+    const i = +c.dataset.i;
+    c.onpointerdown = ev => {
+      if (ev.button !== 0) return;
+      ev.preventDefault(); ev.stopPropagation();
+      push();
+      const q = pts[(i + 1) % pts.length], p = pts[i];
+      pts.splice(i + 1, 0, [(p[0]+q[0])/2, (p[1]+q[1])/2]);
+      draw();
+    };
+  });
+}
+
+// 배경을 끌면 이동. 커서 자리를 축으로 확대해야 보던 곳이 안 달아난다
+stage.onpointerdown = ev => {
+  if (ev.button !== 0) return;
+  // 꼭짓점·변 위에서 시작한 것은 그쪽 일이다. 각 핸들러가 stopPropagation 을
+  // 부르지만, 여기서도 막아 둔다 — 하나가 빠지면 조용히 pan 이 되어 버린다
+  if (ev.target.closest("#vtxs, #mids")) return;
+  const [ox, oy] = at(ev);
+  stage.classList.add("panning");
+  // 커서 밑에 있던 자리를 커서 밑에 계속 붙들어 둔다. `at()` 이 지금 `view` 를
+  // 쓰므로 **차이만큼 밀면** 다음 프레임에 정확히 맞는다
+  const move = e => {
+    const [nx, ny] = at(e);
+    view.x += ox - nx; view.y += oy - ny;
+    draw();
+  };
+  const up = () => { stage.classList.remove("panning");
+                     removeEventListener("pointermove", move);
+                     removeEventListener("pointerup", up); };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+};
+
+stage.onwheel = ev => {
+  ev.preventDefault();
+  const [cx, cy] = at(ev);
+  const k = ev.deltaY > 0 ? 1.15 : 1 / 1.15;
+  const w = Math.min(Math.max(view.w * k, SIZE / 40), SIZE * 1.5);
+  view = {x: cx - (cx - view.x) * (w / view.w),
+          y: cy - (cy - view.y) * (w / view.w), w};
+  draw();
+};
+stage.oncontextmenu = ev => ev.preventDefault();
+
+addEventListener("keydown", e => {
+  if (e.key === "z" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); }
+  else if (e.key === "0") fit();
+  else if (e.key === "Escape") close();
+});
+
+async function commit() {
+  if (pts.length < 3) return warn("점이 셋은 있어야 한다.");
+  const csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+  // **격자와 같은 문(`/api/review`)으로 넣는다.** 저장 경로가 둘이 되면 규칙도
+  // 둘이 된다. 윤곽을 고친 것은 그 자체로 '교정함' 이다 — 밑동과 같다.
+  const item = {box_id: T.box_id, mask_id: T.mask_id, cls: T.cls, edges: T.edges,
+                verdict: "fix", base_partial: !!T.base_partial,
+                base: T.base, base_moved: false,
+                polygon: pts, polygon_edited: true};
+  let res;
+  try {
+    res = await fetch("/api/review", {method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": csrf},
+      body: JSON.stringify({items: [item]})});
+  } catch (err) { return warn(`저장 실패 — 서버에 닿지 못했다 (${err}).`); }
+  if (!res.ok) return warn(`저장 실패 — 서버가 ${res.status} 를 냈다. `
+    + `이 창을 닫으면 고친 것이 사라진다.`);
+  const r = await res.json();
+  if (r.error) return warn(`저장 실패 — ${r.error}`);
+  // 격자에게 알려 그 칸만 새로 그리게 한다. 새로고침을 시키면 격자에서 아직
+  // 저장 안 한 다른 칸들이 통째로 날아간다
+  try { opener?.postMessage({type: "polygon", box_id: T.box_id, points: pts},
+                            location.origin); } catch (e) {}
+  close();
+}
+
+fit();
+</script>
