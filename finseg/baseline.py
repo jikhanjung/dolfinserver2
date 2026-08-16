@@ -142,3 +142,46 @@ def height_above(polygon, p0, p1):
     rel = a - np.array(p0, float)
     perp = np.abs(rel[:, 0] * d[1] - rel[:, 1] * d[0])
     return float(perp.max())
+
+
+# **꼭대기를 기준으로 넓이가 큰 쪽이 앞이다.** 지느러미가 뒤로 젖혀져 있으니
+# 꼭대기 앞쪽에 살이 더 많다. 사람이 찍은 156장에 대 보니 넓이비 문턱 1.3 에서
+# **149장(95%)에 적용해 정확도 100%** 였다 (문턱 없이는 98.7%).
+#
+# ## 먼저 세웠다 틀린 규칙 셋 — 다시 시도하지 말 것
+#
+# 위 문단의 "앞날은 거의 수직(기울기 −41)" 을 근거로 **가파른 쪽이 앞**이라고
+# 예측했는데 실측 **26.9%** 로 거의 정반대였다. 그 −41 은 타일 하나의 예시였고
+# 일반화되지 않는다. "꼭대기에서 가까운 쪽이 앞" 은 17.3%(뒤집으면 82.7%),
+# "끝 기울기가 가파른 쪽이 앞" 은 73.1% 로 둘 다 모자랐다.
+#
+# **세 예측이 모두 빗나갔고 값이 나온 것은 안 세웠던 넷째다.** 재 보기 전에
+# 제안으로 돌렸으면 넷에 하나가 틀린 채로 2,315장에 얹혔을 것이다.
+FACING_MIN_RATIO = 1.3
+
+
+def propose_facing(points, size, min_ratio=FACING_MIN_RATIO):
+    """윗윤곽으로 앞쪽을 짐작한다 → ("left" | "right" | "", 넓이비).
+
+    **애매하면 아무 말도 안 한다.** 넓이비가 문턱 아래면 빈 값을 돌려준다 —
+    그럴듯한 오답은 사람의 눈을 끌고 가고, 그것이 수면선 제안을 버린 이유다.
+    """
+    if not points or len(points) < 3:
+        return "", 0.0
+    m = _np_rasterize(points, size)
+    cols = np.where(m.any(axis=0))[0]
+    if len(cols) < 8:
+        return "", 0.0
+    ys = m[:, cols].argmax(axis=0)
+    apex = cols[int(np.argmin(ys))]
+    left = float(m[:, cols[cols <= apex]].sum())
+    right = float(m[:, cols[cols >= apex]].sum())
+    ratio = max(left, right) / max(min(left, right), 1.0)
+    if ratio < min_ratio:
+        return "", ratio
+    return ("left" if left > right else "right"), ratio
+
+
+def _np_rasterize(points, size):
+    from finseg import geometry
+    return geometry.rasterize(points, size)

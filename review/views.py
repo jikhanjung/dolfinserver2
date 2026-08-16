@@ -49,6 +49,18 @@ def _tile(state, crop):
         (bx1, by1), (bx2, by2) = geometry.to_crop(
             [(box.x1, box.y1), (box.x2, box.y2)], crop)
         base = list(baseline.propose_from_box((bx1, by1, bx2, by2)))
+    # **앞쪽 제안.** 사람이 아직 안 말했을 때만 낸다 — 말했으면 그것이 답이다.
+    # 제안일 뿐이라 저장되지 않는다: `f` 를 눌러야 사람의 판정이 된다.
+    #
+    # 두 가지를 조심한다. (1) `state["cls"]` 는 **아직 안 본 상자에서 빈 값**이라
+    # 그것으로 거르면 제안이 가장 필요한 것들이 전부 빠진다 — 화면이 쓰는 기본값
+    # `fin` 으로 판단한다. (2) **밑동 아래를 자른 뒤**의 폴리곤으로 재야 한다.
+    # 안 자르면 밑동 밑의 몸통이 넓이에 섞여 좌우 비가 뒤집힌다.
+    cls = (review.cls if review else "") or "fin"
+    facing_hint = ""
+    if cls == "fin" and not state["facing"]:
+        cut = rules.final_points({**state, "cls": "fin"}, crop)
+        facing_hint, _ = baseline.propose_facing(cut, crop.w)
     hint = []
     if box.src_not_fin:
         hint.append("옛 표시: 지느러미 아님")
@@ -65,11 +77,12 @@ def _tile(state, crop):
         # 옛 DB 에서 시민과학자가 남긴 표시. 판정을 대신하지 않고 **눈에 띄게만**
         # 한다 — 다른 사람의 판단이고, 여기서 다시 받는 것이 이 검토다.
         "hint": " · ".join(hint),
-        "cls": (review.cls if review else "") or "fin",
+        "cls": cls,
         "edges": (review.edges if review else "") or "both",
         "verdict": (review.verdict if review else "") or "ok",
         "base_partial": state["base_partial"],
         "facing": state["facing"],
+        "facing_hint": facing_hint,
         "points": [[round(x, 1), round(y, 1)] for x, y in pts],
         "base": [[round(x, 1), round(y, 1)] for x, y in base],
     }
@@ -255,6 +268,7 @@ def edit(request, box_id):
         "box": box, "img": img,
         "photo": f"/photos/{img.path}" if src.exists() else "",
         "geom": json.dumps(geom),
+        "facings": json.dumps(FACING, ensure_ascii=False),
         "classes": json.dumps(CLASSES, ensure_ascii=False),
     })
 
