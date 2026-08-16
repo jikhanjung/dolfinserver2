@@ -133,7 +133,8 @@
   <span class="nav">
     <button id="mtodo" onclick="load({mode:'todo'})">검토할 것</button
     ><button id="mdone" onclick="load({mode:'done'})">검토한 것</button
-    ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button>
+    ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button
+    ><button id="mstale" onclick="load({mode:'stale'})">엔진 바뀜</button>
     <button id="first" onclick="load({page:1})" title="첫 페이지 (Home)">«</button>
     <button id="prev" onclick="load({page:page-1})">←</button>
     <span id="pg" class="stat">1 / 1</span>
@@ -295,6 +296,12 @@ function warn(msg) {
   el.hidden = !msg;
 }
 
+// **묶음으로 저장하는 모드.** `todo` 는 안 본 것을 처음 판정하는 자리이고,
+// `stale` 은 엔진이 바뀌어 판정이 낡은 것을 다시 확인하는 자리다. 둘 다
+// **안 누른 것도 판정**이다 — `stale` 에서 그냥 넘기는 것은 "새 마스크도
+// 괜찮다" 는 뜻이고, 그렇게 말할 방법이 없으면 그 상자는 영영 대기열에 남는다.
+const isBatch = () => mode === "todo" || mode === "stale";
+
 // `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
 // 되짚어 보는 길이 있어야 첫 페이지와 열 번째 페이지의 기준이 같은지 알 수 있다
 let mode = "todo", page = 1, pages = 1, total = 0, clsFilter = "";
@@ -370,18 +377,21 @@ function nav() {
   document.getElementById("mtodo").classList.toggle("on", mode === "todo");
   document.getElementById("mdone").classList.toggle("on", mode === "done");
   document.getElementById("mstuck").classList.toggle("on", mode === "stuck");
+  document.getElementById("mstale").classList.toggle("on", mode === "stale");
   document.getElementById("pg").textContent = `${page} / ${pages}`;
   document.getElementById("first").disabled = page <= 1;
   document.getElementById("prev").disabled = page <= 1;
   document.getElementById("next").disabled = page >= pages;
   document.getElementById("last").disabled = page >= pages;
   // 'todo' 가 아니면 저장이 자동이라 이 단추가 할 일이 없다
-  const todo = mode === "todo";
-  document.getElementById("btnsave").hidden = !todo;
-  document.getElementById("auto").hidden = todo;
+  document.getElementById("btnsave").hidden = !isBatch();
+  document.getElementById("auto").hidden = isBatch();
+  document.getElementById("btnsave").textContent =
+    mode === "stale" ? "확인하고 다음 (Enter)" : "저장하고 다음 (Enter)";
   document.getElementById("nsum").textContent =
     mode === "done" ? `검토한 것 ${total.toLocaleString()}`
     : mode === "stuck" ? `교정 대기 ${total.toLocaleString()}`
+    : mode === "stale" ? `엔진 바뀜 ${total.toLocaleString()}`
     : `남은 것 ${total.toLocaleString()}`;
 }
 
@@ -456,7 +466,7 @@ function drag(d, t) {
                         svg.removeEventListener("pointerup", up);
                         // 밑동을 옮긴 것은 그 자체로 '교정함' 이다
                         d.dataset.verdict = "fix";
-                        if (mode !== "todo") autosave(d, t); };
+                        if (!isBatch()) autosave(d, t); };
       svg.addEventListener("pointermove", move);
       svg.addEventListener("pointerup", up);
     };
@@ -493,7 +503,7 @@ function act(d, t, key) {
   // 한다 — 안 그러면 페이지를 넘길 때마다 똑같은 판정이 24건씩 다시 쌓인다
   d.dataset.touched = "1";
   touched = true; warn(""); draw(d, t);
-  if (mode !== "todo") autosave(d, t);
+  if (!isBatch()) autosave(d, t);
   return true;
 }
 
@@ -585,7 +595,7 @@ addEventListener("keydown", e => {
   if (e.key === "Enter") {
     e.preventDefault();
     // 되짚어 볼 때는 저장이 자동이라 Enter 가 '다음 페이지' 다
-    return mode === "todo" ? save(false) : load({page: page + 1});
+    return isBatch() ? save(false) : load({page: page + 1});
   }
   // **되묻는 데 Enter 를 쓰지 않는다.** Enter 가 사고의 원인인데 그것으로 확인을
   // 받으면 두 번째 Enter 가 곧바로 확인이 되어 아무것도 막지 못한다
@@ -627,7 +637,7 @@ async function save(force) {
   if (!tiles.length) return;
   // **손 안 댄 묶음은 Enter 로 안 넘어간다.** 기본값이 맞는 묶음도 있을 수 있어
   // 막지는 않지만, 한 번 더 뜻을 물어야 지나간다 — 저장 단추나 y.
-  if (!touched && !force) {
+  if (!touched && !force && mode === "todo") {
     warn(`이 ${tiles.length}장은 아무것도 안 건드렸다. 기본값(등지느러미·양날·통과·`
        + `상자 모서리 밑동) 그대로 저장된다 — 정말이면 y 또는 저장 단추.`);
     return;
@@ -637,7 +647,7 @@ async function save(force) {
   // 것' 에서는 안 누른 것도 판정이다 — 기본값으로 두고 예외만 누르는 화면이다.
   const items = tiles.map(t => {
     const d = document.querySelector(`.tile[data-box="${t.box_id}"]`);
-    if (mode !== "todo" && d.dataset.touched !== "1") return null;
+    if (!isBatch() && d.dataset.touched !== "1") return null;
     return itemOf(d, t);
   }).filter(Boolean);
   if (!items.length) { warn("고친 칸이 없다 — 저장할 것이 없다."); return; }

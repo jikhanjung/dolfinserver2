@@ -169,7 +169,7 @@ def batch(request):
     n = min(int(request.GET.get("n", 24)), 100)
     page = max(int(request.GET.get("page", 1)), 1)
     mode = request.GET.get("mode", "todo")
-    if mode not in ("todo", "done", "stuck"):
+    if mode not in ("todo", "done", "stuck", "stale"):
         mode = "todo"
     cls = request.GET.get("cls", "")
     if cls not in {c for c, _ in CLASSES}:
@@ -177,7 +177,22 @@ def batch(request):
     base = (Box.objects.filter(masks__is_current=True)
             .select_related("crop").prefetch_related("masks", "reviews"))
 
-    if mode == "stuck":
+    if mode == "stale":
+        # **판정이 본 마스크와 지금 현재가 다른 것.** 엔진을 갈아 끼우면
+        # `verdict`("이 마스크가 맞다")가 그때 그 마스크에 대한 말이 되어
+        # 낡는다 (`models.py` 의 "엔진에 딸린 판정"). `Review.mask_id` 가
+        # 어느 마스크를 보고 내린 판정인지 들고 있어 정확히 집어낼 수 있다.
+        # `cls` 는 다시 안 받아도 된다 — 상자 안에 무엇이 있나는 엔진과 무관하다.
+        cur = dict(Mask.objects.filter(is_current=True)
+                   .values_list("box_id", "id"))
+        latest = {}
+        for bid, mid, at in (Review.objects.order_by("id")
+                             .values_list("box_id", "mask_id", "at")):
+            latest[bid] = (mid, at)
+        ids = [b for b, (mid, _) in sorted(latest.items(), key=lambda x: x[1][1])
+               if b in cur and mid != cur[b]]
+        total, qs = len(ids), None
+    elif mode == "stuck":
         # **고쳐야 한다고 해 놓고 안 고친 것.** 판정이 붙어 있어 `todo` 에 안
         # 나오고, 자료로도 안 나간다 — 여기 말고는 다시 만날 길이 없다.
         latest = (Review.objects.values("box_id")
