@@ -16,7 +16,7 @@
 from django.test import SimpleTestCase, TestCase
 
 from finseg import baseline, geometry, rules
-from finseg.models import Box, Crop, Image, Mask, Review, Run
+from finseg.models import EDGES, Box, Crop, Image, Mask, Review, Run
 
 
 def review(cls="fin", verdict="ok", edges="both", polygon="", base_line=""):
@@ -40,11 +40,14 @@ class LabelTests(SimpleTestCase):
             ("꼬리 통과",        review(cls="fluke"),               rules.POSITIVE),
             ("주둥이 통과",      review(cls="rostrum"),             rules.POSITIVE),
             ("기타 통과",        review(cls="other"),               rules.POSITIVE),
-            # 앞날만·뒷날만은 **버리지 않는다.** 보이는 실루엣은 맞는 것이다
+            # 가려진 것도 **버리지 않는다.** 보이는 실루엣은 맞는 것이고,
+            # `edges` 는 re-ID 축이지 학습 축이 아니다 (rules.py 2026-08-16)
             ("앞날만",           review(edges="leading"),           rules.POSITIVE),
             ("뒷날만",           review(edges="trailing"),          rules.POSITIVE),
-            # 둘 다 가린 것은 라벨로도 배경으로도 쓸 수 없다 → 크롭을 뺀다
-            ("둘 다 가림",       review(edges="neither"),           rules.DROP),
+            ("끄트머리",         review(edges="tip"),               rules.POSITIVE),
+            ("머리",             review(cls="head"),                rules.POSITIVE),
+            ("몸통",             review(cls="body"),                rules.POSITIVE),
+            ("새",               review(cls="bird"),                rules.POSITIVE),
             ("교정 전",          review(verdict="fix"),             rules.PENDING),
             ("윗윤곽 교정",      review(verdict="fix", polygon="1,1 2,2 3,1"),
                                                                     rules.POSITIVE),
@@ -54,17 +57,26 @@ class LabelTests(SimpleTestCase):
             with self.subTest(name):
                 self.assertEqual(rules.label_of(r), want)
 
-    def test_neither_beats_verdict(self):
-        """`edges='neither'` 는 통과 판정보다 세다 — 마스크가 맞아도 못 쓴다."""
-        self.assertEqual(rules.label_of(review(edges="neither")), rules.DROP)
-        self.assertEqual(
-            rules.label_of(review(verdict="fix", polygon="1,1 2,2 3,1",
-                                  edges="neither")), rules.DROP)
+    def test_edges_never_drops(self):
+        """**`edges` 는 학습 자료에서 아무것도 가르지 않는다.**
+
+        전에는 `neither` 가 크롭을 통째로 버렸다. 그것을 되돌린 이유는
+        `rules.py` 의 2026-08-16 항목에 있다 — 끄트머리만 보인다는 것은 앞에
+        온전한 지느러미가 있다는 뜻이라, 버리면 가장 좋은 표본이 함께 사라진다.
+        """
+        for e, _ in EDGES:
+            with self.subTest(e):
+                self.assertEqual(rules.label_of(review(edges=e)), rules.POSITIVE)
+                self.assertEqual(
+                    rules.label_of(review(verdict="fix", polygon="1,1 2,2 3,1",
+                                          edges=e)), rules.POSITIVE)
+        self.assertNotIn(rules.DROP,
+                         [rules.label_of(review(edges=e)) for e, _ in EDGES])
 
     def test_none_is_background_regardless(self):
         """`cls='none'` 이면 다른 축을 보지 않는다 — 상자 안에 아무것도 없다."""
         self.assertEqual(
-            rules.label_of(review(cls="none", verdict="fix", edges="neither")),
+            rules.label_of(review(cls="none", verdict="fix", edges="tip")),
             rules.BACKGROUND)
 
 
