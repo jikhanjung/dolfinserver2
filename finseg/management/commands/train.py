@@ -1,6 +1,12 @@
-"""YOLO11-seg 를 크롭 자료로 학습시킨다. **[GPU]**
+"""YOLO11 을 크롭 자료로 학습시킨다 — 분할과 밑동 키포인트 둘 다. **[GPU]**
 
-    python manage.py train --data datasets/v1 --model yolo11m-seg.pt
+    python manage.py train --data datasets/v1          # seg  (export_yolo)
+    python manage.py train --data datasets/pose-v1     # pose (export_pose)
+
+**갈래는 꾸러미가 말한다** (`MANIFEST.json` 의 `task`). 사람이 `--model` 로
+맞춰 주게 하면 언젠가 seg 자료에 pose 가중치를 물리게 된다. 증강은 둘이 같다 —
+크롭이 "가운데 것 하나" 라는 약속도 같기 때문이다. pose 에서는 `fliplr` 이
+`data.yaml` 의 `flip_idx` 와 함께 돌아 두 점의 자리가 함께 바뀐다.
 
 **꾸러미 안에서 돈다.** ultralytics 는 `data.yaml` 의 `path:` 를 yaml 위치가
 아니라 실행 디렉토리 기준으로 푼다 — 상대경로로 적어 두고 여기서 `cd` 한다.
@@ -32,6 +38,9 @@ from django.core.management.base import BaseCommand, CommandError
 from finseg import runs
 
 AUG = dict(flipud=0.0, fliplr=0.5, degrees=10.0, scale=0.5, mosaic=0.0)
+# 갈래마다 밑바탕 가중치가 다르다. **꾸러미의 MANIFEST 가 갈래를 말한다** —
+# 사람이 `--model` 로 맞춰 주게 하면 언젠가 seg 자료에 pose 가중치를 물린다.
+DEFAULT_MODEL = {"segment": "yolo11m-seg.pt", "pose": "yolo11m-pose.pt"}
 
 
 class Command(BaseCommand):
@@ -39,13 +48,13 @@ class Command(BaseCommand):
 
     def add_arguments(self, p):
         p.add_argument("--data", required=True, help="자료 꾸러미")
-        p.add_argument("--model", default="yolo11m-seg.pt")
+        p.add_argument("--model", help="기본값은 꾸러미의 갈래에서 고른다")
         p.add_argument("--epochs", type=int, default=120)
         p.add_argument("--imgsz", type=int, default=640, help="크롭 한 변과 같게")
         p.add_argument("--batch", type=int, default=16,
                        help="자료가 작을 때는 키우지 않는다 — 한 에폭의 갱신"
                             " 횟수가 줄어드는 쪽이 손해다")
-        p.add_argument("--name", default="fin-seg")
+        p.add_argument("--name", help="기본값은 fin-seg / fin-pose")
         p.add_argument("--device", default="0")
 
     def handle(self, **o):
@@ -55,26 +64,32 @@ class Command(BaseCommand):
             raise CommandError(f"MANIFEST.json 이 없다: {man}"
                                f"  (export_yolo 로 만든 꾸러미인가)")
         m = json.loads(man.read_text())
+        task = m.get("task", "segment")
+        if task not in DEFAULT_MODEL:
+            raise CommandError(f"모르는 갈래: {task}")
+        model = o["model"] or DEFAULT_MODEL[task]
+        name = o["name"] or ("fin-pose" if task == "pose" else "fin-seg")
         w = self.stdout.write
-        w(f"자료   {data}")
-        w(f"  만든 코드 {m['git_sha']} · 마스크 run {m['mask_runs']}")
+        w(f"자료   {data}  ({task})")
+        w(f"  만든 코드 {m['git_sha']} · 마스크 run {m.get('mask_runs', '-')}")
         w(f"  {m['counts']}")
         w(f"  val_date = {m['val_date']} (학습에 넣지 않는다)")
 
         from ultralytics import YOLO
-        run = runs.start("train", model=o["model"], params={
-            "data": str(data), "epochs": o["epochs"], "imgsz": o["imgsz"],
+        run = runs.start("train", model=model, params={
+            "data": str(data), "task": task,
+            "epochs": o["epochs"], "imgsz": o["imgsz"],
             "batch": o["batch"], "manifest_git_sha": m["git_sha"],
-            "mask_runs": m["mask_runs"], "val_date": m["val_date"], **AUG})
+            "mask_runs": m.get("mask_runs"), "val_date": m["val_date"], **AUG})
         cwd = os.getcwd()
         os.chdir(data)          # ultralytics 가 path: 를 여기서 푼다
         try:
-            YOLO(o["model"]).train(
+            YOLO(model).train(
                 data="data.yaml", epochs=o["epochs"], imgsz=o["imgsz"],
-                batch=o["batch"], device=o["device"], name=o["name"],
+                batch=o["batch"], device=o["device"], name=name,
                 project=str(Path(cwd) / "runs"), close_mosaic=0, **AUG)
         finally:
             os.chdir(cwd)
         runs.finish(run)
-        w(f"\nrun {run.id} · 가중치는 runs/{o['name']}/weights/best.pt")
+        w(f"\nrun {run.id} · 가중치는 runs/{name}/weights/best.pt")
         w("성적은 val 이 아니라 **val_date** 로 읽을 것 — manage.py eval_masks")
