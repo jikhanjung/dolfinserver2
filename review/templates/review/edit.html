@@ -21,8 +21,7 @@
   kbd { background:#1d242e; border:1px solid var(--line); border-radius:4px;
         padding:1px 6px; font-size:12px; }
   #stage { flex:1; position:relative; overflow:hidden; background:#000;
-           touch-action:none; cursor:grab; }
-  #stage.panning { cursor:grabbing; }
+           touch-action:none; cursor:crosshair; }
   #stage svg { position:absolute; inset:0; width:100%; height:100%; }
   image { image-rendering:auto; }
   polygon.mask { fill:rgba(63,178,127,.18); stroke:#4dffb0; stroke-width:2;
@@ -37,6 +36,16 @@
                vector-effect:non-scaling-stroke; pointer-events:none; }
   circle.hit { fill:transparent; pointer-events:all; cursor:grab; }
   circle.mid { fill:#4dffb0; opacity:.35; pointer-events:all; cursor:copy; }
+  circle.vtx.on { fill:#fff; stroke:#000; }
+  /* **`hidden` 속성으로 숨기지 않는다.** `[hidden]{display:none}` 은 HTML 쪽
+     UA 규칙이라 SVG 요소에는 안 먹는 브라우저가 있다 — 선택은 풀렸는데 상자만
+     화면에 남는다. `display` 를 클래스로 직접 다룬다 */
+  rect.band { display:none; fill:rgba(77,255,176,.12); stroke:#4dffb0;
+              stroke-width:1; stroke-dasharray:5 4;
+              vector-effect:non-scaling-stroke; pointer-events:none; }
+  rect.band.on { display:inline; }
+  #stage.panning { cursor:grabbing; }
+  #stage.panready { cursor:grab; }
   .warn { flex-basis:100%; background:#2a1416; border:1px solid #5c2a2f;
           border-left:3px solid var(--none); border-radius:6px;
           padding:6px 11px; font-size:13px; color:#ffc9cd; }
@@ -44,12 +53,16 @@
 
 <header>
   <span class="stat">상자 <b>{{ box.id }}</b> · {{ img.obsdate }} ·
-    <span id="np"></span>점</span>
+    <span id="np"></span>점<span id="nsel"></span></span>
   <span style="flex:1"></span>
   <span class="stat">
-    <kbd>휠</kbd>확대 <kbd>끌기</kbd>이동 · 꼭짓점 <kbd>끌기</kbd>
-    <kbd>더블클릭</kbd>사이에 점 추가 <kbd>우클릭</kbd>삭제 ·
-    <kbd>Ctrl+Z</kbd>되돌리기 <kbd>0</kbd>맞추기
+    <kbd>끌기</kbd>상자로 점 고르기 (<kbd>Shift</kbd>더하기) ·
+    고른 점은 <kbd>함께</kbd> 움직이고 <kbd>Del</kbd>로 지운다 ·
+    <kbd>휠</kbd>확대 · <kbd>Space</kbd>누른 채 움직이면 이동
+    (<kbd>가운데끌기</kbd>도) ·
+    변 가운데 점: 추가 <kbd>우클릭</kbd>삭제 ·
+    <kbd>Ctrl+Z</kbd>되돌리기 <kbd>0</kbd>맞추기 <kbd>Esc</kbd>선택해제
+    <kbd>Ctrl+A</kbd>전부
   </span>
   <button id="undo" onclick="undo()">되돌리기</button>
   <button onclick="fit()">전체 보기</button>
@@ -64,6 +77,7 @@
     <polygon class="mask" id="poly"></polygon>
     <g id="mids"></g>
     <g id="vtxs"></g>
+    <rect class="band" id="band"></rect>
   </svg>
 </div>
 
@@ -73,6 +87,12 @@ const SIZE = T.size;
 let pts = T.points.map(p => p.slice());     // 크롭 좌표. **끝까지 이것만 쓴다**
 const stack = [];                            // 되돌리기
 let view = {x: 0, y: 0, w: SIZE};            // 보고 있는 사각형 (크롭 좌표)
+// **고른 점들.** 좌클릭 끌기가 pan 이 아니라 상자 선택인 이유는, 이 화면에서
+// 자주 하는 일이 "윤곽 한 구간을 통째로 밀기" 이기 때문이다. 점을 하나씩
+// 옮기면 SAM2 가 낸 20~40개를 다 만져야 한다. pan 은 가운데 버튼과 Space 로
+// 옮겼다 — 덜 자주 쓰는 쪽이 덜 편한 자리로 간다
+let sel = new Set();
+let space = false, anchor = null;
 
 const svg = document.getElementById("svg"), stage = document.getElementById("stage");
 document.getElementById("img").setAttribute("href", T.crop);
@@ -131,6 +151,7 @@ function draw() {
   document.getElementById("np").textContent = pts.length;
   document.getElementById("undo").disabled = !stack.length;
   bind();
+  paint();   // #vtxs 를 새로 만들었으니 고른 표시를 다시 입힌다
 }
 
 function bind() {
@@ -139,12 +160,32 @@ function bind() {
     c.onpointerdown = ev => {
       if (ev.button !== 0) return;
       ev.preventDefault(); ev.stopPropagation();
-      push();
+      // 고른 것 밖의 점을 집으면 선택은 그 하나로 바뀐다. 고른 것 안을 집으면
+      // **무리 전체가 함께 움직인다** — 상자로 고르는 이유가 이것이다
+      if (!sel.has(i)) { sel = new Set([i]); paint(); }
+      const grab = [...sel];
+      const from = grab.map(k => pts[k].slice());
+      const [ox, oy] = at(ev);
+      const sx = ev.clientX, sy = ev.clientY;
+      // **끌기 시작이 확인된 뒤에 되돌리기를 쌓는다.** 눌렀다 떼기만 해도
+      // push() 하면 되돌리기 목록이 아무 일도 안 한 상태로 채워진다
+      let dragging = false;
       // **잡을 것을 window 에 건다.** `draw()` 가 끌 때마다 `#vtxs` 를 다시
       // 만들어 이 원 자체를 없애므로 `setPointerCapture` 는 곧바로 풀린다.
       // `svg` 에 걸면 점을 화면 밖으로 끌었을 때 `pointerup` 을 못 받아
       // 드래그가 붙은 채로 남는다
-      const move = e => { pts[i] = at(e); draw(); };
+      const move = e => {
+        if (!dragging) {
+          if (Math.hypot(e.clientX - sx, e.clientY - sy) < DRAG_PX) return;
+          dragging = true; push();
+        }
+        const [nx, ny] = at(e);
+        // **시작 자리에서의 차이로 옮긴다.** 매 프레임 커서 자리를 그대로
+        // 넣으면 여럿일 때 한 점으로 뭉친다
+        grab.forEach((k, j) => { pts[k] = [from[j][0] + nx - ox,
+                                           from[j][1] + ny - oy]; });
+        draw();
+      };
       const up = () => { removeEventListener("pointermove", move);
                          removeEventListener("pointerup", up); };
       addEventListener("pointermove", move);
@@ -170,12 +211,7 @@ function bind() {
   });
 }
 
-// 배경을 끌면 이동. 커서 자리를 축으로 확대해야 보던 곳이 안 달아난다
-stage.onpointerdown = ev => {
-  if (ev.button !== 0) return;
-  // 꼭짓점·변 위에서 시작한 것은 그쪽 일이다. 각 핸들러가 stopPropagation 을
-  // 부르지만, 여기서도 막아 둔다 — 하나가 빠지면 조용히 pan 이 되어 버린다
-  if (ev.target.closest("#vtxs, #mids")) return;
+function startPan(ev) {
   const [ox, oy] = at(ev);
   stage.classList.add("panning");
   // 커서 밑에 있던 자리를 커서 밑에 계속 붙들어 둔다. `at()` 이 지금 `view` 를
@@ -190,7 +226,72 @@ stage.onpointerdown = ev => {
                      removeEventListener("pointerup", up); };
   addEventListener("pointermove", move);
   addEventListener("pointerup", up);
+}
+
+const DRAG_PX = 4;   // 이만큼 못 움직였으면 끈 것이 아니라 누른 것이다
+
+// 선택 상자를 치우는 자리가 여럿이라 함수로 뽑는다 — 하나라도 빠지면
+// 상자가 화면에 남아 "안 지워진다" 로 보인다
+function hideBand() { document.getElementById("band").classList.remove("on"); }
+
+function startBand(ev) {
+  const [ox, oy] = at(ev);
+  const sx = ev.clientX, sy = ev.clientY;
+  const band = document.getElementById("band");
+  const base = ev.shiftKey ? new Set(sel) : new Set();
+  // **누르는 순간 바로 지운다.** 뗄 때까지 미루면 안 된다 — 실제 클릭에는
+  // 손떨림으로 1px 짜리 pointermove 가 거의 항상 딸려 오고, 그것을 "끌었다"
+  // 로 세면 빈 자리를 눌러도 해제가 안 된 것처럼 보인다.
+  hideBand();
+  if (!ev.shiftKey && sel.size) { sel = new Set(); paint(); }
+  let dragging = false;
+  const move = e => {
+    // 화면 거리로 잰다. 크롭 좌표로 재면 확대 배율에 따라 문턱이 달라진다
+    if (!dragging &&
+        Math.hypot(e.clientX - sx, e.clientY - sy) < DRAG_PX) return;
+    dragging = true;
+    const [nx, ny] = at(e);
+    band.classList.add("on");
+    const x0 = Math.min(ox, nx), y0 = Math.min(oy, ny);
+    const x1 = Math.max(ox, nx), y1 = Math.max(oy, ny);
+    band.setAttribute("x", x0); band.setAttribute("y", y0);
+    band.setAttribute("width", x1 - x0); band.setAttribute("height", y1 - y0);
+    sel = new Set(base);
+    pts.forEach((p, i) => {
+      if (p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1) sel.add(i);
+    });
+    paint();
+  };
+  const up = () => {
+    hideBand();
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+}
+
+// **좌클릭 끌기는 상자 선택이다.** pan 은 가운데 버튼과 Space 로 갔다 —
+// 이 화면에서 자주 하는 일은 윤곽 한 구간을 통째로 미는 것이지 화면을
+// 옮기는 것이 아니다. 자주 쓰는 쪽이 편한 자리를 갖는다.
+stage.onpointerdown = ev => {
+  // 꼭짓점·변 위에서 시작한 것은 그쪽 일이다. 각 핸들러가 stopPropagation 을
+  // 부르지만, 여기서도 막아 둔다 — 하나가 빠지면 조용히 딴 일이 되어 버린다
+  if (ev.target.closest("#vtxs, #mids")) return;
+  if (ev.button === 1) { ev.preventDefault(); return startPan(ev); }
+  // Space 를 누르고 있는 동안에는 좌클릭이 상자 선택을 시작하지 않는다.
+  // 밀던 중에 손가락이 미끄러져 선택이 뒤집히면 고른 것을 다시 잡아야 한다
+  if (ev.button === 0 && !space) { ev.preventDefault(); return startBand(ev); }
 };
+
+// **고른 표시만 다시 칠한다.** 상자를 끄는 동안 draw() 를 부르면 매 프레임
+// #vtxs 를 통째로 새로 만들게 되어, 점이 많을수록 눈에 띄게 끊긴다
+function paint() {
+  document.querySelectorAll("#vtxs .vtx").forEach(c => {
+    c.classList.toggle("on", sel.has(+c.dataset.i));
+  });
+  document.getElementById("nsel").textContent = sel.size ? ` · ${sel.size} 고름` : "";
+}
 
 stage.onwheel = ev => {
   ev.preventDefault();
@@ -204,9 +305,50 @@ stage.onwheel = ev => {
 stage.oncontextmenu = ev => ev.preventDefault();
 
 addEventListener("keydown", e => {
-  if (e.key === "z" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); }
-  else if (e.key === "0") fit();
-  else if (e.key === "Escape") close();
+  if (e.key === " ") {
+    e.preventDefault();                 // 스페이스로 화면이 스크롤되지 않게
+    if (!space) { space = true; anchor = null; stage.classList.add("panready"); }
+  }
+  else if (e.key === "z" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); }
+  else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault(); sel = new Set(pts.map((_, i) => i)); paint();
+  } else if (e.key === "Delete" || e.key === "Backspace") {
+    e.preventDefault();
+    if (!sel.size) return;
+    // 삼각형보다 적어지면 폴리곤이 아니다
+    if (pts.length - sel.size < 3)
+      return warn(`점 ${pts.length}개에서 ${sel.size}개를 지우면 셋 미만이 된다.`);
+    push();
+    pts = pts.filter((_, i) => !sel.has(i));
+    sel = new Set();          // 자리가 밀렸으니 번호로 든 선택은 뜻을 잃는다
+    warn(""); draw();
+  } else if (e.key === "0") fit();
+  else if (e.key === "Escape") {
+    // **Esc 로는 창을 닫지 않는다.** 고치던 윤곽은 저장 전까지 이 창에만 있어서
+    // 닫으면 확인 없이 사라진다. 닫는 것은 '저장하고 닫기' 나 창의 닫기 단추다
+    sel = new Set(); paint(); hideBand(); warn("");
+  }
+});
+addEventListener("keyup", e => {
+  if (e.key === " ") { space = false; anchor = null;
+                       stage.classList.remove("panready"); }
+});
+// 창에서 포커스가 나가면 Space 를 뗀 것을 못 받는다 — 눌린 채로 남지 않게 한다
+addEventListener("blur", () => { space = false; anchor = null;
+                                 stage.classList.remove("panready");
+                                 hideBand(); });
+// 창 밖에서 손을 떼면 pointerup 을 못 받아 상자가 남는다
+addEventListener("pointercancel", hideBand);
+
+// **Space 를 누르고 있으면 단추 없이 마우스 움직임만으로 밀린다.**
+// 처음 움직인 자리를 크롭 좌표로 붙들어 두고, 그것이 커서 밑에 계속 있도록
+// `view` 를 민다. Space 를 놓았다 다시 누르면 붙드는 자리도 새로 잡는다.
+addEventListener("pointermove", e => {
+  if (!space) return;
+  if (!anchor) { anchor = at(e); return; }
+  const [nx, ny] = at(e);
+  view.x += anchor[0] - nx; view.y += anchor[1] - ny;
+  draw();
 });
 
 async function commit() {
