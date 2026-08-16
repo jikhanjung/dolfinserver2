@@ -39,11 +39,25 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import geometry, rules, runs
-from finseg.models import CLASSES, Box, Crop
+from finseg.models import CLASS_GROUPS, CLASSES, Box, Crop
 
 MIN_VISIBLE = 0.10   # 크롭에 이만큼도 안 보이는 조각은 라벨로 세지 않는다
 # 분류 순서가 곧 YOLO 의 클래스 번호다. `none` 은 배경이라 라벨이 없다.
-NAMES = [c for c, _ in CLASSES if c != "none"]
+# 어떤 묶음으로 낼지는 `--group` 이 정한다 (`models.CLASS_GROUPS`).
+
+
+def _scheme(name):
+    """묶음 이름 → (클래스 이름 목록, 분류→번호 표)."""
+    if name not in CLASS_GROUPS:
+        raise CommandError(f"모르는 묶음: {name}"
+                           f"  (있는 것: {', '.join(CLASS_GROUPS)})")
+    groups = CLASS_GROUPS[name]
+    names = [g for g, _, _ in groups]
+    to_id = {c: i for i, (_, _, members) in enumerate(groups) for c in members}
+    missing = {c for c, _ in CLASSES if c != "none"} - set(to_id)
+    if missing:
+        raise CommandError(f"묶음 '{name}' 이 빠뜨린 분류: {sorted(missing)}")
+    return names, to_id
 
 
 def clip_to_crop(points, size):
@@ -111,10 +125,16 @@ class Command(BaseCommand):
         p.add_argument("--val-frac", type=float, default=0.2)
         p.add_argument("--val-date", help="통째로 뺄 관찰일 (기본은 씨앗으로)")
         p.add_argument("--seed", type=int, default=20260815)
+        p.add_argument("--group", default="all",
+                       help="학습 라벨 묶음 (models.CLASS_GROUPS)")
         p.add_argument("--dry-run", action="store_true")
 
     def handle(self, **o):
         w = self.stdout.write
+        NAMES, TO_ID = _scheme(o["group"])
+        w(f"묶음 '{o['group']}' — " + " · ".join(
+            f"{i}:{g}({'+'.join(m)})"
+            for i, (g, _, m) in enumerate(CLASS_GROUPS[o["group"]])))
         boxes = list(Box.objects.select_related("image")
                      .prefetch_related("masks", "reviews"))
         states = {b.id: rules.resolve(b) for b in boxes}
@@ -150,7 +170,7 @@ class Command(BaseCommand):
                 if st["label"] in (rules.PENDING, rules.DROP):
                     blocked = True
                     break
-                labels.append((NAMES.index(st["cls"]), clipped))
+                labels.append((TO_ID[st["cls"]], clipped))
                 if st["mask"]:
                     used_runs.add(st["mask"].run_id)
             if blocked:
@@ -231,14 +251,20 @@ class Command(BaseCommand):
         names = "\n".join(f"  {i}: {n}" for i, n in enumerate(NAMES))
         (out / "data.yaml").write_text(
             "path: .\ntrain: images/train\nval: images/val\n"
-            "# 통째로 뺀 관찰일 — 성적은 이쪽으로 읽는다\n"
+            "# 통째로 뺀 관찰일 — 성적은 이쪽으로 읽는다.\n"
+            "# **`test` 로도 적어야 ultralytics 가 라벨을 찾는다.** 그것은\n"
+            "# `train`·`val`·`test` 만 절대경로로 풀어 주고, 그 밖의 키는\n"
+            "# 상대경로로 남아 `images/…` → `labels/…` 치환이 안 먹는다 —\n"
+            "# 그러면 라벨을 하나도 못 읽은 채 \"N backgrounds\" 라고만 말한다\n"
+            "test: images/val_date\n"
             f"val_date: images/val_date\n\nnames:\n{names}\n")
         (out / "MANIFEST.json").write_text(json.dumps({
             "git_sha": runs.git_sha(),
             "export_run": run.id,
             "mask_runs": sorted(used_runs),
             "val_date": val_date, "val_frac": o["val_frac"], "seed": o["seed"],
-            "names": NAMES,
+            "group": o["group"], "names": NAMES,
+            "class_map": {c: NAMES[i] for c, i in sorted(TO_ID.items())},
             "counts": {**{s: counts[s] for s in ("train", "val", "val_date")},
                        "labels": n_lab, "background_crops": n_empty,
                        "by_class": dict(by_cls)},

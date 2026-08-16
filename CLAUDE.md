@@ -28,12 +28,17 @@
 
 | 단계 | 무엇 | 상태 |
 |---|---|---|
-| 1 | 자료 경로 (표본 → 크롭 → SAM2.1 → 검토 → 내보내기) | 뼈대 완료 |
-| 2 | 첫 바퀴 검토 (상자 2,315개) | 미착수 |
-| 3 | YOLO11-seg 학습 · SAM2.1 과 견주기 | 미착수 |
-| 4 | 삽입점 키포인트 모델로 제안 자동화 | 미착수 |
+| 1 | 자료 경로 (표본 → 크롭 → SAM2.1 → 검토 → 내보내기) | **완료** |
+| 2 | 첫 바퀴 검토 (상자 2,315개) | **완료** (2026-08-16) |
+| 3 | YOLO11-seg 학습 · SAM2.1 과 비교하기 | **한 바퀴 돌았다** ← 지금 |
+| 4 | 삽입점 키포인트 모델로 제안 자동화 | **완료** — 3단계보다 앞당겼다 |
 | 5 | 검출기 교체 (지금은 옛 YOLOv5 상자에 의존) | 미착수 |
 | 6 | **re-ID** — 뒷날 결각으로 개체 매칭 | 구상 |
+
+**4단계를 3단계보다 먼저 했다.** 검토 중에 `fix`(밑동을 사람이 고친 비율)가
+85%에서 안 움직였고, 그 제안을 고칠 수 있는 것은 키포인트 모델뿐이었다.
+**남은 검토가 있을 때 붙여야 값이 있다** — 다 끝난 뒤에 붙이면 그 바퀴에는
+아무 도움이 안 된다. 붙인 뒤 `fix` 가 50%까지 내려갔다.
 
 ## 구조
 
@@ -43,12 +48,15 @@ Django 5.2 + SQLite. **파이프라인은 전부 management command 다** — �
 ```
 finseg/models.py   스키마. 판정이 왜 네 축인지 여기 적혀 있다
 finseg/rules.py    **판정 규칙 한 곳.** 검토 화면과 내보내기가 같은 함수를 부른다
+finseg/evaluate.py **비교 계산 한 곳.** eval_masks 와 /compare 가 같은 함수를 부른다
 finseg/geometry.py 폴리곤 표기와 **원본↔크롭 사상 — 이 식은 여기 둘뿐이다**
 finseg/baseline.py 아래 경계(밑동 현). **자동 탐지 실패 기록이 여기 있다**
 finseg/management/commands/  import_boxes · crops · segment · export_yolo ·
                              train · infer · eval_masks
 finweb/            Django 프로젝트 (settings · urls). 자료 경로는 settings 에 있다
 review/            격자 검토 앱 — 기본값으로 두고 예외만 누른다
+                   `/` 검토 · `/photo/<box>` 원본 · `/edit/<box>` 윤곽·밑동
+                   `/compare?runs=5,16` 엔진 비교
 ```
 
 ## 명령
@@ -63,9 +71,14 @@ python manage.py import_boxes
 python manage.py crops
 python manage.py segment                                   # [GPU]
 python manage.py runserver 0.0.0.0:8900                    # 검토
-python manage.py export_yolo --out datasets/v1
-python manage.py train --data datasets/v1                  # [GPU]
+python manage.py export_yolo --out datasets/v1 --group coarse --val-date <날짜>
+python manage.py train --data datasets/v1                  # [GPU] 갈래는 MANIFEST 가 정한다
+python manage.py infer --weights runs/<name>/weights/best.pt --compare-only   # [GPU]
 python manage.py eval_masks --runs <sam2> <yolo> --date <val_date>
+
+python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
+python manage.py train --data datasets/pose-v1             # [GPU]
+python manage.py infer_base --weights runs/fin-pose/weights/best.pt
 
 python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fin.db 를 안 건드린다)
 ```
@@ -85,6 +98,12 @@ python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fi
   변경은 백업을 먼저 뜬다
 - **재현율에는 늘 한정이 붙는다** — "옛 YOLOv5 상자 범위 안에서". 그 검출기가
   못 본 지느러미는 이 루프 안에서 표시할 방법이 없다
+- **학습 모델은 검출기가 아니다.** 크롭 640 을 받아 "가운데 것" 을 분할할 뿐,
+  사진 전체에서 지느러미를 찾지 않는다. SAM2 는 상자를 프롬프트로 받지만
+  YOLO 는 못 받아 틀 안에서 알아서 찾는다 — 그래서 `mosaic=0` 이고, 추론 때
+  여럿이 나오면 프롬프트 상자와 가장 많이 겹치는 것을 고른다
+- **`CLASSES` 순서가 곧 YOLO 클래스 번호다.** 한 번 내보낸 뒤에는 `none` 앞에
+  덧붙이기만 할 것. 학습 라벨을 묶는 것은 `--group` 이 따로 한다
 
 ## 형제 프로젝트 공통 표준
 

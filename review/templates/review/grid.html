@@ -102,6 +102,9 @@
   .auto b { color:var(--fin); }
   .nav { display:flex; gap:6px; align-items:center; flex-basis:100%; }
   .nav button { padding:4px 10px; }
+  .nav select { background:#1d242e; color:var(--fg); border:1px solid var(--line);
+                border-radius:6px; padding:4px 8px; font:inherit; }
+  .nav select:disabled { opacity:.35; }
   .nav button.on { background:var(--fin); border-color:var(--fin); color:#06120c;
                    font-weight:600; }
   .nav button:disabled { opacity:.35; cursor:default; }
@@ -136,6 +139,9 @@
     <span id="pg" class="stat">1 / 1</span>
     <button id="next" onclick="load({page:page+1})">→</button>
     <button id="last" onclick="load({page:pages})" title="마지막 페이지 (End)">»</button>
+    <select id="clsf" onchange="load({cls:this.value})" title="분류로 거르기">
+      <option value="">전체</option>
+    </select>
     <span id="nsum" class="stat"></span>
     <kbd>[</kbd><kbd>]</kbd><kbd>Home</kbd><kbd>End</kbd>
   </span>
@@ -204,7 +210,7 @@ function setHover(d) {
 // 문턱 위에서 149/149 였다 (`baseline.propose_facing`).
 //
 // 나중에 "이게 사람 것이냐 규칙 것이냐" 를 물을 수 있다. 규칙이 결정적이라
-// **언제든 다시 계산해 견줄 수 있고**, 값이 갈리는 것은 곧 사람이 규칙을
+// **언제든 다시 계산해 비교할 수 있고**, 값이 갈리는 것은 곧 사람이 규칙을
 // 뒤집은 자리다 — 알아야 할 쪽은 그것이라 따로 표를 두지 않는다.
 const facingOf = (d, t) => d.dataset.facing || t.facing_hint || "";
 
@@ -291,16 +297,22 @@ function warn(msg) {
 
 // `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
 // 되짚어 보는 길이 있어야 첫 페이지와 열 번째 페이지의 기준이 같은지 알 수 있다
-let mode = "todo", page = 1, pages = 1, total = 0;
+let mode = "todo", page = 1, pages = 1, total = 0, clsFilter = "";
 
 async function load(opts = {}) {
   flush();   // 넘기기 전에 기다리는 저장을 먼저 보낸다
   if (opts.mode && opts.mode !== mode) { mode = opts.mode; page = 1; }
+  // 거르는 값이 바뀌면 첫 쪽으로 — 3쪽에서 걸렀는데 3쪽이 없을 수 있다
+  if (opts.cls !== undefined && opts.cls !== clsFilter) {
+    clsFilter = opts.cls; page = 1;
+  }
   if (opts.page) page = Math.max(opts.page, 1);
-  const r = await fetch(`/api/batch?n=24&mode=${mode}&page=${page}`)
+  const r = await fetch(`/api/batch?n=24&mode=${mode}&page=${page}`
+                        + `&cls=${encodeURIComponent(clsFilter)}`)
     .then(r => r.json());
   tiles = r.tiles;
   mode = r.mode; page = r.page; pages = r.pages; total = r.total;
+  clsFilter = r.cls || "";
   touched = false; warn("");
   const g = document.getElementById("grid");
   g.innerHTML = "";
@@ -346,6 +358,15 @@ async function load(opts = {}) {
 }
 
 function nav() {
+  const sel = document.getElementById("clsf");
+  if (!sel.dataset.built) {
+    sel.innerHTML = `<option value="">전체</option>` +
+      CLASSES.map(([k, ko]) => `<option value="${k}">${ko}</option>`).join("");
+    sel.dataset.built = "1";
+  }
+  sel.value = clsFilter;
+  // 거르기는 '검토한 것' 에서만 뜻이 있다 — 나머지는 이미 좁혀진 목록이다
+  sel.disabled = mode !== "done";
   document.getElementById("mtodo").classList.toggle("on", mode === "todo");
   document.getElementById("mdone").classList.toggle("on", mode === "done");
   document.getElementById("mstuck").classList.toggle("on", mode === "stuck");
@@ -572,7 +593,7 @@ addEventListener("keydown", e => {
   if (e.key === "[") { e.preventDefault(); return load({page: page - 1}); }
   if (e.key === "]") { e.preventDefault(); return load({page: page + 1}); }
   // 처음 본 것과 가장 최근 본 것을 오가는 일이 잦다 — 기준이 흔들렸는지
-  // 보려면 첫 페이지와 마지막 페이지를 견줘야 한다
+  // 보려면 첫 페이지와 마지막 페이지를 비교해야 한다
   if (e.key === "Home") { e.preventDefault(); return load({page: 1}); }
   if (e.key === "End") { e.preventDefault(); return load({page: pages}); }
   if (!hover) return;

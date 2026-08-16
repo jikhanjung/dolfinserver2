@@ -4,7 +4,7 @@
 
 `segment` 와 **같은 표에 같은 모양으로** 넣는다 (`Mask`, 원본 좌표 폴리곤).
 그래야 검토 화면도 내보내기도 엔진을 모른 채로 돌고, 두 엔진의 숫자에 같은 자를
-댈 수 있다. 마스크는 쌓이므로 (`is_current`) 같은 상자 위에서 나란히 견줄 수 있다.
+댈 수 있다. 마스크는 쌓이므로 (`is_current`) 같은 상자 위에서 나란히 비교할 수 있다.
 
 ## 크롭 하나에 지느러미 하나
 
@@ -35,6 +35,8 @@ class Command(BaseCommand):
         p.add_argument("--device", default="0")
         p.add_argument("--limit", type=int)
         p.add_argument("--redo", action="store_true")
+        p.add_argument("--compare-only", action="store_true",
+                       help="현재 마스크를 그대로 두고 나란히만 쌓는다")
         p.add_argument("--note", default="")
 
     def handle(self, **o):
@@ -43,7 +45,7 @@ class Command(BaseCommand):
 
         crops_dir = Path(o["crops"])
         qs = Crop.objects.select_related("box").order_by("box_id")
-        if not o["redo"]:
+        if not o["redo"] and not o["compare_only"]:
             qs = qs.exclude(box__masks__is_current=True)
         rows = list(qs[:o["limit"]] if o["limit"] else qs)
         if not rows:
@@ -80,9 +82,18 @@ class Command(BaseCommand):
                 continue
             s = crop.scale
             with transaction.atomic():
-                Mask.objects.filter(box=box, is_current=True).update(is_current=False)
+                # **`--compare-only` 면 현재를 안 건드린다.** 엔진을 비교하는 것과
+                # 갈아 끼우는 것은 다른 일이다. 현재를 넘기면 검토 화면과
+                # 내보내기가 보는 마스크가 통째로 바뀌는데, 거기엔 대가가 있다 —
+                # 밑동 제안은 옛 마스크에 붙어 있어 함께 사라지고(`base_line`),
+                # `verdict='ok'` 는 그 엔진의 마스크에 대한 판정이었다
+                # (`models.py` 의 "엔진에 딸린 판정"). `eval_masks` 는 run 번호로
+                # 비교하므로 현재가 아니어도 된다.
+                if not o["compare_only"]:
+                    Mask.objects.filter(box=box, is_current=True) \
+                        .update(is_current=False)
                 Mask.objects.create(
-                    box=box, run=run,
+                    box=box, run=run, is_current=not o["compare_only"],
                     polygon=geometry.dumps(geometry.to_orig(poly, crop)),
                     area=int(area / (s * s)), conf=round(float(confs[k]), 4))
             n_ok += 1
@@ -94,4 +105,4 @@ class Command(BaseCommand):
                           + f"  (run {run.id})")
         if n_none:
             self.stdout.write("  ↑ 이것이 이 엔진의 재현율 손실이다. SAM2 는"
-                              " 상자를 받으면 늘 무언가를 냈다 — 견줄 때 함께 적을 것.")
+                              " 상자를 받으면 늘 무언가를 냈다 — 비교할 때 함께 적을 것.")

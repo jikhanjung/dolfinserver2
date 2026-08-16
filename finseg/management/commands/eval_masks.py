@@ -12,36 +12,30 @@
 정답에도 없고 여기 계산에도 안 들어간다. 그러니 이것은 "지느러미를 얼마나 찾나"
 가 아니라 **"주어진 상자 안의 윤곽을 얼마나 잘 따나"** 다.
 
-**두 엔진에 같은 자를 대므로 견주기는 유효하다.** 절대값을 밖에 낼 때만 조심한다.
+**두 엔진에 같은 자를 대므로 비교는 유효하다.** 절대값을 밖에 낼 때만 조심한다.
 """
 from django.core.management.base import BaseCommand, CommandError
 
-from finseg import geometry, rules
+from finseg import evaluate
 from finseg.models import Box, Crop, Mask, Run
 
 
 class Command(BaseCommand):
-    help = "마스크 run 들을 사람의 판정에 견준다"
+    help = "마스크 run 들을 사람의 판정에 비교한다"
 
     def add_arguments(self, p):
         p.add_argument("--runs", type=int, nargs="+", required=True)
         p.add_argument("--date", help="이 관찰일에서만 (보통 MANIFEST 의 val_date)")
 
     def handle(self, **o):
-        import numpy as np
         qs = Box.objects.select_related("image").prefetch_related("masks", "reviews")
         if o["date"]:
             qs = qs.filter(image__obsdate=o["date"])
         crops = {c.box_id: c for c in Crop.objects.all()}
 
-        truth = {}
-        for box in qs:
-            st = rules.resolve(box)
-            if st["label"] != rules.POSITIVE or box.id not in crops:
-                continue
-            pts = rules.final_points(st, crops[box.id])
-            if pts:
-                truth[box.id] = pts
+        # **계산은 `finseg.evaluate` 하나에만 있다** — 화면(`/compare`)이 같은
+        # 숫자를 말해야 한다
+        truth = evaluate.truth_for(qs, crops)
         if not truth:
             raise CommandError("정답이 없다 — 먼저 검토할 것"
                                + (f" ({o['date']})" if o["date"] else ""))
@@ -59,23 +53,12 @@ class Command(BaseCommand):
                 continue
             got = {m.box_id: m for m in
                    Mask.objects.filter(run_id=rid, box_id__in=truth).order_by("id")}
-            ious, produced = [], 0
-            for box_id, tpts in truth.items():
-                m = got.get(box_id)
-                if m is None:
-                    ious.append(0.0)      # 못 낸 것은 IoU 0 이다, 빼는 것이 아니라
-                    continue
-                produced += 1
-                crop = crops[box_id]
-                a = geometry.rasterize(
-                    geometry.to_crop(geometry.loads(m.polygon), crop), crop.w)
-                b = geometry.rasterize(tpts, crop.w)
-                u = (a | b).sum()
-                ious.append(float((a & b).sum() / u) if u else 0.0)
-            v = np.array(ious)
-            w(f"{rid:>5} {run.kind:<6} {produced:>7,} {v.mean():>9.3f} "
-              f"{(v >= .5).mean():>7.1%} {(v >= .7).mean():>7.1%} "
-              f"{(v >= .9).mean():>7.1%}")
+            ious = [evaluate.iou(got.get(b), t, crops[b])
+                    for b, t in truth.items()]
+            produced = sum(1 for b in truth if b in got)
+            st = evaluate.score(ious)
+            w(f"{rid:>5} {run.kind:<6} {produced:>7,} {st['mean']:>9.3f} "
+              f"{st['p50']:>7.1%} {st['p70']:>7.1%} {st['p90']:>7.1%}")
             if produced < len(truth):
                 w(f"      ↑ {len(truth) - produced:,} 개는 아무것도 못 냈다"
                   f" — IoU 0 으로 셌다")

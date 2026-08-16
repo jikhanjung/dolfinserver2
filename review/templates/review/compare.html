@@ -1,0 +1,141 @@
+{% load static %}<!doctype html>
+<meta charset="utf-8">
+<title>엔진 비교하기</title>
+<style>
+  :root { --bg:#12161c; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
+          --truth:#ffe23c; --a:#4dffb0; --b:#4aa3ff; --c:#ff8ab5; --d:#e0a63f;
+          --bad:#e05561; --good:#3fb27f; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui,'Noto Sans KR',sans-serif; }
+  header { position:sticky; top:0; z-index:10; background:var(--bg);
+           border-bottom:1px solid var(--line); padding:9px 16px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  .stat { color:var(--dim); font-size:13px; }
+  .stat b { color:var(--fg); }
+  a { color:#7fc3ff; }
+  form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input, select { background:#1d242e; color:var(--fg); border:1px solid var(--line);
+                  border-radius:6px; padding:4px 8px; font:inherit; }
+  button { background:#1d242e; color:var(--fg); border:1px solid var(--line);
+           border-radius:6px; padding:5px 12px; font:inherit; cursor:pointer; }
+  table.sum { border-collapse:collapse; font-size:13px; margin:10px 16px; }
+  table.sum th, table.sum td { border:1px solid var(--line); padding:4px 10px;
+                               text-align:right; }
+  table.sum th { color:var(--dim); font-weight:600; }
+  table.sum td:first-child, table.sum th:first-child { text-align:left; }
+  .key { display:inline-block; width:11px; height:11px; border-radius:3px;
+         vertical-align:-1px; margin-right:5px; }
+  #grid { display:grid; gap:10px; padding:14px;
+          grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); }
+  .tile { position:relative; border-radius:8px; overflow:hidden; aspect-ratio:1;
+          border:1px solid var(--line); background:#000; }
+  .tile img { width:100%; height:100%; display:block; }
+  .tile svg { position:absolute; inset:0; width:100%; height:100%; }
+  polygon { fill:none; stroke-width:2.5; vector-effect:non-scaling-stroke; }
+  polygon.truth { stroke:var(--truth); stroke-dasharray:7 4; }
+  .lab { position:absolute; left:5px; top:5px; font-size:11px; background:#000b;
+         padding:1px 7px; border-radius:5px; }
+  .sc { position:absolute; right:5px; bottom:5px; font-size:11px; background:#000b;
+        padding:2px 7px; border-radius:5px; font-variant-numeric:tabular-nums; }
+  .sc b { color:var(--fg); }
+  .miss { color:var(--bad); font-weight:700; }
+  .up { color:var(--good); } .down { color:var(--bad); }
+  #empty { padding:48px 16px; color:var(--dim); line-height:1.7; }
+  .note { flex-basis:100%; background:#1b1710; border:1px solid #3a2f14;
+          border-left:3px solid var(--truth); border-radius:6px;
+          padding:6px 11px; font-size:13px; color:#f0dcae; }
+</style>
+
+<header>
+  <h1>엔진 비교하기</h1>
+  <form method="get">
+    <label class="stat">run
+      <input name="runs" value="{% for r in runs %}{{ r.id }}{% if not forloop.last %},{% endif %}{% endfor %}"
+             size="10" placeholder="5,16"></label>
+    <label class="stat">관찰일
+      <input name="date" value="{{ date }}" size="11" placeholder="2019-06-17"></label>
+    <select name="order">
+      <option value="worst" {% if order == "worst" %}selected{% endif %}>나쁜 것부터</option>
+      <option value="best" {% if order == "best" %}selected{% endif %}>좋은 것부터</option>
+      <option value="loss" {% if order == "loss" %}selected{% endif %}>뒤 run 이 더 나빠진 순</option>
+      <option value="gain" {% if order == "gain" %}selected{% endif %}>뒤 run 이 더 좋아진 순</option>
+      <option value="box" {% if order == "box" %}selected{% endif %}>상자 번호</option>
+    </select>
+    <button>보기</button>
+  </form>
+  <span style="flex:1"></span>
+  <span class="stat">
+    <span class="key" style="background:var(--truth)"></span>사람이 채택한 것
+    {% for r in runs %}<span class="key" style="background:var(--{{ forloop.counter0|stringformat:'s'|slice:':0' }}{% if forloop.counter0 == 0 %}a{% elif forloop.counter0 == 1 %}b{% elif forloop.counter0 == 2 %}c{% else %}d{% endif %}); margin-left:10px"></span>run {{ r.id }}{% endfor %}
+  </span>
+
+  {% if not runs %}
+  <div class="note">비교할 run 번호를 넣어라 — 예: <b>5,16</b>.
+    앞의 것이 기준이고 뒤의 것과 비교한다.</div>
+  {% endif %}
+</header>
+
+{% if summary %}
+<table class="sum">
+  <tr><th>run</th><th>kind</th><th>모델</th><th>낸 것</th><th>평균 IoU</th>
+      <th>≥0.5</th><th>≥0.7</th><th>≥0.9</th></tr>
+  {% for s in summary %}
+  <tr><td>{{ s.run }}</td><td>{{ s.kind }}</td>
+      <td style="text-align:left;color:#8b97a6">{{ s.model|default:"—"|truncatechars:40 }}</td>
+      <td>{{ s.produced }} / {{ s.n }}</td>
+      <td><b>{{ s.mean|floatformat:3 }}</b></td>
+      <td>{{ s.p50|floatformat:3 }}</td><td>{{ s.p70|floatformat:3 }}</td>
+      <td>{{ s.p90|floatformat:3 }}</td></tr>
+  {% endfor %}
+</table>
+<div class="stat" style="margin:0 16px 8px">
+  ※ 못 낸 것은 <b>IoU 0</b> 으로 셌다 — 빼면 "잘 낸 것만 골라 잰" 숫자가 된다.
+  정답이 옛 YOLOv5 상자 위에서 만들어졌으므로 이것은 <b>"상자 안의 윤곽을 얼마나
+  잘 따나"</b> 이지 "지느러미를 얼마나 찾나" 가 아니다.
+</div>
+{% endif %}
+
+<div id="grid"></div>
+<div id="empty" {% if rows != "[]" %}hidden{% endif %}>
+  {% if runs %}비교할 것이 없다 — 그 관찰일에 사람이 채택한 마스크가 있나?{% endif %}
+</div>
+
+{% if pages > 1 %}
+<div class="stat" style="padding:0 16px 24px">
+  {{ page }} / {{ pages }} 쪽 · 총 {{ total }} 개 ·
+  {% if page > 1 %}<a href="?runs={% for r in runs %}{{ r.id }},{% endfor %}&date={{ date }}&order={{ order }}&page={{ page|add:-1 }}">← 앞</a>{% endif %}
+  {% if page < pages %}<a href="?runs={% for r in runs %}{{ r.id }},{% endfor %}&date={{ date }}&order={{ order }}&page={{ page|add:1 }}">뒤 →</a>{% endif %}
+</div>
+{% endif %}
+
+<script>
+const ROWS = {{ rows|safe }};
+const RUN_IDS = [{% for r in runs %}{{ r.id }}{% if not forloop.last %},{% endif %}{% endfor %}];
+const COLORS = ["var(--a)", "var(--b)", "var(--c)", "var(--d)"];
+
+const g = document.getElementById("grid");
+g.innerHTML = ROWS.map(r => {
+  const polys = r.polys.map((p, i) => p.length
+    ? `<polygon style="stroke:${COLORS[i]}" points="${p.map(q => q.join(",")).join(" ")}"></polygon>`
+    : "").join("");
+  const scores = r.ious.map((v, i) =>
+    `<span style="color:${COLORS[i]}">${r.polys[i].length
+      ? v.toFixed(2) : "<span class='miss'>못 냄</span>"}</span>`).join(" · ");
+  // 두 개를 비교할 때만 차이를 적는다 — 셋 이상이면 무엇에서 무엇을 뺀 것인지
+  // 화면이 말해 줄 수 없다
+  const d = RUN_IDS.length === 2 && r.polys[0].length && r.polys[1].length
+    ? ` <span class="${r.delta >= 0 ? "up" : "down"}">${
+        r.delta >= 0 ? "+" : ""}${r.delta.toFixed(2)}</span>` : "";
+  return `<div class="tile">
+    <img src="${r.crop}" loading="lazy" alt="">
+    <svg viewBox="0 0 ${r.size} ${r.size}" preserveAspectRatio="none">
+      ${polys}
+      <polygon class="truth" points="${r.truth.map(q => q.join(",")).join(" ")}"></polygon>
+    </svg>
+    <span class="lab">${r.box_id}</span>
+    <span class="sc">${scores}${d}</span>
+  </div>`;
+}).join("");
+</script>

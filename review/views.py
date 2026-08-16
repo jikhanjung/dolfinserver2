@@ -26,9 +26,9 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from finseg import baseline, geometry, rules
+from finseg import baseline, evaluate, geometry, rules
 from finseg.models import (BASE_PARTIAL, CLASS_KEYS, CLASSES, EDGES, FACING,
-                           Box, Crop, Review)
+                           Box, Crop, Mask, Review, Run)
 
 
 def _tile(state, crop):
@@ -133,17 +133,26 @@ def _tiles_for(boxes):
     return out
 
 
-def _reviewed_order():
+def _reviewed_order(cls=""):
     """검토를 **마친 순서**대로 상자 번호. 앞이 먼저 본 것이다.
 
     `Review` 는 쌓이므로 한 상자에 여러 건이 붙는다. **처음 본 때**로 자리를
     잡는다 — 고쳐 매겼다고 순서가 바뀌면 "1페이지" 가 어제와 달라진다.
+
+    `cls` 를 주면 그 분류만 낸다. 거르는 기준은 **유효 판정**(가장 늦은 것)이라,
+    `아무것도아님` 으로 넘겼다가 나중에 `사람` 으로 고친 상자는 `사람` 에서
+    나온다 — 자취가 아니라 지금 값으로 본다.
     """
-    seen, order = set(), []
+    seen, order, latest = set(), [], {}
+    for box_id, c in (Review.objects.order_by("id")
+                      .values_list("box_id", "cls")):
+        latest[box_id] = c
     for box_id in (Review.objects.order_by("at", "id")
                    .values_list("box_id", flat=True)):
-        if box_id not in seen:
-            seen.add(box_id)
+        if box_id in seen:
+            continue
+        seen.add(box_id)
+        if not cls or latest.get(box_id) == cls:
             order.append(box_id)
     return order
 
@@ -162,6 +171,9 @@ def batch(request):
     mode = request.GET.get("mode", "todo")
     if mode not in ("todo", "done", "stuck"):
         mode = "todo"
+    cls = request.GET.get("cls", "")
+    if cls not in {c for c, _ in CLASSES}:
+        cls = ""
     base = (Box.objects.filter(masks__is_current=True)
             .select_related("crop").prefetch_related("masks", "reviews"))
 
@@ -176,7 +188,7 @@ def batch(request):
             .order_by("at", "id").values_list("box_id", flat=True))
         total, qs = len(ids), None
     elif mode == "done":
-        ids = _reviewed_order()
+        ids = _reviewed_order(cls)
         total, qs = len(ids), None
     else:
         ids = None
@@ -200,7 +212,7 @@ def batch(request):
 
     return JsonResponse({
         "tiles": tiles, "mode": mode, "page": page, "total": total,
-        "pages": pages,
+        "pages": pages, "cls": cls,
     })
 
 
@@ -290,6 +302,69 @@ def edit(request, box_id):
         "geom": json.dumps(geom),
         "facings": json.dumps(FACING, ensure_ascii=False),
         "classes": json.dumps(CLASSES, ensure_ascii=False),
+    })
+
+
+@require_GET
+def compare(request):
+    """엔진 둘을 **눈으로** 비교한다 — `/compare?runs=5,16&date=2019-06-17`
+
+    `eval_masks` 는 평균과 비율을 내지만 **어디서 틀리는지는 말해 주지 않는다.**
+    다음 개선점은 늘 나쁜 쪽 꼬리에 있으므로 **낮은 IoU 부터** 보여 준다.
+
+    계산은 `finseg.evaluate` 를 부른다 — 표와 화면이 다른 숫자를 말하면
+    어느 쪽을 믿을지 알 수 없다.
+    """
+    ids = [int(x) for x in request.GET.get("runs", "").replace(",", " ").split()
+           if x.strip().isdigit()][:4]
+    date = request.GET.get("date", "")
+    order = request.GET.get("order", "worst")
+    page = max(int(request.GET.get("page", 1)), 1)
+    n = min(int(request.GET.get("n", 24)), 60)
+
+    runs = list(Run.objects.filter(id__in=ids)) if ids else []
+    runs.sort(key=lambda r: ids.index(r.id))
+    boxes = Box.objects.select_related("image").prefetch_related("masks", "reviews")
+    if date:
+        boxes = boxes.filter(image__obsdate=date)
+    crops = {c.box_id: c for c in Crop.objects.all()}
+    rows, summary = [], []
+    if runs:
+        truth = evaluate.truth_for(boxes, crops)
+        got = {r.id: {m.box_id: m for m in
+                      Mask.objects.filter(run_id=r.id, box_id__in=truth)}
+               for r in runs}
+        for box_id, tpts in truth.items():
+            crop = crops[box_id]
+            per = [evaluate.iou(got[r.id].get(box_id), tpts, crop) for r in runs]
+            rows.append({
+                "box_id": box_id, "crop": f"/crops/{crop.path}", "size": crop.w,
+                "truth": [[round(x, 1), round(y, 1)] for x, y in tpts],
+                "ious": [round(v, 3) for v in per],
+                # 첫 run 을 기준으로 삼는다 — 보통 옛 엔진이 앞에 온다
+                "delta": round(per[-1] - per[0], 3) if len(per) > 1 else 0.0,
+                "polys": [
+                    [[round(x, 1), round(y, 1)] for x, y in geometry.to_crop(
+                        geometry.loads(got[r.id][box_id].polygon), crop)]
+                    if box_id in got[r.id] else []
+                    for r in runs],
+            })
+        for i, r in enumerate(runs):
+            st = evaluate.score([x["ious"][i] for x in rows])
+            st.update(run=r.id, kind=r.kind, model=r.model,
+                      produced=sum(1 for x in rows if x["polys"][i]))
+            summary.append(st)
+        key = {"worst": lambda x: x["ious"][0], "best": lambda x: -x["ious"][0],
+               "gain": lambda x: -x["delta"], "loss": lambda x: x["delta"],
+               "box": lambda x: x["box_id"]}.get(order, lambda x: x["ious"][0])
+        rows.sort(key=key)
+    pages = max((len(rows) + n - 1) // n, 1)
+    page = min(page, pages)
+    return render(request, "review/compare.html", {
+        "runs": runs, "date": date, "order": order, "page": page, "pages": pages,
+        "total": len(rows), "summary": summary,
+        "rows": json.dumps(rows[(page - 1) * n:page * n], ensure_ascii=False),
+        "all_runs": Run.objects.filter(kind__in=("sam2", "yolo")).order_by("-id")[:20],
     })
 
 
