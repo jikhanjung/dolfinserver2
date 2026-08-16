@@ -41,6 +41,12 @@ def _tile(state, crop):
     pts = geometry.to_crop(geometry.loads(state["polygon"]), crop) \
         if state["polygon"] else []
     base = geometry.loads(state["base_line"])
+    # **이 두 점이 사람이 찍은 것인가, 기계의 제안인가.** 화면이 이것을 모르면
+    # 되짚어 보다가 딴 축만 고쳐 저장할 때 `base_moved` 가 거짓이라 밑동이 빈
+    # 채로 새 판정이 쌓이고, 그것이 앞의 것을 덮어 **사람이 찍은 두 점이
+    # 버려진다.** 실제로 그렇게 76건을 잃었다.
+    base_human = bool(review and review.base_line)
+    poly_human = bool(review and review.polygon)
     if len(base) == 2:
         base = geometry.to_crop(base, crop)
     else:
@@ -82,6 +88,8 @@ def _tile(state, crop):
         "cls": cls,
         "edges": (review.edges if review else "") or "both",
         "verdict": (review.verdict if review else "") or "ok",
+        "base_human": base_human,
+        "poly_human": poly_human,
         "base_partial": state["base_partial"],
         "facing": state["facing"],
         "facing_hint": facing_hint,
@@ -166,24 +174,33 @@ def batch(request):
             id__in=latest, verdict="fix", polygon="", base_line="")
             .exclude(cls="none").exclude(cls="")
             .order_by("at", "id").values_list("box_id", flat=True))
-        total = len(ids)
-        want = ids[(page - 1) * n:page * n]
-        by_id = {b.id: b for b in base.filter(id__in=want)}
-        tiles = _tiles_for([by_id[i] for i in want if i in by_id])
+        total, qs = len(ids), None
     elif mode == "done":
-        order = _reviewed_order()
-        total = len(order)
-        want = order[(page - 1) * n:page * n]
-        by_id = {b.id: b for b in base.filter(id__in=want)}
-        tiles = _tiles_for([by_id[i] for i in want if i in by_id])
+        ids = _reviewed_order()
+        total, qs = len(ids), None
     else:
+        ids = None
         qs = base.filter(reviews__isnull=True).distinct().order_by("id")
         total = qs.count()
-        tiles = _tiles_for(qs[(page - 1) * n:(page - 1) * n + n * 2])[:n]
+
+    # **쪽수를 먼저 정하고 자른다.** 범위를 넘긴 요청은 마지막 쪽으로 접어
+    # 준다 — 안 그러면 빈 격자가 뜨는데 화면이 "끝이다" 인지 "뭔가 잘못됐다"
+    # 인지 말해 주지 않는다. `todo` 는 검토할수록 쪽수가 줄어서 화면이 든 값이
+    # 늘 조금 낡아 있고, 끝에서 `]` 를 한 번 더 누르면 곧바로 걸린다.
+    pages = max((total + n - 1) // n, 1)
+    page = min(page, pages)
+    lo = (page - 1) * n
+
+    if ids is None:
+        tiles = _tiles_for(qs[lo:lo + n * 2])[:n]
+    else:
+        want = ids[lo:lo + n]
+        by_id = {b.id: b for b in base.filter(id__in=want)}
+        tiles = _tiles_for([by_id[i] for i in want if i in by_id])
 
     return JsonResponse({
         "tiles": tiles, "mode": mode, "page": page, "total": total,
-        "pages": max((total + n - 1) // n, 1),
+        "pages": pages,
     })
 
 

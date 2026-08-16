@@ -131,11 +131,13 @@
     <button id="mtodo" onclick="load({mode:'todo'})">검토할 것</button
     ><button id="mdone" onclick="load({mode:'done'})">검토한 것</button
     ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button>
+    <button id="first" onclick="load({page:1})" title="첫 페이지 (Home)">«</button>
     <button id="prev" onclick="load({page:page-1})">←</button>
     <span id="pg" class="stat">1 / 1</span>
     <button id="next" onclick="load({page:page+1})">→</button>
+    <button id="last" onclick="load({page:pages})" title="마지막 페이지 (End)">»</button>
     <span id="nsum" class="stat"></span>
-    <kbd>[</kbd><kbd>]</kbd>
+    <kbd>[</kbd><kbd>]</kbd><kbd>Home</kbd><kbd>End</kbd>
   </span>
 
   <div class="warn" id="warn" hidden></div>
@@ -215,8 +217,13 @@ function itemOf(d, t) {
            edges: d.dataset.edges, verdict: d.dataset.verdict,
            base_partial: d.dataset.partial || "",
            facing: facingOf(d, t),
-           base: t.base, base_moved: !!t.base_moved,
-           polygon: t.points, polygon_edited: !!t.poly_edited };
+           // **이미 사람 것인 교정은 계속 실어 보낸다.** 안 그러면 딴 축만
+           // 고쳐 저장할 때 그 교정이 빠진 판정이 쌓여 앞의 것을 덮는다.
+           // `*_moved` 는 "이번에 건드렸나" 이고 `*_human` 은 "이미 사람
+           // 것인가" 다 — 둘 중 하나면 보낸다
+           base: t.base, base_moved: !!t.base_moved || !!t.base_human,
+           polygon: t.points,
+           polygon_edited: !!t.poly_edited || !!t.poly_human };
 }
 
 // **지금 상태를 한 줄로 요약한다.** 마지막으로 저장(또는 불러온) 것과 같으면
@@ -343,8 +350,10 @@ function nav() {
   document.getElementById("mdone").classList.toggle("on", mode === "done");
   document.getElementById("mstuck").classList.toggle("on", mode === "stuck");
   document.getElementById("pg").textContent = `${page} / ${pages}`;
+  document.getElementById("first").disabled = page <= 1;
   document.getElementById("prev").disabled = page <= 1;
   document.getElementById("next").disabled = page >= pages;
+  document.getElementById("last").disabled = page >= pages;
   // 'todo' 가 아니면 저장이 자동이라 이 단추가 할 일이 없다
   const todo = mode === "todo";
   document.getElementById("btnsave").hidden = !todo;
@@ -562,6 +571,10 @@ addEventListener("keydown", e => {
   if (e.key === "y" && !touched) { e.preventDefault(); return save(true); }
   if (e.key === "[") { e.preventDefault(); return load({page: page - 1}); }
   if (e.key === "]") { e.preventDefault(); return load({page: page + 1}); }
+  // 처음 본 것과 가장 최근 본 것을 오가는 일이 잦다 — 기준이 흔들렸는지
+  // 보려면 첫 페이지와 마지막 페이지를 견줘야 한다
+  if (e.key === "Home") { e.preventDefault(); return load({page: 1}); }
+  if (e.key === "End") { e.preventDefault(); return load({page: pages}); }
   if (!hover) return;
   const t = tiles.find(x => x.box_id == hover.dataset.box);
   if (!t) return;
