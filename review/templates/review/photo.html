@@ -5,23 +5,27 @@
   :root { --bg:#0d1116; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
           --here:#ffe23c; --other:#4aa3ff; --none:#e05561; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); display:flex;
+         flex-direction:column;
          font:14px/1.5 system-ui,'Noto Sans KR',sans-serif; }
-  header { position:sticky; top:0; z-index:10; background:var(--bg);
-           border-bottom:1px solid var(--line); padding:8px 14px;
-           display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  header { border-bottom:1px solid var(--line); padding:7px 13px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   .stat { color:var(--dim); font-size:13px; }
   .stat b { color:var(--fg); }
+  button { background:#1d242e; color:var(--fg); border:1px solid var(--line);
+           border-radius:6px; padding:5px 12px; font:inherit; cursor:pointer; }
   kbd { background:#1d242e; border:1px solid var(--line); border-radius:4px;
         padding:1px 6px; font-size:12px; }
   .key { display:inline-block; width:11px; height:11px; border-radius:3px;
          vertical-align:-1px; margin-right:4px; }
-  #wrap { position:relative; line-height:0; }
-  #wrap img { width:100%; height:auto; display:block; }
-  #wrap svg { position:absolute; inset:0; width:100%; height:100%; }
+  #stage { flex:1; position:relative; overflow:hidden; background:#000;
+           touch-action:none; cursor:grab; }
+  #stage.panning { cursor:grabbing; }
+  #stage svg { position:absolute; inset:0; width:100%; height:100%; }
   rect.here  { fill:none; stroke:var(--here);  stroke-width:3;
                vector-effect:non-scaling-stroke; }
-  rect.other { fill:none; stroke:var(--other); stroke-width:2; opacity:.45;
+  rect.other { fill:none; stroke:var(--other); stroke-width:2; opacity:.5;
                stroke-dasharray:8 6; vector-effect:non-scaling-stroke; }
   /* **없으면 없다고 말한다.** 깨진 이미지 아이콘은 왜 안 뜨는지 안 알려 준다 */
   .miss { margin:14px; padding:12px 14px; border-radius:8px;
@@ -45,16 +49,25 @@
   <span class="stat">
     <span class="key" style="background:var(--here)"></span>이 상자
     {% if others %}<span class="key" style="background:var(--other);
-      margin-left:10px"></span>같은 사진의 다른 상자 {{ others|length }}{% endif %}
-    · <kbd>Esc</kbd> 닫기
+      margin-left:10px"></span>다른 상자 {{ others|length }}{% endif %}
   </span>
+  {% if exists %}
+  <span class="stat" id="zoom"></span>
+  <span class="stat">
+    <kbd>휠</kbd>확대 · <kbd>끌기</kbd>/<kbd>Space</kbd>이동 ·
+    <kbd>1</kbd>이 상자로 <kbd>0</kbd>전체 <kbd>Esc</kbd>닫기
+  </span>
+  <button onclick="here()">이 상자로</button>
+  <button onclick="fit()">전체 보기</button>
+  {% endif %}
 </header>
 
 {% if exists %}
-<div id="wrap">
-  <img src="{{ src }}" alt="{{ img.path }}">
-  <svg viewBox="0 0 {{ img.width }} {{ img.height }}"
-       preserveAspectRatio="none"></svg>
+<div id="stage">
+  <svg id="svg" preserveAspectRatio="xMidYMid meet">
+    <image id="img" x="0" y="0"></image>
+    <g id="boxes"></g>
+  </svg>
 </div>
 {% else %}
 <div class="miss">
@@ -74,20 +87,109 @@
 
 <script>
 const HERE = {{ here|safe }}, OTHERS = {{ others|safe }};
-const svg = document.querySelector("#wrap svg");
+const W = {{ img.width|default:0 }}, H = {{ img.height|default:0 }};
+const svg = document.getElementById("svg");
+const stage = document.getElementById("stage");
+
 if (svg) {
-  const box = (b, cls) =>
+  document.getElementById("img").setAttribute("href", "{{ src }}");
+  document.getElementById("img").setAttribute("width", W);
+  document.getElementById("img").setAttribute("height", H);
+  const rect = (b, cls) =>
     `<rect class="${cls}" x="${b.x1}" y="${b.y1}"
            width="${b.x2 - b.x1}" height="${b.y2 - b.y1}"></rect>`;
   // 다른 상자를 먼저 깔고 이 상자를 위에 — 겹쳐도 보던 것이 안 가린다
-  svg.innerHTML = OTHERS.map(b => box(b, "other")).join("")
-                + box(HERE, "here");
-  // 4928×3280 을 창에 맞추면 상자가 작다. 열자마자 그 자리로 스크롤한다
-  addEventListener("load", () => {
-    const r = svg.getBoundingClientRect();
-    const cy = (HERE.y1 + HERE.y2) / 2 / {{ img.height }} * r.height;
-    scrollTo({top: r.top + scrollY + cy - innerHeight / 2, behavior: "instant"});
+  document.getElementById("boxes").innerHTML =
+    OTHERS.map(b => rect(b, "other")).join("") + rect(HERE, "here");
+
+  // **보고 있는 사각형은 화면 비율에 맞춘다.** 뷰박스 비율이 요소와 다르면
+  // `meet` 이 레터박스를 넣고, 그러면 좌표가 어긋난다 (편집 창에서 겪은 것).
+  let view = {x: 0, y: 0, w: W, h: H};
+  let space = false, anchor = null;
+
+  // 좌표 변환은 브라우저에게 묻는다 — 손으로 계산하지 않는다
+  const at = ev => {
+    const p = new DOMPoint(ev.clientX, ev.clientY)
+      .matrixTransform(svg.getScreenCTM().inverse());
+    return [p.x, p.y];
+  };
+
+  function draw() {
+    const r = stage.getBoundingClientRect();
+    view.h = view.w * r.height / r.width;   // 비율을 늘 요소에 맞춰 둔다
+    svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+    document.getElementById("zoom").textContent =
+      `${Math.round(r.width / view.w * 100)}%`;
+  }
+
+  // 사각형 하나가 다 들어오게 맞춘다. `pad` 는 둘레를 얼마나 함께 볼지다 —
+  // 이 창을 여는 이유가 둘레를 보는 것이라 1.0 이 아니라 넉넉히 준다
+  function frame(x1, y1, x2, y2, pad) {
+    const r = stage.getBoundingClientRect();
+    const ar = r.width / r.height;
+    let w = Math.max((x2 - x1) * pad, (y2 - y1) * pad * ar);
+    w = Math.max(w, 32);
+    view = {x: (x1 + x2) / 2 - w / 2, y: (y1 + y2) / 2 - w / ar / 2, w, h: w / ar};
+    draw();
+  }
+  const fit = () => frame(0, 0, W, H, 1);
+  const here = () => frame(HERE.x1, HERE.y1, HERE.x2, HERE.y2, 6);
+  window.fit = fit; window.here = here;
+
+  function startPan(ev) {
+    const [ox, oy] = at(ev);
+    stage.classList.add("panning");
+    const move = e => {
+      const [nx, ny] = at(e);
+      view.x += ox - nx; view.y += oy - ny;
+      draw();
+    };
+    const up = () => { stage.classList.remove("panning");
+                       removeEventListener("pointermove", move);
+                       removeEventListener("pointerup", up); };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  }
+
+  // 여기서는 고를 것이 없으니 **좌클릭 끌기가 그대로 이동**이다.
+  // 편집 창은 좌클릭을 선택에 썼지만 그쪽은 고를 것이 있어서다.
+  stage.onpointerdown = ev => {
+    if (ev.button === 0 || ev.button === 1) { ev.preventDefault(); startPan(ev); }
+  };
+
+  stage.onwheel = ev => {
+    ev.preventDefault();
+    const [cx, cy] = at(ev);
+    const k = ev.deltaY > 0 ? 1.2 : 1 / 1.2;
+    // 위로는 사진 전체, 아래로는 화소가 보일 때까지
+    const w = Math.min(Math.max(view.w * k, 60), Math.max(W, H) * 2);
+    view = {x: cx - (cx - view.x) * (w / view.w),
+            y: cy - (cy - view.y) * (w / view.w), w, h: view.h};
+    draw();
+  };
+
+  // Space 를 누르고 있으면 단추 없이 움직임만으로 밀린다 (편집 창과 같다)
+  addEventListener("pointermove", e => {
+    if (!space) return;
+    if (!anchor) { anchor = at(e); return; }
+    const [nx, ny] = at(e);
+    view.x += anchor[0] - nx; view.y += anchor[1] - ny;
+    draw();
   });
+
+  addEventListener("keydown", e => {
+    if (e.key === " ") { e.preventDefault();
+                         if (!space) { space = true; anchor = null; } }
+    else if (e.key === "0") fit();
+    else if (e.key === "1") here();
+    else if (e.key === "Escape") close();
+  });
+  addEventListener("keyup", e => { if (e.key === " ") { space = false; anchor = null; } });
+  addEventListener("blur", () => { space = false; anchor = null; });
+  addEventListener("resize", draw);
+
+  // 열자마자 사진 전체를 보여 준다 — 둘레를 보러 온 창이다.
+  // 어느 것을 보다 왔는지는 노란 테가 말해 준다
+  fit();
 }
-addEventListener("keydown", e => { if (e.key === "Escape") close(); });
 </script>
