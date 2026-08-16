@@ -178,7 +178,7 @@ const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
 document.getElementById("keys").innerHTML =
   CLASSES.map(([k, ko], i) =>
     `<kbd style="border-color:var(--${k})">${i + 1}</kbd>${ko}`).join(" ")
-  + ` · <kbd>e</kbd>날 <kbd>p</kbd>아래경계 <kbd>f</kbd>앞쪽 <kbd>x</kbd>교정필요`
+  + ` · <kbd>e</kbd>날 <kbd>p</kbd>아래경계 <kbd>f</kbd>앞쪽(모름→왼쪽→오른쪽) <kbd>x</kbd>교정필요`
   + ` · 점을 끌면 밑동 · <kbd>우클릭</kbd>메뉴 · <kbd>Enter</kbd>저장`;
 
 function setHover(d) {
@@ -419,6 +419,15 @@ function act(d, t, key) {
     d.dataset.verdict = d.dataset.verdict === "fix" ? "ok" : "fix";
   else if (key.startsWith("part:")) d.dataset.partial = key.slice(5);
   else if (key.startsWith("face:")) d.dataset.facing = key.slice(5);
+  else if (key === "f") {
+    // **여기서는 순환이 맞다.** `e` 를 순환에서 뺀 것은 값이 넷이라 목표까지
+    // 중간값 둘을 지나야 했기 때문이다. 여기는 셋이고 기본이 "모름" 이라
+    // 왼쪽은 한 번, 오른쪽은 두 번이고, 그 두 번은 붙여 누르므로 저장이
+    // 묶인다. 되짚기에서 사이를 길게 두고 누르면 "왼쪽" 이 한 건 쌓이는 것이
+    // 남는 값인데, 손이 훨씬 빨라지는 값이 그보다 크다.
+    const order = FACINGS.map(([k]) => k);
+    d.dataset.facing = order[(order.indexOf(d.dataset.facing) + 1) % order.length];
+  }
   else if (key === "photo")
     // 이름을 준 창이라 우클릭을 거듭해도 창이 쌓이지 않고 같은 창이 바뀐다
     return open(`/photo/${d.dataset.box}`, "finphoto"), true;
@@ -543,11 +552,13 @@ addEventListener("keydown", e => {
     }
     return;
   }
-  if (e.key === "e" || e.key === "p" || e.key === "f") {
+  // `f` 는 차림표가 아니라 바로 돈다 (act 안의 주석). 우클릭 메뉴에는 그대로
+  // 남아 있어서 값을 곧장 고르거나 무엇이 있는지 볼 수 있다
+  if (e.key === "e" || e.key === "p") {
     e.preventDefault();
     const r = hover.getBoundingClientRect();
     return showMenu(hover, t, r.left + 8, r.top + 8,
-                    {e: "edges", p: "partials", f: "facings"}[e.key]);
+                    e.key === "e" ? "edges" : "partials");
   }
   act(hover, t, e.key);
 });
