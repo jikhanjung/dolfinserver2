@@ -4,7 +4,7 @@
 <style>
   :root { --bg:#12161c; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
           --fin:#3fb27f; --fluke:#4aa3ff; --rostrum:#c88bff; --other:#e0a63f;
-          --head:#ff8ab5; --body:#7f8cff; --bird:#5fd0d8; --pectoral:#9fd356;
+          --head:#ff8ab5; --body:#7f8cff; --bird:#5fd0d8; --pectoral:#9fd356; --person:#d98cff;
           --none:#e05561; --fix:#ffb300; --base:#ffe23c; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
@@ -32,6 +32,7 @@
   .tile[data-cls="body"]    { border-color:var(--body); }
   .tile[data-cls="bird"]    { border-color:var(--bird); }
   .tile[data-cls="pectoral"]{ border-color:var(--pectoral); }
+  .tile[data-cls="person"] { border-color:var(--person); }
   .tile[data-cls="other"]   { border-color:var(--other); }
   .tile[data-cls="none"]    { border-color:var(--none); }
   .tile[data-cls="none"] img, .tile[data-cls="none"] svg { opacity:.3; }
@@ -161,6 +162,11 @@ const PARTIALS = {{ partials|safe }};   // 밑동 두 점 중 짐작한 것
 const FACINGS  = {{ facings|safe }};    // 두 점 중 어느 쪽이 앞(머리 쪽)인가
 const CLS_KO = Object.fromEntries(CLASSES), EDG_KO = Object.fromEntries(EDGES);
 const CLS_KEYS = CLASSES.map(c => c[0]), EDG_KEYS = EDGES.map(e => e[0]);
+// **키는 분류 순서와 따로 온다** (`models.CLASS_KEYS`). 순서는 YOLO 클래스
+// 번호라 못 바꾸고, 키는 손에 익는 것이라 사람 쪽 사정으로 정한다
+const CLASS_KEYS = {{ class_keys|safe }};
+const CLS_BY_KEY = Object.fromEntries(
+  CLASSES.map(([k]) => [CLASS_KEYS[k], k]).filter(([key]) => key));
 // **날은 골라서 넣는다 — 순환시키지 않는다.** 하나로 순환시키면 목표 값에
 // 닿으려고 중간값을 반드시 지나가야 하고, 그 중간값은 판단이 아니라 이동인데도
 // 판정으로 저장된다. 시간으로 묶어 가릴 수는 있어도 없앨 수는 없다.
@@ -179,7 +185,7 @@ const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
 
 document.getElementById("keys").innerHTML =
   CLASSES.map(([k, ko], i) =>
-    `<kbd style="border-color:var(--${k})">${i + 1}</kbd>${ko}`).join(" ")
+    `<kbd style="border-color:var(--${k})">${CLASS_KEYS[k]}</kbd>${ko}`).join(" ")
   + ` · <kbd>e</kbd>날 <kbd>p</kbd>아래경계 <kbd>f</kbd>앞쪽(모름→왼쪽→오른쪽) <kbd>x</kbd>교정필요`
   + ` · 점을 끌면 밑동 · <kbd>우클릭</kbd>메뉴 · <kbd>Enter</kbd>저장`;
 
@@ -190,6 +196,16 @@ function setHover(d) {
 }
 
 // **일괄 저장과 즉시 저장이 같은 것을 보낸다.** 둘로 갈라 두면 한쪽만 고쳐진다
+// **제안도 값이다.** 사람이 안 누르면 기하 제안이 그대로 판정이 된다 —
+// `cls`·`edges`·`verdict` 가 기본값으로 저장되는 것과 같다. 밑동 제안을
+// 저장하지 않는 것과는 사정이 다르다: 그것은 85%가 틀리지만 이 규칙은
+// 문턱 위에서 149/149 였다 (`baseline.propose_facing`).
+//
+// 나중에 "이게 사람 것이냐 규칙 것이냐" 를 물을 수 있다. 규칙이 결정적이라
+// **언제든 다시 계산해 견줄 수 있고**, 값이 갈리는 것은 곧 사람이 규칙을
+// 뒤집은 자리다 — 알아야 할 쪽은 그것이라 따로 표를 두지 않는다.
+const facingOf = (d, t) => d.dataset.facing || t.facing_hint || "";
+
 function itemOf(d, t) {
   // **여기에 안 실으면 화면만 바뀌고 자료는 안 바뀐다.** 축을 더할 때마다 이
   // 함수와 `sigOf` 를 같이 고쳐야 한다 — 실제로 `base_partial` 을 문자열로
@@ -198,7 +214,7 @@ function itemOf(d, t) {
   return { box_id: t.box_id, mask_id: t.mask_id, cls: d.dataset.cls,
            edges: d.dataset.edges, verdict: d.dataset.verdict,
            base_partial: d.dataset.partial || "",
-           facing: d.dataset.facing || "",
+           facing: facingOf(d, t),
            base: t.base, base_moved: !!t.base_moved,
            polygon: t.points, polygon_edited: !!t.poly_edited };
 }
@@ -209,7 +225,7 @@ function itemOf(d, t) {
 // 손가락 움직임을 남기려는 것이 아니다.
 const sigOf = (d, t) => JSON.stringify([
   d.dataset.cls, d.dataset.edges, d.dataset.verdict, d.dataset.partial,
-  d.dataset.facing,
+  facingOf(d, t),
   t.base_moved ? t.base : null,
   t.poly_edited ? t.points : null,
 ]);
@@ -421,11 +437,8 @@ function drag(d, t) {
 // 그것이 곧 화면과 자료가 어긋나는 길이다 (`rules.py` 를 하나로 둔 것과 같은 뜻).
 function act(d, t, key) {
   // 숫자키는 CLASSES 순서 그대로다 — 분류가 늘면 키도 저절로 는다
-  const n = key.length === 1 && key >= "1" && key <= "9"
-          ? +key - 1 : -1;
   if (key.startsWith("edge:")) d.dataset.edges = key.slice(5);
-  else if (n >= 0 && n < CLS_KEYS.length) d.dataset.cls = CLS_KEYS[n];
-  else if (n >= 0) return false;
+  else if (CLS_BY_KEY[key]) d.dataset.cls = CLS_BY_KEY[key];
   else if (key === "x")
     d.dataset.verdict = d.dataset.verdict === "fix" ? "ok" : "fix";
   else if (key.startsWith("part:")) d.dataset.partial = key.slice(5);
@@ -458,7 +471,7 @@ function act(d, t, key) {
 // 못 찾아 헤맨 것이 안내줄에 적혀 있었는데도 그랬다 — 우클릭이 더 눈에 띈다
 const MENU = [["원본 사진 — 주변을 본다", "photo"],
               ["윤곽 고치기 — 크게 띄운다", "edit"], null,
-              ...CLASSES.map(([k, ko], i) => [ko, String(i + 1)]), null,
+              ...CLASSES.map(([k, ko]) => [ko, CLASS_KEYS[k]]), null,
               ["교정 필요", "x"], ["날 …", "edges"],
               ["아래경계 …", "partials"], ["앞쪽 …", "facings"]];
 

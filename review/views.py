@@ -27,8 +27,8 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from finseg import baseline, geometry, rules
-from finseg.models import (BASE_PARTIAL, CLASSES, EDGES, FACING, Box,
-                           Crop, Review)
+from finseg.models import (BASE_PARTIAL, CLASS_KEYS, CLASSES, EDGES, FACING,
+                           Box, Crop, Review)
 
 
 def _tile(state, crop):
@@ -50,7 +50,9 @@ def _tile(state, crop):
             [(box.x1, box.y1), (box.x2, box.y2)], crop)
         base = list(baseline.propose_from_box((bx1, by1, bx2, by2)))
     # **앞쪽 제안.** 사람이 아직 안 말했을 때만 낸다 — 말했으면 그것이 답이다.
-    # 제안일 뿐이라 저장되지 않는다: `f` 를 눌러야 사람의 판정이 된다.
+    # 제안은 **저장까지 간다** — 화면이 안 누른 기본값을 판정으로 적는 것과
+    # 같다 (`cls`·`edges`·`verdict`). 밑동 제안을 안 적는 것과 사정이 다르다:
+    # 그것은 85%가 틀리지만 이 규칙은 문턱 위에서 149/149 였다.
     #
     # 두 가지를 조심한다. (1) `state["cls"]` 는 **아직 안 본 상자에서 빈 값**이라
     # 그것으로 거르면 제안이 가장 필요한 것들이 전부 빠진다 — 화면이 쓰는 기본값
@@ -104,6 +106,7 @@ def index(request):
     # 문구는 `finseg.baseline` 에 있다 — 규칙을 고치면 화면이 따라온다.
     return render(request, "review/grid.html", {
         "classes": json.dumps(CLASSES, ensure_ascii=False),
+        "class_keys": json.dumps(CLASS_KEYS, ensure_ascii=False),
         "edges": json.dumps(EDGES, ensure_ascii=False),
         "partials": json.dumps(BASE_PARTIAL, ensure_ascii=False),
         "facings": json.dumps(FACING, ensure_ascii=False),
