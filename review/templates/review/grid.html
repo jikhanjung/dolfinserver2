@@ -684,12 +684,20 @@ async function save(force) {
 async function stat() {
   const p = await fetch("/api/progress").then(r => r.json());
   const el = document.getElementById("stat");
-  el.innerHTML = `<b>${(p["검토함"]||0).toLocaleString()}</b> / `
-    + `${(p["상자"]||0).toLocaleString()} 검토`
-    + ` · 양성 <b>${(p.positive||0).toLocaleString()}</b>`
-    + ` 배경 <b>${(p.background||0).toLocaleString()}</b>`
-    + (p.drop ? ` 뺌 <b>${p.drop.toLocaleString()}</b>` : "")
-    + (p["마스크없음"] ? ` · 마스크없음 ${p["마스크없음"].toLocaleString()}` : "");
+  const n = k => (p[k] || 0).toLocaleString();
+  // **남은 일을 먼저 적는다.** 엔진을 갈아 끼우면 "검토함" 은 그대로인데 그
+  // 판정들이 옛 마스크에 대한 말이 된다 — 그것만 보면 다 끝난 것처럼 보인다
+  const left = (p["엔진바뀜"] || 0) + (p.pending || 0) + (p["교정대기"] || 0);
+  el.innerHTML = (left
+      ? `<b style="color:var(--fix)">남은 일 ${left.toLocaleString()}</b>`
+        + (p["엔진바뀜"] ? ` (엔진바뀜 ${n("엔진바뀜")}` : " (")
+        + (p.pending ? ` 안 봄 ${n("pending")}` : "")
+        + (p["교정대기"] ? ` 교정대기 ${n("교정대기")}` : "") + ") · "
+      : `<b style="color:var(--fin)">남은 일 없다</b> · `)
+    + `검토 <b>${n("검토함")}</b>/${n("상자")}`
+    + ` · 양성 <b>${n("positive")}</b> 배경 <b>${n("background")}</b>`
+    + (p.drop ? ` 뺌 <b>${n("drop")}</b>` : "")
+    + (p["마스크없음"] ? ` · 마스크없음 ${n("마스크없음")}` : "");
 }
 
 load();

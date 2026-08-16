@@ -185,6 +185,11 @@ def progress():
             c["마스크없음"] += 1
         if review is not None:
             c["검토함"] += 1
+            # **판정이 어느 마스크를 보고 내려졌나.** 엔진을 갈아 끼우면
+            # "검토함" 은 그대로인데 그 판정들은 옛 마스크에 대한 말이 된다 —
+            # 한 숫자로만 보면 다 끝난 것처럼 보이고, 정작 남은 일이 안 보인다.
+            if mask is not None and review.mask_id != mask.id:
+                c["엔진바뀜"] += 1
             c[f"분류:{review.cls}"] += 1
             if review.edges and review.edges != "both":
                 c[f"날:{review.edges}"] += 1
