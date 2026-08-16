@@ -422,7 +422,7 @@ function act(d, t, key) {
 
 // 메뉴는 키가 하는 일을 **보여 주는** 자리다. 오늘 `e`(날)와 `x`(교정필요)를
 // 못 찾아 헤맨 것이 안내줄에 적혀 있었는데도 그랬다 — 우클릭이 더 눈에 띈다
-const MENU = [["원본 사진 — 둘레를 본다", "photo"],
+const MENU = [["원본 사진 — 주변을 본다", "photo"],
               ["윤곽 고치기 — 크게 띄운다", "edit"], null,
               ...CLASSES.map(([k, ko], i) => [ko, String(i + 1)]), null,
               ["교정 필요", "x"], ["날 …", "edges"],

@@ -224,14 +224,23 @@ def edit(request, box_id):
     격자와 같은 `_tile` 을 쓴다 — 화면에 보이는 것이 곧 저장될 것이어야 한다.
     """
     box = get_object_or_404(
-        Box.objects.select_related("crop").prefetch_related("masks", "reviews"),
-        pk=box_id)
+        Box.objects.select_related("crop", "image")
+        .prefetch_related("masks", "reviews"), pk=box_id)
     crop = getattr(box, "crop", None)
     if crop is None:
         raise Http404("크롭이 없는 상자다")
+    img = box.image
+    src = settings.FIN_PHOTOS / img.path
+    # **원본이 있으면 그것을 깐다.** 640 크롭은 원본의 300px 언저리를 늘린 것이라
+    # 확대할수록 뭉개진다. 원본을 크롭 좌표에 얹으면 좌표계는 그대로 두고 —
+    # 저장 경로가 안 바뀐다 — 화질이 살아나고 크롭 밖 주변까지 보인다.
+    geom = {"x0": crop.x0, "y0": crop.y0, "scale": crop.scale,
+            "iw": img.width or 0, "ih": img.height or 0}
     return render(request, "review/edit.html", {
         "tile": json.dumps(_tile(rules.resolve(box), crop), ensure_ascii=False),
-        "box": box, "img": box.image,
+        "box": box, "img": img,
+        "photo": f"/photos/{img.path}" if src.exists() else "",
+        "geom": json.dumps(geom),
         "classes": json.dumps(CLASSES, ensure_ascii=False),
     })
 
@@ -240,8 +249,8 @@ def edit(request, box_id):
 def photo(request, box_id):
     """원본 사진 한 장 — **크롭만 봐서는 못 가리는 것들이 있다.**
 
-    640 크롭은 상자 둘레를 `pad` 만큼만 담는다. 겹쳐 헤엄치는 무리에서 어느
-    지느러미가 어느 몸에 붙었는지, 물보라인지 뒷날인지는 **둘레를 봐야** 갈린다.
+    640 크롭은 상자 주변을 `pad` 만큼만 담는다. 겹쳐 헤엄치는 무리에서 어느
+    지느러미가 어느 몸에 붙었는지, 물보라인지 뒷날인지는 **주변을 봐야** 갈린다.
     그래서 상자를 표시한 원본을 따로 띄운다 — 이 상자는 노랑, 같은 사진의 다른
     상자는 흐리게. 어느 것을 보다 왔는지 잃지 않는다.
 

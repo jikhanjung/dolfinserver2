@@ -44,6 +44,10 @@
               stroke-width:1; stroke-dasharray:5 4;
               vector-effect:non-scaling-stroke; pointer-events:none; }
   rect.band.on { display:inline; }
+  /* **내보낼 때 이 밖은 잘린다** (`export_yolo.clip_to_crop`). 원본을 깔면
+     크롭 밖까지 보이므로, 어디까지가 자료가 되는지 화면이 말해 줘야 한다 */
+  rect.cropbox { fill:none; stroke:#6b7a8d; stroke-width:1;
+                 stroke-dasharray:10 7; vector-effect:non-scaling-stroke; }
   #stage.panning { cursor:grabbing; }
   #stage.panready { cursor:grab; }
   .warn { flex-basis:100%; background:#2a1416; border:1px solid #5c2a2f;
@@ -61,11 +65,12 @@
     <kbd>휠</kbd>확대 · <kbd>Space</kbd>누른 채 움직이면 이동
     (<kbd>가운데끌기</kbd>도) ·
     변 가운데 점: 추가 <kbd>우클릭</kbd>삭제 ·
-    <kbd>Ctrl+Z</kbd>되돌리기 <kbd>0</kbd>맞추기 <kbd>Esc</kbd>선택해제
-    <kbd>Ctrl+A</kbd>전부
+    <kbd>Ctrl+Z</kbd>되돌리기 <kbd>0</kbd>크롭에 맞추기 <kbd>9</kbd>넓게
+    <kbd>Esc</kbd>선택해제 <kbd>Ctrl+A</kbd>전부
   </span>
   <button id="undo" onclick="undo()">되돌리기</button>
-  <button onclick="fit()">전체 보기</button>
+  <button onclick="fit()">크롭에 맞추기</button>
+  <button onclick="wide()">넓게 보기</button>
   <button class="primary" onclick="commit()">저장하고 닫기</button>
   <div class="warn" id="warn" hidden></div>
 </header>
@@ -73,6 +78,7 @@
 <div id="stage">
   <svg id="svg" preserveAspectRatio="xMidYMid meet">
     <image id="img" x="0" y="0"></image>
+    <rect class="cropbox" id="cropbox"></rect>
     <line class="base" id="base"></line>
     <polygon class="mask" id="poly"></polygon>
     <g id="mids"></g>
@@ -83,6 +89,8 @@
 
 <script>
 const T = {{ tile|safe }};
+const PHOTO = "{{ photo }}";      // 원본이 있으면 그것을 깐다. 없으면 크롭
+const G = {{ geom|safe }};        // 크롭이 원본의 어디를 어떤 배율로 잘랐나
 const SIZE = T.size;
 let pts = T.points.map(p => p.slice());     // 크롭 좌표. **끝까지 이것만 쓴다**
 const stack = [];                            // 되돌리기
@@ -95,9 +103,23 @@ let sel = new Set();
 let space = false, anchor = null;
 
 const svg = document.getElementById("svg"), stage = document.getElementById("stage");
-document.getElementById("img").setAttribute("href", T.crop);
-document.getElementById("img").setAttribute("width", SIZE);
-document.getElementById("img").setAttribute("height", SIZE);
+// **원본을 크롭 좌표에 얹는다.** 좌표계는 그대로 크롭 좌표라 저장 경로가 안
+// 바뀌고, 크롭 밖 주변까지 보이며, 확대해도 안 뭉개진다 — 640 크롭은 원본의
+// 300px 언저리를 늘린 것이라 확대하면 화소가 뭉개진다.
+{
+  const im = document.getElementById("img");
+  if (PHOTO && G.iw) {
+    im.setAttribute("href", PHOTO);
+    im.setAttribute("x", -G.x0 * G.scale);
+    im.setAttribute("y", -G.y0 * G.scale);
+    im.setAttribute("width", G.iw * G.scale);
+    im.setAttribute("height", G.ih * G.scale);
+  } else {
+    im.setAttribute("href", T.crop);
+    im.setAttribute("width", SIZE);
+    im.setAttribute("height", SIZE);
+  }
+}
 
 function warn(m) {
   const el = document.getElementById("warn");
@@ -124,9 +146,18 @@ function push() { stack.push(pts.map(p => p.slice())); if (stack.length > 60) st
 function undo() { if (stack.length) { pts = stack.pop(); draw(); } }
 
 function fit() { view = {x: 0, y: 0, w: SIZE}; draw(); }
+// 크롭보다 넓게 — 주변이 어떤 상황인지 보고 다시 들어온다
+function wide() {
+  const k = 4;
+  view = {x: SIZE / 2 - SIZE * k / 2, y: SIZE / 2 - SIZE * k / 2, w: SIZE * k};
+  draw();
+}
 
 function draw() {
   svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.w}`);
+  const cb = document.getElementById("cropbox");
+  cb.setAttribute("x", 0); cb.setAttribute("y", 0);
+  cb.setAttribute("width", SIZE); cb.setAttribute("height", SIZE);
   document.getElementById("poly").setAttribute("points",
     pts.map(p => p.join(",")).join(" "));
   const [a, b] = T.base;
@@ -160,36 +191,7 @@ function bind() {
     c.onpointerdown = ev => {
       if (ev.button !== 0) return;
       ev.preventDefault(); ev.stopPropagation();
-      // 고른 것 밖의 점을 집으면 선택은 그 하나로 바뀐다. 고른 것 안을 집으면
-      // **무리 전체가 함께 움직인다** — 상자로 고르는 이유가 이것이다
-      if (!sel.has(i)) { sel = new Set([i]); paint(); }
-      const grab = [...sel];
-      const from = grab.map(k => pts[k].slice());
-      const [ox, oy] = at(ev);
-      const sx = ev.clientX, sy = ev.clientY;
-      // **끌기 시작이 확인된 뒤에 되돌리기를 쌓는다.** 눌렀다 떼기만 해도
-      // push() 하면 되돌리기 목록이 아무 일도 안 한 상태로 채워진다
-      let dragging = false;
-      // **잡을 것을 window 에 건다.** `draw()` 가 끌 때마다 `#vtxs` 를 다시
-      // 만들어 이 원 자체를 없애므로 `setPointerCapture` 는 곧바로 풀린다.
-      // `svg` 에 걸면 점을 화면 밖으로 끌었을 때 `pointerup` 을 못 받아
-      // 드래그가 붙은 채로 남는다
-      const move = e => {
-        if (!dragging) {
-          if (Math.hypot(e.clientX - sx, e.clientY - sy) < DRAG_PX) return;
-          dragging = true; push();
-        }
-        const [nx, ny] = at(e);
-        // **시작 자리에서의 차이로 옮긴다.** 매 프레임 커서 자리를 그대로
-        // 넣으면 여럿일 때 한 점으로 뭉친다
-        grab.forEach((k, j) => { pts[k] = [from[j][0] + nx - ox,
-                                           from[j][1] + ny - oy]; });
-        draw();
-      };
-      const up = () => { removeEventListener("pointermove", move);
-                         removeEventListener("pointerup", up); };
-      addEventListener("pointermove", move);
-      addEventListener("pointerup", up);
+      dragVertices(ev, i);
     };
     c.oncontextmenu = ev => {
       ev.preventDefault(); ev.stopPropagation();
@@ -205,10 +207,52 @@ function bind() {
       ev.preventDefault(); ev.stopPropagation();
       push();
       const q = pts[(i + 1) % pts.length], p = pts[i];
-      pts.splice(i + 1, 0, [(p[0]+q[0])/2, (p[1]+q[1])/2]);
+      pts.splice(i + 1, 0, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]);
+      sel = new Set([i + 1]);
       draw();
+      // **만들자마자 끌린다.** 변 가운데에 점을 놓는 것 자체가 목적인 경우는
+      // 거의 없다 — 넣고 옮기려는 것이다. 손을 떼었다 다시 잡게 하면 그 사이에
+      // 격자가 다시 그려져 방금 만든 점을 눈으로 찾아야 한다.
+      // 문턱을 두지 않는다: 만들겠다는 뜻이 이미 분명하다
+      dragVertices(ev, i + 1, {immediate: true});
     };
   });
+}
+
+// 꼭짓점 끌기. **`.hit` 을 눌러 시작할 때와 새 점을 만들어 시작할 때가 같은
+// 길을 탄다** — 둘로 갈라 두면 한쪽만 고쳐진다.
+function dragVertices(ev, i, opts = {}) {
+  // 고른 것 밖의 점을 집으면 선택은 그 하나로 바뀐다. 고른 것 안을 집으면
+  // **무리 전체가 함께 움직인다** — 상자로 고르는 이유가 이것이다
+  if (!sel.has(i)) { sel = new Set([i]); paint(); }
+  const grab = [...sel];
+  const from = grab.map(k => pts[k].slice());
+  const [ox, oy] = at(ev);
+  const sx = ev.clientX, sy = ev.clientY;
+  // **끌기 시작이 확인된 뒤에 되돌리기를 쌓는다.** 눌렀다 떼기만 해도
+  // push() 하면 되돌리기 목록이 아무 일도 안 한 상태로 채워진다.
+  // 새 점은 만드는 쪽에서 이미 쌓았으므로 여기서 또 쌓지 않는다
+  let dragging = !!opts.immediate;
+  // **잡을 것을 window 에 건다.** `draw()` 가 끌 때마다 `#vtxs` 를 다시
+  // 만들어 그 원 자체를 없애므로 `setPointerCapture` 는 곧바로 풀린다.
+  // `svg` 에 걸면 점을 화면 밖으로 끌었을 때 `pointerup` 을 못 받아
+  // 드래그가 붙은 채로 남는다
+  const move = e => {
+    if (!dragging) {
+      if (Math.hypot(e.clientX - sx, e.clientY - sy) < DRAG_PX) return;
+      dragging = true; push();
+    }
+    const [nx, ny] = at(e);
+    // **시작 자리에서의 차이로 옮긴다.** 매 프레임 커서 자리를 그대로 넣으면
+    // 여럿일 때 한 점으로 뭉친다
+    grab.forEach((k, j) => { pts[k] = [from[j][0] + nx - ox,
+                                       from[j][1] + ny - oy]; });
+    draw();
+  };
+  const up = () => { removeEventListener("pointermove", move);
+                     removeEventListener("pointerup", up); };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
 }
 
 function startPan(ev) {
