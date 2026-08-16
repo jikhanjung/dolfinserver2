@@ -16,7 +16,7 @@
 """
 from django.core.management.base import BaseCommand, CommandError
 
-from finseg import evaluate
+from finseg import evaluate, rules
 from finseg.models import Box, Crop, Mask, Run
 
 
@@ -35,7 +35,10 @@ class Command(BaseCommand):
 
         # **계산은 `finseg.evaluate` 하나에만 있다** — 화면(`/compare`)이 같은
         # 숫자를 말해야 한다
-        truth = evaluate.truth_for(qs, crops)
+        boxes = list(qs)
+        truth = evaluate.truth_for(boxes, crops)
+        states = {b.id: rules.resolve(b) for b in boxes if b.id in truth}
+        indep = {b.id for b in boxes if b.id in truth and evaluate.independent(b)}
         if not truth:
             raise CommandError("정답이 없다 — 먼저 검토할 것"
                                + (f" ({o['date']})" if o["date"] else ""))
@@ -53,14 +56,23 @@ class Command(BaseCommand):
                 continue
             got = {m.box_id: m for m in
                    Mask.objects.filter(run_id=rid, box_id__in=truth).order_by("id")}
-            ious = [evaluate.iou(got.get(b), t, crops[b])
+            ious = [evaluate.iou(got.get(b), t, crops[b], states[b])
                     for b, t in truth.items()]
             produced = sum(1 for b in truth if b in got)
             st = evaluate.score(ious)
             w(f"{rid:>5} {run.kind:<6} {produced:>7,} {st['mean']:>9.3f} "
               f"{st['p50']:>7.1%} {st['p70']:>7.1%} {st['p90']:>7.1%}")
+            if indep:
+                vi = [evaluate.iou(got.get(b), truth[b], crops[b], states[b])
+                      for b in indep]
+                si = evaluate.score(vi)
+                w(f"{'':>5} {'└ 독립':<6} {len(indep):>7,} {si['mean']:>9.3f} "
+                  f"{si['p50']:>7.1%} {si['p70']:>7.1%} {si['p90']:>7.1%}")
             if produced < len(truth):
                 w(f"      ↑ {len(truth) - produced:,} 개는 아무것도 못 냈다"
                   f" — IoU 0 으로 셌다")
-        w("\n※ 정답이 옛 YOLOv5 상자 위에서 만들어졌다. 이 숫자는 '지느러미를"
+        w(f"\n※ '독립' 은 사람이 윗윤곽을 직접 다시 그린 {len(indep):,} 개다."
+          " 나머지는 사람이 '통과' 를 누른 것이라 **정답이 곧 그때 현재였던"
+          " 엔진의 출력**이고, 그 엔진에게는 자기 답을 채점하는 셈이 된다.")
+        w("※ 정답이 옛 YOLOv5 상자 위에서 만들어졌다. 이 숫자는 '지느러미를"
           " 얼마나 찾나' 가 아니라 '상자 안의 윤곽을 얼마나 잘 따나' 다.")

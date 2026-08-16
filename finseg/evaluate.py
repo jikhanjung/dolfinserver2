@@ -28,15 +28,40 @@ def truth_for(boxes, crops):
     return out
 
 
-def iou(mask, tpts, crop):
-    """마스크 하나와 정답의 IoU. 마스크가 없으면 0."""
+def iou(mask, tpts, crop, state=None):
+    """마스크 하나와 정답의 IoU. 마스크가 없으면 0.
+
+    **후보도 정답과 같은 밑동에서 자른다.** 정답은 `final_points` 로 잘린
+    폴리곤인데 후보를 안 자르면 IoU 가 두 가지를 섞어 잰다 — 잘라낸 양과
+    실제 윤곽 차이다. 밑동 현은 사람의 판단이고 어느 엔진의 것도 아니므로
+    양쪽에 똑같이 대는 것이 맞다.
+
+    안 자르고 재던 때 SAM2 가 자기 출력을 정답으로 삼은 2,035장에서 0.936 이
+    나왔는데, 1 이 아닌 이유가 오로지 밑동 아래를 잘라낸 만큼이었다.
+    """
     if mask is None:
         return 0.0
-    a = geometry.rasterize(
-        geometry.to_crop(geometry.loads(mask.polygon), crop), crop.w)
+    pts = geometry.to_crop(geometry.loads(mask.polygon), crop)
+    if state is not None:
+        pts = rules.final_points({**state, "polygon": mask.polygon}, crop)
+    a = geometry.rasterize(pts, crop.w)
     b = geometry.rasterize(tpts, crop.w)
     u = (a | b).sum()
     return float((a & b).sum() / u) if u else 0.0
+
+
+def independent(box):
+    """**정답이 어느 엔진의 출력도 아닌가.**
+
+    사람이 윗윤곽을 직접 다시 그린 상자만 참이다. 나머지는 사람이 "통과" 를
+    누른 것이라 정답이 곧 그때 현재였던 엔진의 출력이고, 그 엔진을 그것으로
+    채점하면 자기 답을 채점하는 셈이다.
+
+    **이것은 SAM2 만의 문제가 아니다.** 엔진을 갈아 끼우고 다시 검토하면
+    다음 정답의 대부분이 새 엔진의 출력이 된다 — 바퀴를 돌 때마다 되풀이된다.
+    """
+    r = rules.effective_review(box)
+    return bool(r and r.polygon)
 
 
 def score(ious):
