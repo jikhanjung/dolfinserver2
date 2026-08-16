@@ -86,7 +86,7 @@ class ResolveTests(SimpleTestCase):
     def setUp(self):
         self.box = Box(x1=10, y1=10, x2=20, y2=20)
         self.mask = Mask(polygon="0,0 5,0 5,5", base_line="0,5 5,5",
-                         base_partial=False)
+                         base_partial="")
 
     def test_review_overrides_mask(self):
         r = review(verdict="fix", polygon="1,1 9,1 9,9", base_line="1,9 9,9")
@@ -102,14 +102,29 @@ class ResolveTests(SimpleTestCase):
         self.assertEqual(st["base_line"], "0,5 5,5")
 
     def test_partial_is_tri_state(self):
-        """`base_partial` 은 NULL 이 '제안 그대로' 다 — False 와 다르다."""
-        self.mask.base_partial = True
+        """`base_partial` 은 NULL 이 '제안 그대로' 다 — 빈 값과 다르다."""
+        self.mask.base_partial = "unknown"
         st = rules.resolve(self.box, mask=self.mask, review=review())
-        self.assertTrue(st["base_partial"])          # 판정이 말하지 않았다 → 마스크
+        self.assertEqual(st["base_partial"], "unknown")   # 판정이 말 안 함 → 마스크
         st = rules.resolve(self.box, mask=self.mask,
                            review=Review(cls="fin", verdict="ok", edges="both",
-                                         base_partial=False))
-        self.assertFalse(st["base_partial"])         # 사람이 아니라고 했다
+                                         base_partial=""))
+        self.assertEqual(st["base_partial"], "")          # 사람이 다 봤다고 했다
+
+    def test_partial_says_which_point(self):
+        """**어느 삽입점이 짐작인지가 남는다.**
+
+        참/거짓 하나로 두면 re-ID 에서 앞만 짐작인 것과 뒤만 짐작인 것을 한꺼번에
+        버리거나 한꺼번에 쓰는 수밖에 없다 — 뒷날 결각으로 개체를 가리므로 그
+        둘은 값이 다르다 (`models.py` 의 BASE_PARTIAL 주석).
+        """
+        for want in ("front", "rear", "both", "unknown", ""):
+            with self.subTest(want):
+                st = rules.resolve(
+                    self.box, mask=self.mask,
+                    review=Review(cls="fin", verdict="ok", edges="both",
+                                  base_partial=want))
+                self.assertEqual(st["base_partial"], want)
 
 
 class EffectiveReviewTests(TestCase):
@@ -229,7 +244,7 @@ class FinalPointsTests(SimpleTestCase):
 
     def state(self, cls="fin", base_line="0,250 640,250"):
         return {"polygon": "0,0 640,0 640,640 0,640", "base_line": base_line,
-                "cls": cls, "base_partial": False}
+                "cls": cls, "base_partial": ""}
 
     def test_fin_is_cut(self):
         c = crop(x0=0, y0=0, side=640, w=640)

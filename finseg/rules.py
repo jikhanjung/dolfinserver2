@@ -136,9 +136,10 @@ def resolve(box, mask=None, review=None):
         "review": review,
         "label": label_of(review),
         "cls": review.cls if review else "",
+        "facing": review.facing if review else "",
         "polygon": polygon,      # 자르기 전의 윗윤곽 (원본 좌표)
         "base_line": base,       # 아래 직선 두 점 (원본 좌표)
-        "base_partial": bool(partial),
+        "base_partial": partial or "",
     }
 
 

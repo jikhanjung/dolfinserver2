@@ -13,7 +13,8 @@
 | `cls` | fin · fluke · rostrum · head · body · bird · pectoral · other · none | 학습의 분류. **`none` 만 배경이다** |
 | `verdict` | ok · fix | 마스크 윤곽이 맞나 |
 | `edges` | both · leading · trailing · tip | **re-ID 전용.** 어느 날로 매칭할 수 있나 |
-| `base_line`·`base_partial` | 두 점 · 참/거짓 | 아래 경계. 형태 계측을 낼 수 있나 |
+| `base_line`·`base_partial` | 두 점 · 어느 삽입점이 짐작인가 | 아래 경계. 형태 계측을 믿어도 되나 |
+| `facing` | 앞이 왼쪽·오른쪽 | **re-ID.** 좌현·우현을 가르고 현에 부호를 준다 |
 
 **꼬리지느러미를 배경으로 두지 않는 이유**가 여기 있다. 물 위의 검은 삼각형이라
 등지느러미와 실루엣이 거의 같은데, 배경으로 가르치면 모델이 "이 삼각형은 아니다"
@@ -91,6 +92,39 @@ EDGES = [
     ("leading", "앞날만"),
     ("trailing", "뒷날만"),
     ("tip", "끄트머리"),
+]
+# 밑동 두 점 중 **실제로 못 보고 짐작한 것**. `edges` 와 짝이지만 재는 것이
+# 다르다 — `edges` 는 "어느 날로 매칭할 수 있나", 이것은 "밑동 현을 정규화
+# 기준으로 믿어도 되나" 다.
+#
+# **어느 쪽인지를 남기는 이유**: re-ID 는 주로 뒷날 결각으로 개체를 가린다.
+# 뒷삽입점이 짐작이면 결각을 재는 쪽 끝이 흔들려 값이 크게 떨어지지만,
+# 앞삽입점만 짐작이면 현 각도는 흔들려도 뒷날 자체는 온전해 여전히 쓸 만하다.
+# 참/거짓 하나로 두면 나중에 이 둘을 한꺼번에 버리거나 한꺼번에 쓰는 수밖에
+# 없다. 지금 안 갈라 두면 그때 전부 다시 검토해야 한다.
+#
+# `unknown` 은 이 축을 참/거짓으로 쓰던 때의 것이다. **어느 쪽인지 모른다는
+# 사실 자체가 자료**라 지어내지 않고 그대로 둔다 — 되짚어 볼 때 고친다.
+BASE_PARTIAL = [
+    ("", "다 봤다"),
+    ("front", "앞삽입점 짐작"),
+    ("rear", "뒷삽입점 짐작"),
+    ("both", "둘 다 짐작"),
+    ("unknown", "불완전 — 어느 쪽인지 모름"),
+]
+# **밑동 두 점 중 어느 쪽이 앞(머리 쪽)인가.** 저장된 두 점은 화면 좌표라
+# 왼쪽·오른쪽일 뿐이고, 앞·뒤는 돌고래가 어느 쪽을 보느냐에 달렸다. 그 한 비트를
+# 안 적으면 세 가지가 함께 막힌다 — `base_partial` 의 앞·뒤가 뜻을 잃고, re-ID 의
+# 좌현·우현을 못 가르며(`CLAUDE.md` 6단계), 밑동 현의 각도가 부호를 못 갖는다.
+#
+# **`edges` 처럼 비어 있게 두면 안 된다.** 그 축은 900장 넘게 기본값 하나로
+# 남아 있었다 — 사람이 안 누르는 축은 안 채워진다. 그래서 손으로 100장쯤 받아
+# 기하 규칙(앞날이 가파르다 — `baseline.py` 의 기울기 −41 대 0.5~2.2)의 정확도를
+# 재고, 충분하면 제안으로 바꿔 예외만 누르게 한다.
+FACING = [
+    ("", "모름"),
+    ("left", "앞이 왼쪽"),
+    ("right", "앞이 오른쪽"),
 ]
 VERDICTS = [("ok", "통과"), ("fix", "교정 필요")]
 RUN_KINDS = [("import", "들이기"), ("crop", "크롭"), ("sam2", "SAM2.1"),
@@ -201,9 +235,17 @@ class Mask(models.Model):
     conf = models.FloatField(null=True)
     base_line = models.TextField(blank=True, default="",
                                  help_text='"x,y x,y" 앞·뒤 삽입점')
-    base_partial = models.BooleanField(default=False,
-                                       help_text="삽입점을 다 못 봤다")
+    base_partial = models.CharField(max_length=10, choices=BASE_PARTIAL,
+                                    blank=True, default="",
+                                    help_text="짐작해서 찍은 삽입점")
     is_current = models.BooleanField(default=True, db_index=True)
+    # **밑동 제안을 누가 만들었나.** `run` 은 폴리곤을 만든 엔진이고 이것은 아래
+    # 직선을 채운 엔진이라 서로 다르다 — SAM2 가 딴 마스크 위에 키포인트 모델이
+    # 두 점을 얹는다. 한 칸에 뭉치면 "이 제안이 어느 코드에서 나왔나" 를 물을 수
+    # 없고, 그 물음은 반드시 나온다.
+    base_run = models.ForeignKey(Run, on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="base_masks",
+                                 help_text="base_line 을 채운 실행")
 
     class Meta:
         ordering = ["-id"]
@@ -223,12 +265,16 @@ class Review(models.Model):
     verdict = models.CharField(max_length=10, choices=VERDICTS, blank=True,
                                default="", help_text="cls='none' 이면 빈 값")
     edges = models.CharField(max_length=10, choices=EDGES, blank=True, default="")
+    facing = models.CharField(max_length=10, choices=FACING, blank=True,
+                              default="",
+                              help_text="밑동 두 점 중 앞(머리 쪽)이 어디인가")
     polygon = models.TextField(blank=True, default="",
                                help_text="위 윤곽 교정본. 없으면 마스크 그대로")
     base_line = models.TextField(blank=True, default="",
                                  help_text="아래 직선 교정본. 없으면 제안 그대로")
-    base_partial = models.BooleanField(null=True, blank=True,
-                                       help_text="사람의 판단. NULL 이면 제안 그대로")
+    base_partial = models.CharField(max_length=10, choices=BASE_PARTIAL,
+                                    null=True, blank=True, default=None,
+                                    help_text="사람의 판단. NULL 이면 제안 그대로")
     reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
                                  null=True, blank=True, related_name="reviews")
     at = models.DateTimeField(auto_now_add=True)

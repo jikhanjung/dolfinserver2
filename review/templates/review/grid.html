@@ -47,7 +47,9 @@
                  vector-effect:non-scaling-stroke; }
   .tile[data-cls="none"] polygon.mask { fill:none; stroke:#ff8f97; }
   line.base { stroke:var(--base); stroke-width:2.5; vector-effect:non-scaling-stroke; }
-  .tile[data-partial="1"] line.base { stroke:#ff6b6b; stroke-dasharray:6 4; }
+  /* 짐작해서 찍은 것이 하나라도 있으면 밑동 선이 빨간 점선이다 */
+  .tile[data-partial]:not([data-partial=""]) line.base {
+    stroke:#ff6b6b; stroke-dasharray:6 4; }
   /* **집히는 범위는 보이는 점보다 넓다.** 640 뷰박스가 190px 타일로 줄어드니
      배율이 0.29 다 — 뷰박스 r 은 화면에서 그 만큼으로 보인다. 보이는 점(r 11 →
      화면 3px)은 격자를 안 어지럽히는 크기로 두고, 투명한 원(r 34 → 화면 10px)
@@ -58,6 +60,8 @@
   g.h circle.dot { fill:var(--base); stroke:#000; stroke-width:1.5;
                    vector-effect:non-scaling-stroke; pointer-events:none; }
   g.h:active circle.dot { fill:#fff; }
+  /* 앞(머리 쪽)으로 고른 점 */
+  g.h.front circle.dot { fill:#ff6fae; stroke:#fff; stroke-width:2; }
   .lab { position:absolute; left:5px; top:5px; padding:1px 7px; border-radius:5px;
          font-size:11px; font-weight:700; background:#000b; }
   .edg { position:absolute; right:5px; top:5px; padding:1px 7px; border-radius:5px;
@@ -151,6 +155,8 @@
 <script>
 const CLASSES = {{ classes|safe }};        // [[key, 한글], …]
 const EDGES   = {{ edges|safe }};
+const PARTIALS = {{ partials|safe }};   // 밑동 두 점 중 짐작한 것
+const FACINGS  = {{ facings|safe }};    // 두 점 중 어느 쪽이 앞(머리 쪽)인가
 const CLS_KO = Object.fromEntries(CLASSES), EDG_KO = Object.fromEntries(EDGES);
 const CLS_KEYS = CLASSES.map(c => c[0]), EDG_KEYS = EDGES.map(e => e[0]);
 // **날은 골라서 넣는다 — 순환시키지 않는다.** 하나로 순환시키면 목표 값에
@@ -172,7 +178,7 @@ const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
 document.getElementById("keys").innerHTML =
   CLASSES.map(([k, ko], i) =>
     `<kbd style="border-color:var(--${k})">${i + 1}</kbd>${ko}`).join(" ")
-  + ` · <kbd>e</kbd>날(고르기) <kbd>x</kbd>교정필요 <kbd>p</kbd>아래경계불완전`
+  + ` · <kbd>e</kbd>날 <kbd>p</kbd>아래경계 <kbd>f</kbd>앞쪽 <kbd>x</kbd>교정필요`
   + ` · 점을 끌면 밑동 · <kbd>우클릭</kbd>메뉴 · <kbd>Enter</kbd>저장`;
 
 function setHover(d) {
@@ -196,6 +202,7 @@ function itemOf(d, t) {
 // 손가락 움직임을 남기려는 것이 아니다.
 const sigOf = (d, t) => JSON.stringify([
   d.dataset.cls, d.dataset.edges, d.dataset.verdict, d.dataset.partial,
+  d.dataset.facing,
   t.base_moved ? t.base : null,
   t.poly_edited ? t.points : null,
 ]);
@@ -276,7 +283,8 @@ async function load(opts = {}) {
     d.className = "tile";
     d.dataset.box = t.box_id;
     d.dataset.cls = t.cls; d.dataset.edges = t.edges;
-    d.dataset.verdict = t.verdict; d.dataset.partial = t.base_partial ? "1" : "0";
+    d.dataset.verdict = t.verdict; d.dataset.partial = t.base_partial || "";
+    d.dataset.facing = t.facing || "";
     d.innerHTML =
       `<img src="${t.crop}" loading="lazy" alt="">
        <svg viewBox="0 0 ${t.size} ${t.size}" preserveAspectRatio="none">
@@ -356,9 +364,15 @@ function draw(d, t) {
   line.setAttribute("x1", a[0]); line.setAttribute("y1", a[1]);
   line.setAttribute("x2", b[0]); line.setAttribute("y2", b[1]);
   // 자리는 <g> 를 옮겨서 준다 — 안의 두 원(보이는 점·집히는 범위)이 늘 같이 간다
+  // 앞(머리 쪽)으로 고른 점은 색이 다르다. 저장된 두 점은 왼쪽·오른쪽일 뿐이라
+  // **화면이 어느 쪽을 앞으로 아는지 보여 주지 않으면 사람이 확인할 길이 없다**
+  const face = d.dataset.facing;
+  const left = t.base[0][0] <= t.base[1][0] ? 0 : 1;
+  const front = face === "left" ? left : face === "right" ? 1 - left : -1;
   svg.querySelectorAll("g.h").forEach(h => {
     const i = +h.dataset.i;
     h.style.display = isFin ? "" : "none";
+    h.classList.toggle("front", i === front);
     h.setAttribute("transform", `translate(${t.base[i][0]},${t.base[i][1]})`);
   });
   d.querySelector(".lab").textContent =
@@ -403,8 +417,8 @@ function act(d, t, key) {
   else if (n >= 0) return false;
   else if (key === "x")
     d.dataset.verdict = d.dataset.verdict === "fix" ? "ok" : "fix";
-  else if (key === "p")
-    d.dataset.partial = d.dataset.partial === "1" ? "0" : "1";
+  else if (key.startsWith("part:")) d.dataset.partial = key.slice(5);
+  else if (key.startsWith("face:")) d.dataset.facing = key.slice(5);
   else if (key === "photo")
     // 이름을 준 창이라 우클릭을 거듭해도 창이 쌓이지 않고 같은 창이 바뀐다
     return open(`/photo/${d.dataset.box}`, "finphoto"), true;
@@ -426,10 +440,15 @@ const MENU = [["원본 사진 — 주변을 본다", "photo"],
               ["윤곽 고치기 — 크게 띄운다", "edit"], null,
               ...CLASSES.map(([k, ko], i) => [ko, String(i + 1)]), null,
               ["교정 필요", "x"], ["날 …", "edges"],
-              ["아래경계 불완전", "p"]];
+              ["아래경계 …", "partials"], ["앞쪽 …", "facings"]];
 
 // `e` 로 띄우는 작은 차림표. 숫자로도 고를 수 있게 순서를 그대로 쓴다
 const EDGE_MENU = EDGES.map(([k, ko], i) => [ko, "edge:" + k, String(i + 1)]);
+// 밑동 두 점 중 어느 것을 짐작으로 찍었나. `edges` 와 같은 꼴로 고른다 —
+// 토글로 두면 값이 넷인 축을 두 값처럼 다루게 된다
+const PART_MENU = PARTIALS.map(([k, ko], i) => [ko, "part:" + k, String(i + 1)]);
+// 밑동 두 점 중 앞(머리 쪽). re-ID 의 좌현·우현이 이 한 비트에 달렸다
+const FACE_MENU = FACINGS.map(([k, ko], i) => [ko, "face:" + k, String(i + 1)]);
 
 // 차림표가 지금 무엇을 띄우고 있나. 날 차림표일 때는 숫자키가 분류가 아니라
 // 날을 고른다 — **떠 있는 것이 키를 갖는다**
@@ -443,17 +462,20 @@ function hideMenu() {
 function showMenu(d, t, x, y, kind) {
   const m = document.getElementById("menu");
   menuKind = kind || "main";
-  const items = menuKind === "edges" ? EDGE_MENU : MENU;
+  const items = menuKind === "edges" ? EDGE_MENU
+              : menuKind === "partials" ? PART_MENU
+              : menuKind === "facings" ? FACE_MENU : MENU;
   m.innerHTML = items.map(it => it === null ? `<hr>`
     : `<button data-key="${it[1]}">${it[0]}<kbd>${
-         it[2] || (it[1] === "photo" ? "우클릭"
-                 : it[1] === "edges" ? "e" : it[1])}</kbd></button>`).join("");
+         it[2] || (it[1] === "photo" ? "우클릭" : it[1] === "edges" ? "e"
+                 : it[1] === "partials" ? "p"
+                 : it[1] === "facings" ? "f" : it[1])}</kbd></button>`).join("");
   m.querySelectorAll("button").forEach(b => {
     b.onclick = () => {
       // '날 …' 은 고르는 것이 아니라 그다음 차림표를 여는 것이다
-      if (b.dataset.key === "edges") {
+      if (["edges", "partials", "facings"].includes(b.dataset.key)) {
         const r = m.getBoundingClientRect();
-        return showMenu(d, t, r.left, r.top, "edges");
+        return showMenu(d, t, r.left, r.top, b.dataset.key);
       }
       act(d, t, b.dataset.key); hideMenu();
     };
@@ -510,18 +532,22 @@ addEventListener("keydown", e => {
   if (!t) return;
   // **날 차림표가 떠 있으면 숫자는 날을 고른다.** 떠 있는 것이 키를 갖는다 —
   // 안 그러면 고르려고 누른 숫자가 분류를 바꿔 버린다
-  if (menuKind === "edges") {
-    const i = "12345".indexOf(e.key);
-    if (i >= 0 && i < EDGE_MENU.length) {
+  if (menuKind === "edges" || menuKind === "partials"
+      || menuKind === "facings") {
+    const list = menuKind === "edges" ? EDGE_MENU
+               : menuKind === "partials" ? PART_MENU : FACE_MENU;
+    const i = "123456".indexOf(e.key);
+    if (i >= 0 && i < list.length) {
       e.preventDefault();
-      act(hover, t, EDGE_MENU[i][1]); hideMenu();
+      act(hover, t, list[i][1]); hideMenu();
     }
     return;
   }
-  if (e.key === "e") {
+  if (e.key === "e" || e.key === "p" || e.key === "f") {
     e.preventDefault();
     const r = hover.getBoundingClientRect();
-    return showMenu(hover, t, r.left + 8, r.top + 8, "edges");
+    return showMenu(hover, t, r.left + 8, r.top + 8,
+                    {e: "edges", p: "partials", f: "facings"}[e.key]);
   }
   act(hover, t, e.key);
 });

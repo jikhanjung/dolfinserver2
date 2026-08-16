@@ -27,7 +27,8 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from finseg import baseline, geometry, rules
-from finseg.models import CLASSES, EDGES, Box, Crop, Review
+from finseg.models import (BASE_PARTIAL, CLASSES, EDGES, FACING, Box,
+                           Crop, Review)
 
 
 def _tile(state, crop):
@@ -68,6 +69,7 @@ def _tile(state, crop):
         "edges": (review.edges if review else "") or "both",
         "verdict": (review.verdict if review else "") or "ok",
         "base_partial": state["base_partial"],
+        "facing": state["facing"],
         "points": [[round(x, 1), round(y, 1)] for x, y in pts],
         "base": [[round(x, 1), round(y, 1)] for x, y in base],
     }
@@ -90,6 +92,8 @@ def index(request):
     return render(request, "review/grid.html", {
         "classes": json.dumps(CLASSES, ensure_ascii=False),
         "edges": json.dumps(EDGES, ensure_ascii=False),
+        "partials": json.dumps(BASE_PARTIAL, ensure_ascii=False),
+        "facings": json.dumps(FACING, ensure_ascii=False),
         "rule": _emph(baseline.RULE),
         "rule_points": [_emph(p) for p in baseline.RULE_POINTS],
     })
@@ -176,6 +180,8 @@ def save(request):
     body = json.loads(request.body or "{}")
     valid_cls = {c for c, _ in CLASSES}
     valid_edges = {e for e, _ in EDGES}
+    valid_partial = {p for p, _ in BASE_PARTIAL}
+    valid_facing = {f for f, _ in FACING}
     crops = {c.box_id: c for c in Crop.objects.filter(
         box_id__in=[it["box_id"] for it in body.get("items", [])])}
     n = 0
@@ -193,6 +199,14 @@ def save(request):
             if verdict not in ("ok", "fix"):
                 return JsonResponse({"error": f"모르는 판정: {verdict}"}, status=400)
 
+        facing = it.get("facing") or ""
+        if facing not in valid_facing:
+            return JsonResponse({"error": f"모르는 앞쪽 표시: {facing}"},
+                                status=400)
+        partial = it.get("base_partial") or ""
+        if partial not in valid_partial:
+            return JsonResponse({"error": f"모르는 아래경계 표시: {partial}"},
+                                status=400)
         base_str = poly_str = ""
         crop = crops.get(it["box_id"])
         # **윗윤곽 교정본도 사람이 그린 것만 저장한다** — 밑동과 같은 규칙이다.
@@ -209,7 +223,7 @@ def save(request):
         Review.objects.create(
             box_id=it["box_id"], mask_id=it.get("mask_id"), cls=cls,
             verdict=verdict, edges=edges, base_line=base_str, polygon=poly_str,
-            base_partial=bool(it.get("base_partial")),
+            base_partial=partial, facing=facing,
             reviewer=request.user if request.user.is_authenticated else None)
         n += 1
     return JsonResponse({"saved": n, "progress": dict(rules.progress())})
