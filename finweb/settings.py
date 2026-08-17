@@ -58,7 +58,10 @@ TEMPLATES = [{
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": Path(os.environ.get("FIN_DB", BASE_DIR / "fin.db")),
+        # **`db/` 는 통째로 `.gitignore` 에 있다.** 사람의 판정이 든 `fin.db`
+        # 도, 옛 운영 DB 백업(1GB)도 여기 둔다 — 저장소 밖에 두는 규약을
+        # 지키면서 한 자리에 모으려는 것이다. 실수로 커밋될 길이 없다.
+        "NAME": Path(os.environ.get("FIN_DB", BASE_DIR / "db" / "fin.db")),
         # **SQLite 는 쓰기가 하나다.** 파이프라인이 도는 중에 검토를 저장하면
         # 잠긴다 — 형제 프로젝트가 그것으로 프레임 229장을 잃었다. WAL 과
         # timeout 은 완충일 뿐 해결이 아니므로, 운영 자리는 한 곳으로 둔다.
