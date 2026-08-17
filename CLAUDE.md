@@ -32,7 +32,7 @@
 | 2 | 첫 바퀴 검토 (상자 2,315개) | **완료** (2026-08-16) |
 | 3 | YOLO11-seg 학습 · SAM2.1 과 비교하기 | **두 바퀴 돌았다** ← 지금 |
 | 4 | 삽입점 키포인트 모델로 제안 자동화 | **완료** — 3단계보다 앞당겼다 |
-| 5 | 검출기 교체 (지금은 옛 YOLOv5 상자에 의존) | 미착수 |
+| 5 | 검출기 교체 (지금은 옛 YOLOv5 상자에 의존) | **착수** — 자료·명령은 섰다 |
 | 6 | **re-ID** — 뒷날 결각으로 개체 매칭 | 구상 |
 
 **4단계를 3단계보다 먼저 했다.** 검토 중에 `fix`(밑동을 사람이 고친 비율)가
@@ -71,14 +71,19 @@ python manage.py import_boxes
 python manage.py crops
 python manage.py segment                                   # [GPU]
 python manage.py runserver 0.0.0.0:8900                    # 검토
-python manage.py export_yolo --out datasets/v1 --group coarse --val-date <날짜>
-python manage.py train --data datasets/v1                  # [GPU] 갈래는 MANIFEST 가 정한다
+python manage.py export_yolo --out datasets/seg-v1 --group coarse --val-date <날짜>
+python manage.py train --data datasets/seg-v1                  # [GPU] 갈래는 MANIFEST 가 정한다
 python manage.py infer --weights runs/<name>/weights/best.pt --compare-only   # [GPU]
 python manage.py eval_masks --runs <sam2> <yolo> --date <val_date>
+python manage.py promote --run <yolo run>                  # 엔진 교체 (되돌리려면 옛 run)
+
+python manage.py export_detect --out datasets/detect-merged   # 검출 (5단계)
+python manage.py train --data datasets/detect-merged --imgsz 1280 --batch 8   # [GPU]
+python manage.py eval_detect --date <val_date> --weights runs/<name>/weights/best.pt
 
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
-python manage.py infer_base --weights runs/fin-pose/weights/best.pt
+python manage.py infer_base --weights runs/pose-v1/weights/best.pt
 
 python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fin.db 를 안 건드린다)
 ```
@@ -96,6 +101,10 @@ python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fi
 - **모델을 고치면 `makemigrations` 를 함께 커밋한다.** 마이그레이션은 사람의
   판정이 든 `fin.db` 위에서 돌고, 그것은 다시 만들 수 없다 — 지우거나 좁히는
   변경은 백업을 먼저 뜬다
+- **성적을 내기 전에 "이 자가 무엇을 재나" 를 물을 것.** 하루에 세 번 걸렸다 —
+  SAM2 가 자기 출력을 정답으로, YOLO v1 이 자기 출력을 정답으로, 옛 검출기가
+  자기 학습 날에서. **한쪽이 만든 정답으로 그쪽을 채점하면 안 된다**
+  (`eval_masks` 의 `독립` 열, `eval_detect` 의 `val_date` 경고)
 - **재현율에는 늘 한정이 붙는다** — "옛 YOLOv5 상자 범위 안에서". 그 검출기가
   못 본 지느러미는 이 루프 안에서 표시할 방법이 없다
 - **학습 모델은 검출기가 아니다.** 크롭 640 을 받아 "가운데 것" 을 분할할 뿐,

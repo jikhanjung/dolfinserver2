@@ -1,7 +1,7 @@
 """검토를 YOLO-seg 학습 자료로 내보낸다.
 
-    python manage.py export_yolo --out datasets/v1 --dry-run
-    python manage.py export_yolo --out datasets/v1
+    python manage.py export_yolo --out datasets/seg-v1 --dry-run
+    python manage.py export_yolo --out datasets/seg-v1
 
 판정 규칙은 여기 다시 쓰지 않는다 — `finseg.rules` 를 부른다. 검토 화면에 보이는
 것이 곧 라벨이어야 하고, **갈라진 것은 눈에 띄지 않는다.**

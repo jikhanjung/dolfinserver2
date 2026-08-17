@@ -1,6 +1,6 @@
 """학습한 키포인트 모델로 **밑동 두 점을 제안한다.** [GPU]
 
-    python manage.py infer_base --weights runs/fin-pose/weights/best.pt
+    python manage.py infer_base --weights runs/pose-v1/weights/best.pt
     python manage.py infer_base --weights ... --redo   # 이미 채운 것도 다시
 
 `Mask.base_line` 에 넣는다. 그러면 **화면 코드를 하나도 안 건드려도** 제안이

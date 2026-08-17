@@ -124,7 +124,7 @@ DB 가 `nas/2016/…` 로 들고 있어서 그렇다 — **코드에서 접두�
 ```bash
 python manage.py export_pose --out datasets/pose-v1
 python manage.py train --data datasets/pose-v1                    # [GPU] 갈래는 MANIFEST 가 말한다
-python manage.py infer_base --weights runs/fin-pose/weights/best.pt
+python manage.py infer_base --weights runs/pose-v1/weights/best.pt
 ```
 
 `infer_base` 는 `Mask.base_line` 에 넣는다 — **화면 코드를 안 건드려도 제안이

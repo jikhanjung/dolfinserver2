@@ -1,6 +1,6 @@
 """학습한 YOLO-seg 로 후보 마스크를 만든다 — SAM2.1 자리에 그대로 낀다. **[GPU]**
 
-    python manage.py infer --weights runs/fin-seg/weights/best.pt --redo
+    python manage.py infer --weights runs/seg-v2-s/weights/best.pt --redo
 
 `segment` 와 **같은 표에 같은 모양으로** 넣는다 (`Mask`, 원본 좌표 폴리곤).
 그래야 검토 화면도 내보내기도 엔진을 모른 채로 돌고, 두 엔진의 숫자에 같은 자를

@@ -97,8 +97,8 @@ python manage.py import_boxes
 python manage.py crops
 python manage.py segment                                 # [GPU]
 python manage.py runserver 0.0.0.0:8900                  # 검토
-python manage.py export_yolo --out datasets/v1
-python manage.py train --data datasets/v1                # [GPU]
+python manage.py export_yolo --out datasets/seg-v1
+python manage.py train --data datasets/seg-v1                # [GPU]
 python manage.py eval_masks --runs <sam2> <yolo> --date <val_date>
 ```
 
