@@ -166,7 +166,8 @@ CLASS_GROUPS = {
 }
 VERDICTS = [("ok", "통과"), ("fix", "교정 필요")]
 RUN_KINDS = [("import", "들이기"), ("crop", "크롭"), ("sam2", "SAM2.1"),
-             ("yolo", "YOLO"), ("export", "내보내기"), ("train", "학습")]
+             ("yolo", "YOLO"), ("detect", "검출"), ("export", "내보내기"),
+             ("train", "학습")]
 
 
 class Image(models.Model):
@@ -188,7 +189,21 @@ class Image(models.Model):
 
 
 class Box(models.Model):
-    """SAM2 에 넣을 프롬프트 상자. 지금은 옛 YOLOv5 가 낸 것이다."""
+    """분할기에 넣을 프롬프트 상자. **이제 낸 것이 둘이다.**
+
+    처음에는 옛 YOLOv5 가 낸 것뿐이었고 `source` 는 그것을 적어 두기만 했다
+    (`src_id` 로 옛 DB 를 되짚을 수 있으니). 2026-08-18 에 우리 검출기가 낸 상자를
+    들이면서 두 칸이 필요해졌다.
+
+    **`run`** — 어느 실행이 이 상자를 냈나. `Mask.run` 과 같은 이유다
+    (`Run` 문서: "어떤 코드가 만든 자료인지 나중에 반드시 묻게 된다"). 옛 상자는
+    비어 있다 — 그것을 낸 실행은 이 저장소 밖에서 돌았다.
+
+    **`conf`** — 검출기가 말한 확신. **이것이 없으면 문턱을 못 고른다.** 새
+    검출기의 정밀도는 문턱에 따라 64%에서 84%까지 움직이는데, 사람이 검토한 뒤
+    "conf 0.4 위에서는 몇 %가 진짜였나" 를 물으려면 상자마다 그 값이 남아 있어야
+    한다. 안 남기면 추론을 처음부터 다시 돌리는 수밖에 없다.
+    """
     src_id = models.IntegerField(unique=True, null=True,
                                  help_text="옛 dolfinrest_dolfinbox.id")
     image = models.ForeignKey(Image, on_delete=models.CASCADE, related_name="boxes")
@@ -197,7 +212,12 @@ class Box(models.Model):
     x2 = models.IntegerField()
     y2 = models.IntegerField()
     area = models.IntegerField(null=True)
-    source = models.CharField(max_length=30, default="yolov5")
+    source = models.CharField(max_length=30, default="yolov5", db_index=True)
+    conf = models.FloatField(null=True, blank=True,
+                             help_text="검출기가 말한 확신. 옛 상자는 비어 있다")
+    # `Run` 은 아래에 있다 — 문자열로 건다
+    run = models.ForeignKey("Run", on_delete=models.SET_NULL, null=True, blank=True,
+                            related_name="boxes", help_text="이 상자를 낸 실행")
     # 옛 DB 에 이미 붙어 있던 것. **버리지 않고 들고 온다** — 개체명은 re-ID 의
     # 씨앗이고, 시민과학자가 남긴 표시는 공짜로 얻는 어려운 음성이다.
     boxname = models.CharField(max_length=100, blank=True, default="",

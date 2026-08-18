@@ -72,6 +72,11 @@
   .hint { position:absolute; left:5px; bottom:5px; font-size:10px; color:#cfd8e3;
           background:#000b; padding:1px 6px; border-radius:5px; max-width:90%;
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* **새 검출기가 낸 상자는 한눈에 갈린다.** 마스크가 없어 윤곽선이 안 그려지는데,
+     그것이 "분할이 실패했다" 로 읽히면 안 된다 — 아직 안 딴 것이다 */
+  .tile[data-src]:not([data-src="yolov5"]):not([data-src=""]) { border-style:dashed; }
+  .src { position:absolute; left:5px; top:5px; font-size:10px; color:#0b0f14;
+         background:#cfd8e3; border-radius:3px; padding:0 4px; opacity:.85; }
   .conf { position:absolute; right:5px; bottom:5px; font-size:10px; color:#cfd8e3;
           background:#000b; padding:1px 6px; border-radius:5px; }
   #empty { padding:48px 16px; color:var(--dim); }
@@ -134,7 +139,8 @@
     <button id="mtodo" onclick="load({mode:'todo'})">검토할 것</button
     ><button id="mdone" onclick="load({mode:'done'})">검토한 것</button
     ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button
-    ><button id="mstale" onclick="load({mode:'stale'})">엔진 바뀜</button>
+    ><button id="mstale" onclick="load({mode:'stale'})">엔진 바뀜</button
+    ><button id="mnew" onclick="load({mode:'new'})">새 검출</button>
     <button id="first" onclick="load({page:1})" title="첫 페이지 (Home)">«</button>
     <button id="prev" onclick="load({page:page-1})">←</button>
     <span id="pg" class="stat">1 / 1</span>
@@ -300,7 +306,10 @@ function warn(msg) {
 // `stale` 은 엔진이 바뀌어 판정이 낡은 것을 다시 확인하는 자리다. 둘 다
 // **안 누른 것도 판정**이다 — `stale` 에서 그냥 넘기는 것은 "새 마스크도
 // 괜찮다" 는 뜻이고, 그렇게 말할 방법이 없으면 그 상자는 영영 대기열에 남는다.
-const isBatch = () => mode === "todo" || mode === "stale";
+// `new` 는 새 검출기가 낸 상자다. 여기도 묶음 저장이다 — 천 장 넘는 것을 한
+// 칸씩 저장하면 못 끝낸다. 다만 **안 누른 것이 "진짜 지느러미다" 라는 뜻이
+// 되므로**, 아래 `save()` 의 손 안 댐 경고가 `todo` 와 함께 여기에도 걸린다.
+const isBatch = () => mode === "todo" || mode === "stale" || mode === "new";
 
 // `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
 // 되짚어 보는 길이 있어야 첫 페이지와 열 번째 페이지의 기준이 같은지 알 수 있다
@@ -326,7 +335,10 @@ async function load(opts = {}) {
   const empty = document.getElementById("empty");
   empty.hidden = tiles.length > 0;
   if (!tiles.length)
-    empty.textContent = "검토할 것이 없다. 마스크가 없으면 manage.py segment 를 먼저 돌릴 것.";
+    empty.textContent = mode === "new"
+      ? "새 검출기가 들인 상자가 없다. manage.py infer_boxes 로 들이고 "
+        + "manage.py crops 로 잘라 둘 것 — 크롭이 없으면 여기 안 뜬다."
+      : "검토할 것이 없다. 마스크가 없으면 manage.py segment 를 먼저 돌릴 것.";
   for (const t of tiles) {
     const d = document.createElement("div");
     d.className = "tile";
@@ -334,6 +346,9 @@ async function load(opts = {}) {
     d.dataset.cls = t.cls; d.dataset.edges = t.edges;
     d.dataset.verdict = t.verdict; d.dataset.partial = t.base_partial || "";
     d.dataset.facing = t.facing || "";
+    // **어느 검출기가 낸 상자인지 칸이 말한다.** 옛 상자는 "이 윤곽이 맞나",
+    // 새 상자는 "여기 정말 지느러미가 있나" 라 누르는 손이 다르다
+    d.dataset.src = t.source || "";
     d.innerHTML =
       `<img src="${t.crop}" loading="lazy" alt="">
        <svg viewBox="0 0 ${t.size} ${t.size}" preserveAspectRatio="none">
@@ -346,7 +361,9 @@ async function load(opts = {}) {
        </svg>
        <span class="lab"></span><span class="edg"></span>
        ${t.hint ? `<span class="hint">${t.hint}</span>` : ""}
-       ${t.conf != null ? `<span class="conf">${t.conf.toFixed(2)}</span>` : ""}`;
+       ${t.conf != null ? `<span class="conf">${t.conf.toFixed(2)}</span>` : ""}
+       ${t.source && t.source !== "yolov5"
+           ? `<span class="src">${t.source}</span>` : ""}`;
     d.onmouseenter = () => setHover(d);
     d.oncontextmenu = ev => {
       ev.preventDefault(); setHover(d); showMenu(d, t, ev.clientX, ev.clientY);
@@ -378,6 +395,7 @@ function nav() {
   document.getElementById("mdone").classList.toggle("on", mode === "done");
   document.getElementById("mstuck").classList.toggle("on", mode === "stuck");
   document.getElementById("mstale").classList.toggle("on", mode === "stale");
+  document.getElementById("mnew").classList.toggle("on", mode === "new");
   document.getElementById("pg").textContent = `${page} / ${pages}`;
   document.getElementById("first").disabled = page <= 1;
   document.getElementById("prev").disabled = page <= 1;
@@ -392,6 +410,7 @@ function nav() {
     mode === "done" ? `검토한 것 ${total.toLocaleString()}`
     : mode === "stuck" ? `교정 대기 ${total.toLocaleString()}`
     : mode === "stale" ? `엔진 바뀜 ${total.toLocaleString()}`
+    : mode === "new" ? `새 검출 ${total.toLocaleString()} (확신 높은 것부터)`
     : `남은 것 ${total.toLocaleString()}`;
 }
 
@@ -479,8 +498,19 @@ function act(d, t, key) {
   // 숫자키는 CLASSES 순서 그대로다 — 분류가 늘면 키도 저절로 는다
   if (key.startsWith("edge:")) d.dataset.edges = key.slice(5);
   else if (CLS_BY_KEY[key]) d.dataset.cls = CLS_BY_KEY[key];
-  else if (key === "x")
+  else if (key === "x") {
+    // **마스크가 없으면 이 축은 물을 수 없는 말이다.** 새 검출기가 들인 상자는
+    // 아직 윤곽이 없고, 서버도 `verdict` 를 안 적는다(`views.save`). 화면만
+    // 바뀌고 저장이 조용히 버리는 것이 이 저장소에서 가장 자주 겪은 버그다 —
+    // 그러니 **눌리지 않게 하고 왜인지 말한다**
+    if (!t.mask_id) {
+      warn("마스크가 없는 상자다 — 윤곽 판정(`x`)은 아직 물을 수 없다. "
+         + "**여기서 답할 것은 분류 하나**다 (지느러미면 그대로, 헛것이면 9). "
+         + "manage.py infer 로 마스크를 얹으면 `엔진 바뀜` 에 뜬다.");
+      return;
+    }
     d.dataset.verdict = d.dataset.verdict === "fix" ? "ok" : "fix";
+  }
   else if (key.startsWith("part:")) d.dataset.partial = key.slice(5);
   else if (key.startsWith("face:")) d.dataset.facing = key.slice(5);
   else if (key === "f") {
@@ -637,9 +667,13 @@ async function save(force) {
   if (!tiles.length) return;
   // **손 안 댄 묶음은 Enter 로 안 넘어간다.** 기본값이 맞는 묶음도 있을 수 있어
   // 막지는 않지만, 한 번 더 뜻을 물어야 지나간다 — 저장 단추나 y.
-  if (!touched && !force && mode === "todo") {
-    warn(`이 ${tiles.length}장은 아무것도 안 건드렸다. 기본값(등지느러미·양날·통과·`
-       + `상자 모서리 밑동) 그대로 저장된다 — 정말이면 y 또는 저장 단추.`);
+  if (!touched && !force && (mode === "todo" || mode === "new")) {
+    warn(mode === "new"
+      ? `이 ${tiles.length}장은 아무것도 안 건드렸다. **전부 진짜 등지느러미라고 `
+        + `저장된다** — 여기서 재는 것이 바로 그 비율이라 눈으로 본 것만 넘길 것 `
+        + `(헛것은 9). 정말이면 y 또는 저장 단추.`
+      : `이 ${tiles.length}장은 아무것도 안 건드렸다. 기본값(등지느러미·양날·통과·`
+        + `상자 모서리 밑동) 그대로 저장된다 — 정말이면 y 또는 저장 단추.`);
     return;
   }
   // **'검토한 것' 에서는 손댄 칸만 보낸다.** 이미 판정이 붙어 있는 칸이라
@@ -697,7 +731,16 @@ async function stat() {
     + `검토 <b>${n("검토함")}</b>/${n("상자")}`
     + ` · 양성 <b>${n("positive")}</b> 배경 <b>${n("background")}</b>`
     + (p.drop ? ` 뺌 <b>${n("drop")}</b>` : "")
-    + (p["마스크없음"] ? ` · 마스크없음 ${n("마스크없음")}` : "");
+    + (p["마스크없음"] ? ` · 마스크없음 ${n("마스크없음")}` : "")
+    // **새 검출은 따로 적는다.** 옛 상자의 검토가 다 끝나도 이쪽은 남아 있고,
+    // 한 숫자에 섞으면 그 사실이 안 보인다 (엔진 바뀜에서 겪은 것과 같다)
+    + (p["새검출"]
+        ? ` · 새 검출 <b>${n("새검출")}</b>`
+          + (p["새검출대기"] ? ` (대기 <b style="color:var(--fix)">`
+              + `${n("새검출대기")}</b>` : " (")
+          + (p["새검출:진짜"] ? ` 진짜 ${n("새검출:진짜")}` : "")
+          + (p["새검출:헛것"] ? ` 헛것 ${n("새검출:헛것")}` : "") + ")"
+        : "");
 }
 
 load();

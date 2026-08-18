@@ -19,6 +19,19 @@
 0.25 · imgsz 640 으로 한 번 돌고 남은 자취이고(`detect_fin.py`), 그것을
 다시 만들 이유가 없다.
 
+## **사람이 본 새 상자**가 정밀도의 유일한 근거다
+
+위 표의 `정밀도` 열은 **두 줄을 견줄 수 없다.** 정답 목록이 옛 검출기가 낸
+것에서만 만들어졌으므로, 새 검출기가 더 뱉은 상자는 아무도 본 적이 없어
+자동으로 틀린 것이 된다 (2016-03-15 에서 64.5%로 나왔다).
+
+그래서 `infer_boxes` 가 그 상자들을 검토 화면에 올리고, 사람이 본 것을 여기서
+**문턱별로** 되읽는다. `Box.conf` 가 남아 있어 검토를 한 번만 하면 문턱은
+나중에 얼마든지 옮길 수 있다.
+
+    python manage.py eval_detect                    # 사람이 본 것만 (날짜 없이도 된다)
+    python manage.py eval_detect --date 2016-03-15  # 옛것과의 비교까지
+
 ## 문턱을 여러 개 주는 이유
 
 **우리에게는 재현율이 정밀도보다 중요하다.** 헛것은 검토 화면에서 키 한 번에
@@ -72,7 +85,10 @@ class Command(BaseCommand):
     def add_arguments(self, p):
         p.add_argument("--src-db", default="db/dolfinserver_prod_2026-08-17.sqlite3")
         p.add_argument("--photos", default=str(settings.FIN_PHOTOS))
-        p.add_argument("--date", required=True, help="관찰일 (보통 val_date)")
+        p.add_argument("--date", help="관찰일 (보통 val_date). 없으면 "
+                                     "사람이 본 새 상자만 되읽는다")
+        p.add_argument("--source", default="yolo11",
+                       help="되읽을 새 상자의 `Box.source`")
         p.add_argument("--weights", help="견줄 새 검출기 (없으면 옛것만)")
         p.add_argument("--conf", type=float, nargs="+", default=[0.25])
         p.add_argument("--imgsz", type=int, default=1280)
@@ -81,6 +97,9 @@ class Command(BaseCommand):
 
     def handle(self, **o):
         w = self.stdout.write
+        if not o["date"]:
+            self.reviewed(o)
+            return
         src = Path(o["src_db"])
         if not src.exists():
             raise CommandError(f"옛 DB 가 없다: {src}")
@@ -173,3 +192,56 @@ class Command(BaseCommand):
         w(f"\n※ 짝짓기 IoU {o['iou']}. 한 정답에 예측이 여럿 붙어도 하나만 센다.")
         w("※ 정답은 **사람이 인정한 상자**다 — 사람도 놓친 것이 있으면 여기에도"
           " 없다. 재현율은 그 한정 안에서 읽을 것.")
+        w("※ **위 `정밀도` 열은 두 줄을 견줄 수 없다** — 정답이 옛 검출기가 낸"
+          " 것에서만 만들어져,")
+        w("   새 검출기가 더 뱉은 상자는 아무도 본 적이 없어 자동으로 틀린 것이"
+          " 된다. 아래를 볼 것.")
+        self.reviewed(o)
+
+    def reviewed(self, o):
+        """**사람이 본 새 상자**로 문턱별 정밀도를 낸다.
+
+        `infer_boxes` 가 들인 상자는 옛 상자와 안 겹치는 것뿐이다 — 옛 검출기가
+        놓쳤거나 헛본 자리다. 사람이 `등지느러미` 라고 한 것이 곧 **옛 천장 위로
+        올라간 만큼**이고, `아무것도아님` 이 헛것이다.
+        """
+        from finseg import rules
+        from finseg.models import Box
+
+        w = self.stdout.write
+        qs = Box.objects.filter(source=o["source"]).prefetch_related("reviews")
+        if o["date"]:
+            qs = qs.filter(image__obsdate__in=([o["date"]] if isinstance(
+                o["date"], str) else o["date"]))
+        boxes = [b for b in qs if b.conf is not None]
+        if not boxes:
+            w(f"\n(`{o['source']}` 상자가 없다 — manage.py infer_boxes 로 들인다)")
+            return
+        judged = [(b.conf, rules.effective_review(b)) for b in boxes]
+        judged = [(c, r) for c, r in judged if r is not None]
+        w(f"\n사람이 본 새 상자 ({o['source']}) — 들인 것 {len(boxes):,} 중"
+          f" **{len(judged):,}**")
+        if not judged:
+            w("  아직 아무도 안 봤다. 검토 화면의 `새 검출` 대기열에서 본다.")
+            return
+
+        cuts = [0.40, 0.25, 0.15, 0.05]
+        hdr = (f"{'문턱':>8} {'본 것':>7} {'등지느러미':>10} {'딴 부위':>8}"
+               f" {'헛것':>7} {'정밀도':>8}")
+        w("\n" + hdr)
+        w("-" * len(hdr))
+        for cut in cuts:
+            sel = [(c, r) for c, r in judged if c >= cut]
+            if not sel:
+                continue
+            fin = sum(1 for _, r in sel if r.cls == "fin")
+            none = sum(1 for _, r in sel if r.cls == "none")
+            other = len(sel) - fin - none
+            w(f"  ≥{cut:.2f} {len(sel):>7,} {fin:>10,} {other:>8,}"
+              f" {none:>7,} {fin / len(sel):>7.1%}")
+        w("\n※ 누적이다 — `≥0.25` 는 `≥0.40` 을 품는다.")
+        w("※ `딴 부위` 는 꼬리·머리·몸통처럼 **돌고래이긴 한데 등지느러미가"
+          " 아닌 것**이다. 검출기가 한 분류라 정밀도에서는 헛것과 같이 친다.")
+        w("※ 여기 든 상자는 **옛 상자와 안 겹치는 것뿐**이다 — 옛 검출기가"
+          " 놓쳤거나 헛본 자리. `등지느러미` 로 판정된 것이")
+        w("   곧 **옛 천장 위로 올라간 만큼**이고, 그것이 이 단계의 목적이다.")

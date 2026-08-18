@@ -57,6 +57,8 @@ finweb/            Django 프로젝트 (settings · urls). 자료 경로는 sett
 review/            격자 검토 앱 — 기본값으로 두고 예외만 누른다
                    `/` 검토 · `/photo/<box>` 원본 · `/edit/<box>` 윤곽·밑동
                    `/compare?runs=5,16` 엔진 비교
+                   대기열 다섯: 검토할 것 · 검토한 것 · 교정 대기 · 엔진 바뀜 ·
+                   **새 검출**(우리 검출기가 새로 찾은 것 — 마스크가 없다)
 ```
 
 ## 명령
@@ -80,6 +82,10 @@ python manage.py promote --run <yolo run>                  # 엔진 교체 (되�
 python manage.py export_detect --out datasets/detect-merged   # 검출 (5단계)
 python manage.py train --data datasets/detect-merged --imgsz 1280 --batch 8   # [GPU]
 python manage.py eval_detect --date <val_date> --weights runs/<name>/weights/best.pt
+python manage.py infer_boxes --weights runs/<name>/weights/best.pt --date <날짜>  # [GPU]
+python manage.py crops                                     # 새 상자를 자른다
+#   → 검토 화면 `새 검출` 대기열에서 본다
+python manage.py eval_detect                               # 그 판정으로 문턱별 정밀도
 
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
@@ -106,7 +112,11 @@ python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fi
   자기 학습 날에서. **한쪽이 만든 정답으로 그쪽을 채점하면 안 된다**
   (`eval_masks` 의 `독립` 열, `eval_detect` 의 `val_date` 경고)
 - **재현율에는 늘 한정이 붙는다** — "옛 YOLOv5 상자 범위 안에서". 그 검출기가
-  못 본 지느러미는 이 루프 안에서 표시할 방법이 없다
+  못 본 지느러미는 이 루프 안에서 표시할 방법이 없다 (`infer_boxes` 가 그
+  천장을 여는 자리다)
+- **`fin.db` 는 표본이지 전부가 아니다.** 사진 92장에 옛 DB 는 상자 189개를
+  들고 있는데 우리는 109개만 들여왔다. "이미 아는 상자" 를 물을 때 `fin.db`
+  하고만 견주면 빠진 80개가 **"새 검출" 로 둔갑한다** (`infer_boxes --src-db`)
 - **학습 모델은 검출기가 아니다.** 크롭 640 을 받아 "가운데 것" 을 분할할 뿐,
   사진 전체에서 지느러미를 찾지 않는다. SAM2 는 상자를 프롬프트로 받지만
   YOLO 는 못 받아 틀 안에서 알아서 찾는다 — 그래서 `mosaic=0` 이고, 추론 때

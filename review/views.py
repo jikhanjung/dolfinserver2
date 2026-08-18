@@ -81,7 +81,14 @@ def _tile(state, crop):
         "mask_id": state["mask"].id if state["mask"] else None,
         "crop": f"/crops/{crop.path}",
         "size": crop.w,
-        "conf": state["mask"].conf if state["mask"] else None,
+        # 마스크가 있으면 그 확신, 없으면 **상자를 낸 검출기의 확신**이다.
+        # 새 검출기가 들인 상자는 아직 마스크가 없고(`infer_boxes`), 거기서는
+        # 이 값이 곧 문턱을 고르는 근거가 된다.
+        "conf": state["mask"].conf if state["mask"] else box.conf,
+        # **어느 검출기가 낸 상자인가.** 화면이 이것을 말해야 하는 이유는
+        # 판단이 달라지기 때문이다 — 옛 상자는 "이 마스크가 맞나" 를 묻지만
+        # 새 상자는 "여기 정말 지느러미가 있나" 를 묻는다.
+        "source": box.source,
         # 옛 DB 에서 시민과학자가 남긴 표시. 판정을 대신하지 않고 **눈에 띄게만**
         # 한다 — 다른 사람의 판단이고, 여기서 다시 받는 것이 이 검토다.
         "hint": " · ".join(hint),
@@ -169,15 +176,26 @@ def batch(request):
     n = min(int(request.GET.get("n", 24)), 100)
     page = max(int(request.GET.get("page", 1)), 1)
     mode = request.GET.get("mode", "todo")
-    if mode not in ("todo", "done", "stuck", "stale"):
+    if mode not in ("todo", "done", "stuck", "stale", "new"):
         mode = "todo"
     cls = request.GET.get("cls", "")
     if cls not in {c for c, _ in CLASSES}:
         cls = ""
-    base = (Box.objects.filter(masks__is_current=True)
-            .select_related("crop").prefetch_related("masks", "reviews"))
+    # **마스크를 요구하지 않는다.** 옛 상자는 전부 마스크가 있어 이 줄이 걸러
+    # 내는 것이 없었지만, 새 검출기가 들인 상자는 아직 없다 — 그것을 묻는 것은
+    # "이 안에 지느러미가 있나" 지 "이 윤곽이 맞나" 가 아니라서 마스크가 필요
+    # 없다. `_tile`·`rules.resolve` 는 마스크 없이도 돈다.
+    base = (Box.objects.select_related("crop")
+            .prefetch_related("masks", "reviews"))
 
-    if mode == "stale":
+    if mode == "new":
+        # **새 검출기가 낸 상자 중 아직 안 본 것.** 확신이 높은 것부터 낸다 —
+        # 거기가 "진짜인데 옛 검출기가 놓친 것" 이 가장 많이 모여 있고, 문턱을
+        # 어디로 잡을지도 위에서부터 훑어야 보인다.
+        qs = (base.exclude(source="yolov5").filter(reviews__isnull=True)
+              .distinct().order_by("-conf", "id"))
+        ids, total = None, qs.count()
+    elif mode == "stale":
         # **판정이 본 마스크와 지금 현재가 다른 것.** 엔진을 갈아 끼우면
         # `verdict`("이 마스크가 맞다")가 그때 그 마스크에 대한 말이 되어
         # 낡는다 (`models.py` 의 "엔진에 딸린 판정"). `Review.mask_id` 가
@@ -206,8 +224,12 @@ def batch(request):
         ids = _reviewed_order(cls)
         total, qs = len(ids), None
     else:
+        # **`todo` 는 마스크가 있는 것만이다** — 여기서 묻는 것에 "이 윤곽이
+        # 맞나" 가 들어 있다. 마스크 없는 새 상자는 `new` 로 간다. 둘을 한
+        # 대기열에 섞으면 서로 다른 두 물음이 한 칸에서 뒤섞인다.
         ids = None
-        qs = base.filter(reviews__isnull=True).distinct().order_by("id")
+        qs = (base.filter(masks__is_current=True, reviews__isnull=True)
+              .distinct().order_by("id"))
         total = qs.count()
 
     # **쪽수를 먼저 정하고 자른다.** 범위를 넘긴 요청은 마지막 쪽으로 접어
@@ -242,8 +264,19 @@ def save(request):
     valid_edges = {e for e, _ in EDGES}
     valid_partial = {p for p, _ in BASE_PARTIAL}
     valid_facing = {f for f, _ in FACING}
-    crops = {c.box_id: c for c in Crop.objects.filter(
-        box_id__in=[it["box_id"] for it in body.get("items", [])])}
+    ids = [it["box_id"] for it in body.get("items", [])]
+    crops = {c.box_id: c for c in Crop.objects.filter(box_id__in=ids)}
+    # **마스크가 없는 상자에는 `verdict` 를 안 적는다.** "이 마스크가 맞나" 는
+    # 마스크가 있어야 물을 수 있는 말이다 (`models.py` 의 "엔진에 딸린 판정").
+    # 새 검출기가 들인 상자는 아직 윤곽이 없고, 거기서 사람이 답한 것은
+    # `cls` 하나 — "여기 정말 지느러미가 있나" 뿐이다.
+    #
+    # `ok` 를 적어 두면 `label_of` 가 그것을 **양성**이라 하고, 진행상황이
+    # 분할 자료가 다 된 것처럼 말한다. 비워 두면 `PENDING` 이라 남은 일로
+    # 잡히고, 나중에 `infer` 가 마스크를 얹으면 **`엔진 바뀜` 대기열에
+    # 저절로 뜬다** — 그때 윤곽을 판정하면 된다.
+    masked = set(Mask.objects.filter(box_id__in=ids, is_current=True)
+                 .values_list("box_id", flat=True))
     n = 0
     for it in body.get("items", []):
         cls = it.get("cls")
@@ -256,7 +289,9 @@ def save(request):
         else:
             if edges not in valid_edges:
                 return JsonResponse({"error": f"모르는 날 상태: {edges}"}, status=400)
-            if verdict not in ("ok", "fix"):
+            if it["box_id"] not in masked:
+                verdict = ""        # 물을 수 없는 말이다 (위 주석)
+            elif verdict not in ("ok", "fix"):
                 return JsonResponse({"error": f"모르는 판정: {verdict}"}, status=400)
 
         facing = it.get("facing") or ""
