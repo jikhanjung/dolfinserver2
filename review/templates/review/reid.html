@@ -325,6 +325,31 @@ async function rename(id, name) {
   draw();
 }
 
+// **크기는 손에 맞춰 두고 기억한다** — 화면마다 다르고, 매번 다시 맞추게
+// 하면 그것이 곧 안 쓰게 되는 이유가 된다
+const size = document.getElementById("size");
+size.value = localStorage.getItem("finSize") || 220;
+const setSize = () => {
+  document.documentElement.style.setProperty("--fin", size.value + "px");
+  localStorage.setItem("finSize", size.value);
+};
+size.oninput = setSize;
+setSize();
+
+// 상자 쪽도 같이 — 옆 칸 너비는 썸네일 넉 줄이 들어가게 따라 넓힌다.
+// 크기만 키우고 칸이 좁으면 한 줄에 하나씩 늘어서서 견주기가 더 나빠진다
+const tsize = document.getElementById("tsize");
+tsize.value = localStorage.getItem("thumbSize") || 88;
+const setThumb = () => {
+  const t = +tsize.value;
+  document.documentElement.style.setProperty("--thumb", t + "px");
+  document.documentElement.style.setProperty(
+    "--sidew", Math.max(300, t * 4 + 48) + "px");
+  localStorage.setItem("thumbSize", t);
+};
+tsize.oninput = setThumb;
+setThumb();
+
 ["sort", "fside", "hidedone"].forEach(id =>
   document.getElementById(id).onchange = () => { sel.clear(); draw(); });
 addEventListener("keydown", e => {
