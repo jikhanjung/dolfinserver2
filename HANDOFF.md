@@ -1,13 +1,16 @@
 # Handoff — 현재 진행 상황
 
-**2026-08-23.** 5단계가 한 바퀴 돌았다. 새 검출기가 찾은 상자 690개를 **전부
-검토했고**, 정밀도가 처음으로 편향 없이 재어졌으며(`≥0.40` 에서 **87.3%**),
-그 판정이 **다음 검출 학습으로 이어진다** — `export_detect` 가 `fin.db` 를
-읽는다. **막고 있는 것은 학습 한 번이다.**
+**2026-08-23 밤.** 5단계가 한 바퀴 돌았다. 새 검출기가 찾은 상자 690개를
+**전부 검토했고**, 정밀도가 처음으로 편향 없이 재어졌으며(`≥0.40` 에서
+**87.3%**), 그 판정이 **다음 검출 학습으로 이어진다** — `export_detect` 가
+`fin.db` 를 읽는다.
+
+**지금 `detect-v2` 가 학습 중이다** (`runs/detect-v2-det` · 120에폭 · 새벽 5시쯤
+끝난다). 끝나면 `eval_detect --date 2016-03-15`. 자료는 `seg-v3` 까지 뽑아 두었다.
 
 지나간 것은 `devlog/` 에 있다. 특히 오늘 상태를 이해하려면
 `20260817_002`(자가 기울어 있던 것)와 `20260818_001`(공평한 날에서 잰 것).
-앞으로 할 일은 `TODOs.md`.
+**오늘 것은 아직 안 썼다** — 학습이 끝나야 결론이 선다. 앞으로 할 일은 `TODOs.md`.
 
 ## 한 줄로
 
@@ -27,13 +30,17 @@
 | 표본 | 관찰일 **20일** (2016-03-15 ~ 2019-11-05) · 사진 1,909 |
 | 상자 | **3,005** — 옛 YOLOv5 2,315 + **새 검출기 690** |
 | 크롭 | 3,005개 전부 · 640×640 · `crops/` |
-| 마스크 | YOLO11s v1 2,246 + SAM2 69 (현재) · v2(run 23)는 아직 안 올렸다 |
-| 검토 | **3,005 / 3,005** · 판정 **5,879건** · **남은 일 없다** |
+| 마스크 | v1 2,246 + **v2 570**(run 32·35) + SAM2 69 · **run 23 은 아직 안 올렸다** |
+| 검토 | **3,005 / 3,005** · 판정 **6,014건** · **남은 일 0** |
 | **새 검출** | **690 전부 검토** — 등지느러미 **419** · 딴 부위 152 · 헛것 119 |
-| 사람이 그린 것 | 윗윤곽 197 · 밑동 1,544 |
+| 사람이 그린 것 | 윗윤곽 **271** · 밑동 1,703 |
 
-옛 상자 2,315개의 판정: `fin` 2,044 · `person` 107 · **`none` 82** ·
-`fluke` 26 · `body` 21 · `head` 15 · `bird` 14 · `rostrum` 3 · `pectoral` 3.
+상자 3,005개의 판정: `fin` 2,460 · **`none` 206** · `person` 110 · `body` 71 ·
+`rostrum` 55 · `fluke` 38 · `head` 26 · `bird` 19 · `pectoral` 10 · `other` 10.
+학습 자료로는 **양성 2,799 · 배경 206**.
+
+`마스크없음 120` 은 남은 일이 아니다 — 그중 48개는 사람이 직접 윤곽을 그렸고
+(`label_of` 가 그것을 답으로 센다), 나머지 72개는 `none` 이라 윤곽이 필요 없다.
 
 ```
 db/fin.db                                  사람의 판정 5,879건 — 다시 못 만든다
@@ -133,24 +140,28 @@ mAP50-95 +0.097 이다.
 ```bash
 FIN_PHOTOS=/home/jikhanjung/dolfin-photos python manage.py runserver 0.0.0.0:8900
 
-# 분할 (3단계)
-python manage.py export_yolo --out datasets/seg-v3 --group coarse --val-date <날짜>
-python manage.py train --data datasets/seg-v3                 # [GPU]
+# 분할 (3단계) — seg-v3 는 뽑아 두었다 (run 37)
+python manage.py export_yolo --out datasets/seg-v3 --group coarse --val-date 2019-06-17
+python manage.py train --data datasets/seg-v3                 # [GPU] 약 1시간 20분
 python manage.py infer --weights runs/seg-v3-seg/weights/best.pt --compare-only
-python manage.py eval_masks --runs 5 16 23
+python manage.py eval_masks --runs 5 16 23 <새 run>
 python manage.py promote --run <run> && python manage.py infer_base --redo
 
-# 검출 (5단계)
-python manage.py export_detect --out datasets/detect-merged
-python manage.py train --data datasets/detect-merged --imgsz 1280 --batch 8   # [GPU]
-python manage.py eval_detect --date 2016-03-15 --weights runs/detect-merged-det/weights/best.pt
-python manage.py infer_boxes --weights runs/detect-merged-det/weights/best.pt --date <날짜>
+# 검출 (5단계) — detect-v2 는 학습 중이다 (run 36)
+python manage.py export_detect --out datasets/detect-v2       # fin.db 판정을 읽는다
+python manage.py train --data datasets/detect-v2 --imgsz 1280 --batch 8   # [GPU] 약 17시간
+python manage.py eval_detect --date 2016-03-15 --weights runs/detect-v2-det/weights/best.pt
+python manage.py infer_boxes --weights <새 가중치> --date <날짜>
 python manage.py crops                                        # 새 상자를 자른다
 python manage.py eval_detect                                  # 사람이 본 것으로 문턱별 정밀도
 
-python manage.py export_detect --out datasets/detect-v2   # fin.db 판정을 읽는다
-python manage.py test          # 45개. fin.db 를 안 건드린다
+python manage.py test          # 61개. fin.db 를 안 건드린다
 ```
+
+**자료·가중치가 어느 것인지**: 검출은 `detect-human`(817장, 실험) →
+`detect-merged`(2,508) → **`detect-v2`(4,240 · 상자 9,795)**, 분할은
+`seg-v1` → `seg-v2`(둘 다 크롭 2,315) → **`seg-v3`(3,005 · 라벨 3,611)**.
+지금 쓰는 검출기는 `runs/detect-merged-det`, 분할은 run 16(v1)이다.
 
 `~/dolfin-photos/nas` 가 `/mnt/p/JikhanJung/dolfinimage` 로 가는 심볼릭 링크다.
 DB 가 `nas/2016/…` 로 들고 있어서다 — 코드에서 접두어를 안 벗긴 이유는
@@ -163,9 +174,16 @@ DB 가 `nas/2016/…` 로 들고 있어서다 — 코드에서 접두어를 안 
 아님    q 새   w 사람   r 기타          배경  9 아무것도아님
 축      e 날 · p 아래경계 · f 앞쪽(순환) · x 교정필요 · 점을 끌면 밑동
 보류    s 모르겠다 — 판정을 안 남긴다 (묶음 저장에서만)
+윤곽    n 편집 창을 연다 (거기서 다시 n 이면 상자에서 새로 그린다)
 이동    [ ] 앞뒤 · Home End 처음/끝 · Enter 저장(되짚기에서는 다음 페이지)
-대기열  [검토할 것] [검토한 것] [교정 대기] [엔진 바뀜] [새 검출]   우클릭 메뉴
+대기열  [검토할 것] [검토한 것] [교정 대기] [엔진 바뀜] [새 검출] [윤곽 없음]
 ```
+
+**대기열이 여섯이다.** `윤곽 없음` 은 오늘 붙였다 — 판정이 붙으면 `검토할
+것`·`새 검출` 에서 빠지고, 마스크가 없으면 `엔진 바뀜` 에 안 걸리고,
+`verdict='fix'` 가 아니면 `교정 대기` 에도 안 걸려서 **53개가 어디에도 안 뜬
+채 남아 있었다.** 화면은 "남은 일 없다" 고 말하는데 `export_yolo` 는 그 상자가
+든 크롭을 통째로 뺐다 — 같은 크롭에 걸친 남의 상자까지 함께.
 
 **키는 분류 순서와 따로 둔다** (`models.CLASS_KEYS`). 순서는 YOLO 클래스 번호라
 못 바꾸고, 키는 손에 익는 것이라 사람 쪽 사정으로 정한다.
@@ -175,7 +193,8 @@ DB 가 `nas/2016/…` 로 들고 있어서다 — 코드에서 접두어를 안 
 - **원본 사진** `/photo/<box_id>` — 휠 확대 · `Space`+움직임 이동 · `1` 이 상자로
 - **윤곽 고치기** `/edit/<box_id>` — **원본 사진이 깔린다.** 상자로 꼭짓점 골라
   함께 옮김 · `Del` 삭제 · **노란 점으로 밑동도** · `f` 앞쪽 · `Ctrl+Z`.
-  **`Esc` 로는 안 닫힌다**
+  **`Esc` 로는 안 닫힌다**. 마스크가 아예 없으면 `n` 으로 **상자에서 출발 윤곽**을
+  만든다 — 한 점도 안 옮기면 저장이 막힌다(상자 네모가 사람 것인 척 들어가면 안 된다)
 - **엔진 비교** `/compare?runs=5,16,23` — 낮은 IoU 부터 보여 준다
 - 손 안 댄 묶음은 `Enter` 로 저장 안 된다 (`y` 나 저장 단추라야)
 
@@ -207,8 +226,45 @@ DB 가 `nas/2016/…` 로 들고 있어서다 — 코드에서 접두어를 안 
 사진에서 새것이 헛보는 것은 안 잡히므로, 여기서 나올 정밀도는 **낙관 쪽으로
 기운다.**
 
-**표본이 20일이다.** 옛 운영 DB 에는 253일 · 사진 544,585장이 있다.
-`not_fin` 374건은 공짜로 얻는 어려운 음성이고 개체명 166개는 re-ID 의 씨앗이다.
+**사람이 그린 상자는 이미 바닥났다.** 옛 운영 DB 를 날짜별로 펴 보니
+관찰일 **255일 · 사진 544,585장 · 상자 999,528개**인데, `detect-v2` 가 쓰는 것은
+**28일 · 4,240장 = 0.78%** 다. 그런데 **안 쓴 227일에 사람이 그려 넣은 상자가
+한 개도 없다** — 749개 전부 이미 들어가 있다.
+
+유일한 예외가 **2016-03-16**(시민과학 판정 1,206건 · `not_fin` 255건)인데,
+그날은 사람이 **거르기만 하고 채우지 않아서** 일부러 뺐다(`--exclude-date`).
+놓친 지느러미가 배경으로 들어가기 때문이다.
+
+그래서 검출 자료를 더 늘리는 길은 둘뿐이다 — **새 검출기로 훑고 사람이 보거나**
+(`infer_boxes` → `새 검출`, 이번에 690개로 해 봤다), **`/photo` 에 상자 추가를
+붙이거나**. 앞엣것은 이제 문턱별 정밀도를 알아서 얼마나 깊이 훑을지 정할 수 있다.
+
+**날을 넓히되 날마다 얕게.** 하루에 만 장씩 있는 날이 여럿인데(2018-10-22 는
+10,179장) 통째로 넣으면 그날 바다 상태를 외운다. 지금 20일이 날마다 100장
+안팎으로 고르게 뽑힌 것은 의도된 설계다.
+
+날짜별 표: https://claude.ai/code/artifact/e4f94596-f308-4b7d-a65c-663c240fae75
+
+## 오늘 샌 곳 셋 — 전부 같은 종류였다
+
+**"화면은 됐다고 하는데 값이 자료에 안 닿는다."** 이 저장소에서 가장 자주 겪는
+것인데 하루에 세 번 만났다. 셋 다 **숫자를 견줘서** 잡혔지 화면을 봐서 잡힌
+것이 아니다 — 화면은 셋 다 멀쩡했다.
+
+| 무엇 | 어떻게 드러났나 |
+|---|---|
+| 점을 끌어도 `polyMoved` 가 안 섰다 | 셋 중 둘이 200 을 받으면서 윤곽만 빠졌다 |
+| 판정이 붙었는데 윤곽이 없는 상자 53개 | 대기열 여섯 중 어디에도 안 떴다 |
+| 사람이 그린 윤곽을 `label_of` 가 안 셌다 | 대기열이 0인데 `pending` 이 48이었다 |
+
+앞의 둘은 `verdict`·`polygon_edited` 처럼 **깃발 하나에 기댄 자리**였다. 그래서
+`/edit` 의 `commit` 은 이제 깃발과 **값을 함께** 본다 — 화면의 윤곽이 들어온
+것과도 출발 윤곽과도 다르면 사람이 옮긴 것이다. 깃발 세우는 길을 또 빠뜨려도
+이쪽이 잡는다.
+
+셋째가 특히 조용했다. `verdict`("이 마스크가 맞나")는 마스크가 있어야 물을 수
+있는 말이라 서버가 안 적는 것이 옳은데, `label_of` 가 그 빈 칸을 "아직 안 봤다"
+로 읽었다. **그리는 일 자체가 자료에 안 닿고 있었다.**
 
 ## 알아 둘 것
 
@@ -234,5 +290,7 @@ DB 가 `nas/2016/…` 로 들고 있어서다 — 코드에서 접두어를 안 
 - **2080ti 는 Turing(sm_75) 이라 bf16 이 없다.** AMP 는 fp16
 - **`fin.db` 를 두 기계에서 함께 열지 않는다.** 운영 자리는 2080ti 한 곳이다.
   `m710q` 에서 `git pull` 하면 그쪽 워킹트리의 `fin.db`·`crops/` 가 지워진다
+- **깃발 하나로 "고쳤나" 를 묻지 말 것.** `polyMoved`·`base_moved` 같은 것은
+  세우는 길을 하나만 빠뜨려도 조용히 샌다. 값을 견줄 수 있으면 함께 볼 것
 - **화면이 자기 상태를 말하는지 늘 의심할 것.** "값은 맞는데 화면이 안 말한다"
   를 하루에 아홉 번 만난 날이 있다. 붉은 줄(`.warn`)이 그 자리다
