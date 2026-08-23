@@ -50,6 +50,18 @@
     bottom:3px; right:3px; background:#000c; color:var(--ok); font-size:10px;
     padding:0 4px; border-radius:3px; overflow:hidden; white-space:nowrap;
     text-overflow:ellipsis }
+  /* **찾아 준 것이 눈에 띄어야 한다.** 상자에서 눌러 격자로 보냈는데 그것이
+     어느 칸인지 스스로 찾아야 한다면 보내 준 뜻이 없다 — 흐려진 칸들
+     사이에서 파란 테 하나는 잘 안 걸린다 */
+  @keyframes findme {
+    0%, 100% { border-color:var(--no); box-shadow:0 0 0 0 #f8717100 }
+    50%      { border-color:var(--no); box-shadow:0 0 0 7px #f8717166 }
+  }
+  .fin.found { animation:findme .45s ease-in-out 4; opacity:1 !important;
+               border-color:var(--no) }
+  @media (prefers-reduced-motion:reduce) {
+    .fin.found { animation:none; box-shadow:0 0 0 5px #f8717188 }
+  }
   .fin .r { position:absolute; right:4px; top:4px; background:#000b;
     color:#cfd8e3; font:11px "IBM Plex Mono",monospace; padding:1px 5px;
     border-radius:3px }
@@ -254,13 +266,25 @@ function bindBoxes() {
   // 상자 안의 작은 그림을 누르면 격자에서 그것을 찾아 준다 — 다시 꺼낼 때
   document.querySelectorAll(".box .thumbs img").forEach(im => {
     im.onclick = () => {
-      sel = new Set([+im.dataset.id]);
+      const id = +im.dataset.id;
+      sel = new Set([id]);
+      // 넣은 것을 숨겨 두었으면 찾아 줄 수가 없다 — 먼저 켜 준다
       document.getElementById("hidedone").checked = false;
       draw();
-      const t = document.querySelector(`.fin[data-id="${im.dataset.id}"]`);
-      if (t) t.scrollIntoView({block: "center"});
+      flash(id);
     };
   });
+}
+
+// 격자에서 그 칸을 찾아 가운데로 옮기고 **빨갛게 몇 번 깜박인다**
+function flash(id) {
+  const t = document.querySelector(`.fin[data-id="${id}"]`);
+  if (!t) return;
+  t.scrollIntoView({block: "center", behavior: "smooth"});
+  t.classList.remove("found");
+  void t.offsetWidth;          // 애니메이션을 다시 시작시킨다
+  t.classList.add("found");
+  setTimeout(() => t.classList.remove("found"), 2200);
 }
 
 async function post(url, body) {
