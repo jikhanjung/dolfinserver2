@@ -173,3 +173,91 @@ class HoldTests(TestCase):
         self.assertEqual(self.ids("/api/batch?mode=todo"), [self.a.id])
         self.assertEqual(self.ids(f"/api/batch?mode=todo&hold={self.a.id}"), [])
 
+
+class ExportDetectReviewTests(TestCase):
+    """**검토가 다음 검출 학습으로 이어지나.**
+
+    오래 끊겨 있던 자리다 — `export_detect` 가 옛 운영 DB 만 읽어서, 검토
+    화면에서 인정한 상자가 다음 학습에 안 들어갔다. 여기서 잡는 것은 그
+    이음매다: 인정한 것이 **더해지고**, 아니라고 한 옛 상자가 **빠지고**,
+    새 검출기가 안 훑은 날은 **안 쓰인다**.
+
+    옛 DB 없이 돌 수 있게 `_from_reviews` 만 따로 잰다 — 그 함수는 Django
+    쪽만 본다.
+    """
+
+    def cmd(self):
+        from finseg.management.commands.export_detect import Command
+        return Command()
+
+    def setUp(self):
+        # 새 검출기가 훑은 날은 run 기록에서 읽는다 — 손으로 적으면 다음에
+        # 더 훑고 나서 여기를 안 고친다
+        Run.objects.create(kind="detect", params={"kind": "infer_boxes",
+                                                  "dates": ["2020-01-01"]})
+        self.swept = Image.objects.create(path="t/s.jpg", src_id=11,
+                                          obsdate="2020-01-01")
+        self.unswept = Image.objects.create(path="t/u.jpg", src_id=22,
+                                            obsdate="2020-06-01")
+
+    def box(self, img, source, src_id=None, cls=None, **kw):
+        b = Box.objects.create(image=img, x1=10, y1=20, x2=60, y2=80,
+                               source=source, src_id=src_id, **kw)
+        if cls:
+            Review.objects.create(box=b, cls=cls)
+        return b
+
+    def test_accepted_new_box_is_added(self):
+        b = self.box(self.swept, "yolo11", cls="fin")
+        add, reject, imgs, _ = self.cmd()._from_reviews(set())
+        self.assertEqual(add[11], [(b.x1, b.y1, b.x2, b.y2)])
+        self.assertEqual(imgs, {11})
+
+    def test_old_box_is_not_added_twice(self):
+        """옛 상자는 옛 DB 에서 그대로 나간다 — 여기서 더하면 두 번 된다."""
+        self.box(self.swept, "yolov5", src_id=777, cls="fin")
+        add, reject, _, _ = self.cmd()._from_reviews(set())
+        self.assertEqual(add, {})
+        self.assertEqual(reject, set())
+
+    def test_rejected_old_box_is_subtracted(self):
+        """옛 DB 에서는 `fin` 으로 나가던 것이다 — 빼는 것이 곧 고치는 일이다."""
+        self.box(self.swept, "yolov5", src_id=777, cls="none")
+        self.box(self.swept, "yolov5", src_id=888, cls="person")
+        _, reject, _, _ = self.cmd()._from_reviews(set())
+        self.assertEqual(reject, {777, 888})
+
+    def test_latest_review_wins(self):
+        """판정은 쌓인다 — `rules.effective_review` 와 같은 규칙이어야 한다."""
+        b = self.box(self.swept, "yolo11", cls="none")
+        Review.objects.create(box=b, cls="fin")
+        add, reject, _, _ = self.cmd()._from_reviews(set())
+        self.assertEqual(len(add[11]), 1)
+
+    def test_unswept_date_is_left_out(self):
+        """검출기 하나만 본 날이라 완전성이 한 단계 낮다."""
+        self.box(self.unswept, "yolo11", cls="fin")
+        add, _, imgs, _ = self.cmd()._from_reviews(set())
+        self.assertEqual(add, {})
+        self.assertEqual(imgs, set())
+
+    def test_excluded_date_is_left_out(self):
+        self.box(self.swept, "yolo11", cls="fin")
+        add, _, imgs, _ = self.cmd()._from_reviews({"2020-01-01"})
+        self.assertEqual(imgs, set())
+
+    def test_unreviewed_box_is_left_out(self):
+        """판정이 없는 것은 아무 말도 안 한 것이다 (`rules.PENDING`)."""
+        self.box(self.swept, "yolo11")
+        add, _, imgs, note = self.cmd()._from_reviews(set())
+        self.assertEqual(add, {})
+        self.assertEqual(imgs, set())
+        self.assertTrue(any("판정이 없는" in n for n in note))
+
+    def test_without_a_sweep_record_nothing_is_used(self):
+        """훑은 날을 모르면 완전성을 주장할 수 없다 — 조용히 쓰면 안 된다."""
+        Run.objects.filter(kind="detect").delete()
+        self.box(self.swept, "yolo11", cls="fin")
+        add, reject, imgs, note = self.cmd()._from_reviews(set())
+        self.assertEqual((add, reject, imgs), ({}, set(), set()))
+        self.assertTrue(any("infer_boxes" in n for n in note))

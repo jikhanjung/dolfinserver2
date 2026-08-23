@@ -51,6 +51,38 @@
 비교가 기운다. 실제로 그렇게 재고 "새것이 못 이겼다" 고 읽을 뻔했다.
 기본값 `2016-03-15` 는 옛 목록에 없고 사람이 상자를 109개 그려 넣은 날이다.
 
+## `fin.db` 의 판정도 읽는다 (`--no-fin-db` 로 끈다)
+
+**여기가 오래 끊겨 있던 자리다.** 검토 화면에서 인정한 상자가 다음 검출 학습에
+안 들어가면 검토가 헛돈다 — 사람이 그린 상자 330개를 찾아 쓴 것과 똑같은 자리다.
+
+`fin.db` 가 주는 것은 셋이고, **셋 다 옛 DB 에는 없다.**
+
+1. **새 검출기가 찾아 사람이 인정한 상자** (`source='yolo11'` · `cls='fin'`).
+   옛 검출기가 놓쳐 **아무 라벨에도 없던 자리**다 — 이것이 재현율의 천장을 연다
+2. **사람이 헛것이라 한 옛 상자** (`cls` 가 `fin` 이 아닌 것). 옛 DB 에서는
+   `fin` 으로 나가던 것이라 **틀린 라벨을 빼는 쪽**이다. 옛 DB 의 `not_fin` 은
+   시민과학자가 표시한 것만 잡고, 이쪽은 전량 검토라 훨씬 촘촘하다
+3. **그 사진들 자체.** 옛 DB 의 '손댄 사진' 과 54장밖에 안 겹친다
+
+## `fin.db` 사진이 왜 "빠짐없이" 에 가까운가
+
+이 자료의 요건은 하나다 — **그 사진의 지느러미가 빠짐없이 표시돼야 한다.**
+`fin.db` 사진은 검출기 **둘**이 훑었고 그 결과를 사람이 전량 판정했다:
+
+- 옛 검출기의 상자는 옛 DB 에서 그대로 가져온다 (`fin.db` 는 표본이라 일부만
+  들여왔지만, 라벨은 옛 DB 에서 만들므로 안 들여온 것도 함께 나간다)
+- 새 검출기가 `conf 0.05` 로 다시 훑어 안 겹치는 것을 690개 들였고
+  (`infer_boxes` — **옛 DB 와 견줘서** 걸렀다), 그 690개에 전부 판정이 붙었다
+
+그래서 **`--date` 로 훑은 날의 사진만** 쓴다. 안 훑은 날은 검출기 하나만 본
+것이라 완전성이 한 단계 낮다 — 그 날짜는 `infer_boxes` 의 run 기록에서 읽는다.
+
+**여전히 완전하지는 않다.** 둘 다 놓친 지느러미는 배경으로 들어가고, 옛 DB
+상자 중 `import_boxes --min-area` 아래로 잘려 안 들여온 것은 아무도 안 봤다.
+전자는 이 루프 안에서 열 방법이 없고(`HANDOFF` 의 "재현율에는 늘 한정이 붙는다"),
+후자는 옛 검출기 출력이라 옛 라벨과 같은 지위다.
+
 ## 사진은 복사하지 않고 링크한다
 
 원본이 4928×3280 · 장당 10MB 라 856장이면 8.5GB 다. 심볼릭 링크로 걸면 0바이트다
@@ -67,6 +99,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import runs
+from finseg.models import Review
 
 NAMES = ["fin"]   # 검출기는 한 분류다 — 옛 DB 의 사람 판정이 fin/not_fin 뿐이다
 
@@ -85,9 +118,69 @@ class Command(BaseCommand):
                        help="옛 YOLOv5 학습 라벨 뿌리 ('' 면 안 쓴다)")
         p.add_argument("--exclude-date", nargs="*", default=["2016-03-16"],
                        help="사람이 '채우지는' 않은 날 — 기본값의 근거는 위 문서")
+        p.add_argument("--no-fin-db", action="store_true",
+                       help="검토 판정을 안 읽는다 — 옛 운영 DB 만으로 만든다")
         p.add_argument("--val-frac", type=float, default=0.2)
         p.add_argument("--seed", type=int, default=20260817)
         p.add_argument("--dry-run", action="store_true")
+
+    def _from_reviews(self, excl):
+        """`fin.db` 의 사람 판정 → (더할 상자, 뺄 옛 상자, 쓸 사진, 적을 말).
+
+        좌표는 **원본 사진 좌표**다 (`Box` 가 그렇게 들고 있다) — 크롭 좌표로
+        바꾸는 일은 없다. 옛 DB 와 잇는 열쇠는 `Image.src_id`·`Box.src_id` 다.
+        """
+        from finseg.models import Box, Run
+
+        note = []
+        # **훑은 날만 쓴다.** 새 검출기가 안 지나간 날은 검출기 하나만 본
+        # 것이라 완전성이 한 단계 낮다. 날짜를 손으로 적지 않고 run 기록에서
+        # 읽는다 — 손으로 적으면 다음에 더 훑고 나서 여기를 안 고친다.
+        swept = set()
+        for r in Run.objects.filter(kind="detect").order_by("-id"):
+            for d in (r.params or {}).get("dates") or []:
+                swept.add(str(d))
+        if not swept:
+            note.append("**`infer_boxes` 기록이 없다** — 새 검출기가 훑은 날을"
+                        " 알 수 없어 `fin.db` 를 안 썼다.")
+            self.swept = set()
+            return defaultdict(list), set(), set(), note
+        swept -= excl
+
+        # 판정은 쌓이므로 **상자마다 가장 늦은 것**이 유효하다
+        # (`rules.effective_review` 와 같은 규칙 — 여기서는 한 번에 훑는다)
+        latest = {}
+        for box_id, cls in (Review.objects.order_by("id")
+                            .values_list("box_id", "cls")):
+            latest[box_id] = cls
+
+        add, reject, imgs = defaultdict(list), set(), set()
+        n_seen = n_unreviewed = 0
+        for b in Box.objects.select_related("image").filter(
+                image__obsdate__in=sorted(swept), image__src_id__isnull=False):
+            cls = latest.get(b.id)
+            if cls is None:
+                n_unreviewed += 1
+                continue
+            n_seen += 1
+            imgs.add(b.image.src_id)
+            if cls == "fin":
+                # 옛 상자는 옛 DB 에서 그대로 나간다 — 여기서 더하면 두 번 된다
+                if b.source != "yolov5":
+                    add[b.image.src_id].append((b.x1, b.y1, b.x2, b.y2))
+            elif b.src_id is not None:
+                # **사람이 아니라고 한 옛 상자.** 옛 DB 에서는 `fin` 으로
+                # 나가던 것이라, 빼는 것이 곧 틀린 라벨을 지우는 일이다
+                reject.add(b.src_id)
+        note.append(f"`fin.db` 판정 {n_seen:,} 건 · 사진 {len(imgs):,} 장"
+                    f" (훑은 날 {len(swept)})")
+        note.append(f"  더할 상자 **{sum(len(v) for v in add.values()):,}**"
+                    f" (새 검출기가 찾아 사람이 인정한 것)")
+        note.append(f"  뺄 옛 상자 **{len(reject):,}** (사람이 아니라고 한 것)")
+        if n_unreviewed:
+            note.append(f"  아직 판정이 없는 상자 {n_unreviewed:,} 개는 안 썼다")
+        self.swept = swept
+        return add, reject, imgs, note
 
     def handle(self, **o):
         from PIL import Image as PILImage
@@ -99,6 +192,7 @@ class Command(BaseCommand):
         c = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
         q = lambda s: c.execute(s).fetchall()
 
+        excl = set(o["exclude_date"] or [])
         touched = set(x[0] for x in q(
             "select distinct dolfin_image_id from dolfinweb_userfinbox"
             " where dolfin_image_id is not null"))
@@ -107,15 +201,24 @@ class Command(BaseCommand):
             " where created_by!='yolov5'"))
         if not touched:
             raise CommandError("사람이 손댄 사진이 없다")
-        ph = ",".join(map(str, touched))
         not_fin = set(x[0] for x in q(
             "select dolfin_box_id from dolfinweb_userfinbox"
             " where not_fin=1 and dolfin_box_id is not null"))
 
+        # **검토 판정을 읽는다.** 여기가 루프에서 끊겨 있던 자리다 — 이것이
+        # 없으면 검토 화면에서 인정한 상자가 다음 학습에 안 들어간다.
+        touched_old = set(touched)
+        self.swept = set()
+        fin_add, fin_reject, fin_photos, fin_note = defaultdict(list), set(), set(), []
+        if not o["no_fin_db"]:
+            fin_add, fin_reject, fin_photos, fin_note = self._from_reviews(excl)
+            not_fin |= fin_reject
+            touched |= fin_photos
+        ph = ",".join(map(str, touched))
+
         imgs = {i: (f, str(d)) for i, f, d in q(
             f"select id, imagefile, obsdate from dolfinrest_dolfinimage"
             f" where id in ({ph})")}
-        excl = set(o["exclude_date"] or [])
         photos = Path(o["photos"])
 
         per_img, dropped = defaultdict(list), Counter()
@@ -139,6 +242,20 @@ class Command(BaseCommand):
                 dropped["넓이가 없다"] += 1
                 continue
             per_img[iid].append((x1, y1, x2, y2, by != "yolov5"))
+
+        # **검토가 인정한 상자를 얹는다.** 옛 검출기가 놓쳐 아무 라벨에도 없던
+        # 자리다 — `infer_boxes` 가 옛 DB 와 견줘 걸렀으므로 겹치지 않는다.
+        n_add = 0
+        for iid, boxes in fin_add.items():
+            if iid not in imgs or imgs[iid][1] in excl:
+                continue
+            for x1, y1, x2, y2 in boxes:
+                per_img[iid].append((x1, y1, x2, y2, True))
+                n_add += 1
+        if fin_note:
+            for line in fin_note:
+                w(line.replace("**", ""))
+            w(f"  실제로 얹은 것 {n_add:,} 개")
 
         # **옛 학습 라벨을 잇는다.** 이미 YOLO 형식이라 그대로 옮겨 적는다.
         legacy = {}
@@ -203,7 +320,9 @@ class Command(BaseCommand):
         n_box = sum(len(k["boxes"]) or len(k["lines"] or []) for k in kept)
         n_hum = sum(1 for k in kept for b in k["boxes"] if b[4])
         n_leg = sum(1 for k in kept if k["lines"] is not None)
-        w(f"사람이 손댄 사진 {len(imgs):,} 장 중 쓸 수 있는 것 {len(kept):,}")
+        w(f"\n사람이 손댄 사진 {len(imgs):,} 장 중 쓸 수 있는 것 {len(kept):,}"
+          + (f" (그중 fin.db 가 들여온 사진 {len(fin_photos - touched_old):,})"
+             if fin_photos else ""))
         for k, v in dropped.most_common():
             w(f"  뺐다 — {k}: {v:,}")
         w(f"상자 {n_box:,} 개 · 사진당 {n_box / len(kept):.2f}")
@@ -214,6 +333,14 @@ class Command(BaseCommand):
             by_date[k["day"]].append(k)
         w("  관찰일별: " + " · ".join(
             f"{d} {len(v)}장" for d, v in sorted(by_date.items())))
+
+        # **상자가 하나도 없는 사진.** 사람이 그 사진의 상자를 전부 아니라고 한
+        # 것이라 순수한 배경이다 — 어려운 음성이라 값이 있지만, 그것이 자료의
+        # 몇 %인지는 눈에 보여야 한다 (권장 10% 언저리)
+        n_bg = sum(1 for k in kept if not k["boxes"] and not (k["lines"] or []))
+        if n_bg:
+            w(f"  상자가 없는 사진 {n_bg:,} 장 ({100 * n_bg / len(kept):.1f}%)"
+              f" — 사람이 그 사진의 상자를 전부 아니라고 한 것이다")
 
         rng = random.Random(o["seed"])
         val_date = o["val_date"] or rng.choice(sorted(by_date))
@@ -231,6 +358,16 @@ class Command(BaseCommand):
                 split[k["id"]] = "val" if i < n_val else "train"
         counts = Counter(split.values())
         w(f"\nval_date = {val_date} (통째로 뺀다)")
+        # **이 자가 무엇을 재나.** `val_date` 가 새 검출기로 훑은 날이면, 그날의
+        # 정답에 **그 검출기가 찾아낸 상자가 들어가 있다.** 사람이 인정한 것이라
+        # 정답이 맞기는 하지만, 그것으로 **그 검출기의 재현율을 재면 자기 답을
+        # 채점받는 것**이다 — 이 저장소에서 네 번 걸린 바로 그 함정이다.
+        # 다음 검출기를 재는 데는 아무 문제가 없다.
+        if val_date in self.swept:
+            w(f"  ** 경고: {val_date} 는 infer_boxes 가 훑은 날이다. 그날의"
+              f" 정답에 지금 검출기가 찾은 상자가 섞여 있으므로,")
+            w(f"     **그 검출기의** 재현율을 여기서 읽으면 높게 나온다."
+              f" 다음 검출기를 재는 데는 문제가 없다.")
         w("  " + " · ".join(f"{s} {counts[s]:,}"
                             for s in ("train", "val", "val_date")))
         if o["dry_run"]:
@@ -280,6 +417,11 @@ class Command(BaseCommand):
             "git_sha": runs.git_sha(), "export_run": run.id, "task": "detect",
             "src_db": str(src), "val_date": val_date,
             "exclude_date": sorted(excl), "names": NAMES,
+            # **자료가 무엇으로 만들어졌는지 여기 남는다.** `fin.db` 몫을
+            # 안 적으면 다음 사람이 "옛 DB 만 읽는다" 는 옛 문서를 믿는다
+            "fin_db": {"used": not o["no_fin_db"],
+                       "added_boxes": n_add, "rejected_old": len(fin_reject),
+                       "photos": len(fin_photos - touched_old)},
             "counts": {**{s: counts[s] for s in ("train", "val", "val_date")},
                        "images": len(kept), "boxes": n_box,
                        "human_drawn": n_hum, "legacy_images": n_leg,
