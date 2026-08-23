@@ -121,6 +121,10 @@ let space = false, anchor = null;
 // 밑동을 실제로 끌었나. **안 건드린 제안은 저장하지 않는다** — 격자와 같은
 // 규칙이다 (`review/views.py` 의 base_moved)
 let baseMoved = false, facingMoved = false, polyMoved = false;
+// **출발 윤곽을 그대로 둔 것인지 알아보려고 모양을 적어 둔다** (`seed` · `commit`)
+let seeded = "";
+// 점 목록을 견줄 수 있는 한 줄로. 소수점 아래는 화면 흔들림이라 버린다
+const shape = ps => ps.map(p => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`).join(" ");
 
 const svg = document.getElementById("svg"), stage = document.getElementById("stage");
 // **원본을 크롭 좌표에 얹는다.** 좌표계는 그대로 크롭 좌표라 저장 경로가 안
@@ -316,7 +320,19 @@ function dragVertices(ev, i, opts = {}) {
   const move = e => {
     if (!dragging) {
       if (Math.hypot(e.clientX - sx, e.clientY - sy) < DRAG_PX) return;
-      dragging = true; push();
+      // **여기서 `polyMoved` 를 세운다.** 이것이 빠져 있어서 점을 아무리 끌어도
+      // 저장이 그 윤곽을 버렸다 — 점을 **더하거나 지울** 때만 세우고 있었고,
+      // 옮기는 것이 이 화면에서 가장 많이 하는 일인데 그 길만 비어 있었다.
+      //
+      // 두 가지 모습으로 나타났다. 밑동을 안 건드렸으면 "고친 것이 없다" 며
+      // 저장을 막았고(그나마 보였다), 밑동을 함께 건드렸으면 `baseMoved` 가
+      // 문을 통과시켜 **200 을 받으면서 윤곽만 조용히 빠졌다** — 서버가
+      // `polygon_edited` 를 보고 버리기 때문이다(`views.save`). 셋 중 둘을
+      // 그렇게 잃었다.
+      //
+      // 문턱을 넘은 뒤에 세운다. 눌렀다 떼기만 한 것은 고친 것이 아니다 —
+      // `push()` 를 여기서 하는 것과 같은 이유다.
+      dragging = true; push(); polyMoved = true;
     }
     const [nx, ny] = at(e);
     // **시작 자리에서의 차이로 옮긴다.** 매 프레임 커서 자리를 그대로 넣으면
@@ -499,12 +515,27 @@ function seed() {
   for (let i = 0; i < N; i++) out.push([a + cw - cw * i / N, b + ch]);
   for (let i = 0; i < N; i++) out.push([a, b + ch - ch * i / N]);
   pts = out;
+  seeded = shape(out);
   warn("상자에서 만든 **출발 윤곽**이다 — 맞다고 여기지 말 것. 점을 끌어 "
      + "실제 경계에 맞춘 뒤에야 저장된다 (한 점도 안 옮기면 저장이 막힌다).");
   draw();
 }
 
 async function commit() {
+  // **화면에 보이는 것과 보낼 것이 어긋나면 고쳐서 보낸다.**
+  //
+  // `polyMoved` 를 세우는 길을 하나라도 빠뜨리면 서버가 윤곽을 버리는데
+  // **200 이 돌아온다**(`views.save` 가 `polygon_edited` 를 보고 버린다).
+  // 실제로 점 끌기에서 그것이 빠져 있었고, 셋 중 둘을 그렇게 잃었다. 깃발
+  // 하나에 기대는 대신 **값을 견주면** 깃발이 틀린 것을 깃발 없이 잡는다.
+  //
+  // 들어온 윤곽과도 다르고 출발 윤곽과도 다르면 사람이 옮긴 것이다. 출발
+  // 윤곽 그대로면 안 세운다 — 상자 네모가 사람이 그린 마스크인 척 들어가는
+  // 것을 막는 규칙이 거기 걸려 있다.
+  if (!polyMoved && pts.length) {
+    const now = shape(pts);
+    if (now !== shape(T.points) && now !== seeded) polyMoved = true;
+  }
   if (!pts.length && !T.mask_id)
     return warn("윤곽이 없다 — **n**(윤곽 새로 그리기)으로 상자에서 시작할 것.");
   if (pts.length < 3) return warn("점이 셋은 있어야 한다.");

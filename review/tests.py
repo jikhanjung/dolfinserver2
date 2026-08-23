@@ -366,3 +366,49 @@ class NoShapeQueueTests(TestCase):
             Review.objects.create(box=b, cls=cls)
             made.append((cls, conf, b.id))
         self.assertEqual(self.ids(), [made[2][2], made[1][2], made[0][2]])
+
+
+class PolygonEditFlagTests(SimpleTestCase):
+    """**점을 옮긴 것이 '고쳤다' 로 세어지나.**
+
+    `dragVertices` 가 `polyMoved` 를 안 세워서, 점을 아무리 끌어도 저장이 그
+    윤곽을 버렸다. 서버는 `polygon_edited` 가 거짓이면 폴리곤을 안 적는데
+    (`views.save` — 안 건드린 제안이 사람의 판단인 척 남지 않게 하는 규칙)
+    **화면은 200 을 받으므로 아무 표시도 안 났다.** 셋 중 둘을 그렇게 잃었다.
+
+    브라우저 쪽을 돌려 볼 자리가 아직 없어 **글자로 잰다.** 성긴 시험이지만
+    잡으려는 것은 분명하다 — `pts` 를 건드리는 길에 깃발이 빠지는 것.
+    `itemOf` 가 두 축을 조용히 버린 것과 같은 종류다.
+    """
+
+    SRC = "review/templates/review/edit.html"
+
+    def src(self):
+        with open(self.SRC, encoding="utf-8") as f:
+            return f.read()
+
+    def block(self, name):
+        """`function <name>(` 부터 다음 함수 정의 전까지."""
+        s = self.src()
+        i = s.index(f"function {name}(")
+        j = s.find("\nfunction ", i + 1)
+        return s[i:j if j > 0 else len(s)]
+
+    def test_dragging_points_counts_as_an_edit(self):
+        self.assertIn("polyMoved = true", self.block("dragVertices"),
+                      "점을 끌어도 '고쳤다' 가 안 서면 저장이 윤곽을 버린다")
+
+    def test_the_flag_waits_for_the_drag_threshold(self):
+        """눌렀다 떼기만 한 것은 고친 것이 아니다 — `push()` 와 같은 자리다."""
+        b = self.block("dragVertices")
+        self.assertIn("dragging = true; push(); polyMoved = true;", b)
+
+    def test_commit_checks_the_shape_not_just_the_flag(self):
+        """깃발 하나에 기대면 다음에 또 같은 자리에서 샌다."""
+        c = self.block("commit")
+        self.assertIn("shape(T.points)", c)
+        self.assertIn("seeded", c)
+
+    def test_an_untouched_seed_still_does_not_save(self):
+        """상자 네모가 사람이 그린 마스크인 척 들어가면 안 된다."""
+        self.assertIn("seeded = shape(out)", self.block("seed"))
