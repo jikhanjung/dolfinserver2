@@ -225,8 +225,9 @@ function drawBoxes() {
           <span class="cnt">${(mine[b.id] || []).length}</span>
         </div>
         <div class="thumbs">${(mine[b.id] || []).map(id =>
-          `<img src="/reid/chip/${id}.png" data-id="${id}" loading="lazy"
-                title="눌러서 격자에서 찾기">`).join("")}</div>
+          `<img src="/reid/chip/${id}.png" data-id="${id}" data-from="${b.id}"
+                draggable="true" loading="lazy"
+                title="끌어서 다른 상자로 · 눌러서 격자에서 찾기">`).join("")}</div>
       </div>`).join("");
   bindBoxes();
 }
@@ -301,6 +302,8 @@ function dropTarget(el) {
     let ids = [];
     try { ids = JSON.parse(ev.dataTransfer.getData("text/plain")); } catch (x) {}
     if (!ids.length) return;
+    // 같은 상자에 다시 떨구면 아무 일도 아니다 — 판정만 한 벌 더 쌓인다
+    if (ev.dataTransfer.getData("from-box") === el.dataset.box) return;
     if (el.id === "newbox") {
       const r = await post("/api/reid/box", {});
       if (!r) return;
@@ -326,8 +329,20 @@ function bindBoxes() {
     };
     el.onblur = () => rename(+el.dataset.id, el.textContent.trim());
   });
-  // 상자 안의 작은 그림을 누르면 격자에서 그것을 찾아 준다 — 다시 꺼낼 때
+  // **상자 안의 것도 끌 수 있어야 한다.** 넣은 것은 격자에서 숨겨져 있어
+  // 거기서는 끌 수가 없었고, 그래서 `상자에서 뺀다` 도 옮기기도 할 방법이
+  // 없었다 — 서버는 되는데 끌 것이 없었던 것이다
   document.querySelectorAll(".box .thumbs img").forEach(im => {
+    im.ondragstart = ev => {
+      const id = +im.dataset.id;
+      // 고른 무리 안의 것이면 무리째, 아니면 그것 하나만
+      const ids = sel.has(id) ? [...sel] : [id];
+      dragging = true;
+      ev.dataTransfer.setData("text/plain", JSON.stringify(ids));
+      ev.dataTransfer.setData("from-box", im.dataset.from);
+      ev.dataTransfer.effectAllowed = "move";
+    };
+    im.ondragend = () => { dragging = false; };
     im.onclick = () => {
       const id = +im.dataset.id;
       sel = new Set([id]);
