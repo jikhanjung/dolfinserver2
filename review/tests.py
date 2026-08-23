@@ -757,3 +757,9 @@ class ReidTests(TestCase):
             self.assertIn("items.json", html)
         else:
             self.assertIn("const ITEMS = ", html)
+
+    def test_the_page_plants_the_csrf_cookie(self):
+        """**끌어 넣을 때마다 POST 한다.** 쿠키가 없으면 서버가 403 을 내는데,
+        화면은 "서버가 403 을 냈다" 만 말하고 무엇이 없는지는 안 말한다."""
+        r = self.client.get("/reid")
+        self.assertIn("csrftoken", r.cookies)

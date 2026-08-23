@@ -369,6 +369,10 @@ def save(request):
     return JsonResponse({"saved": n, "progress": dict(rules.progress())})
 
 
+# **CSRF 쿠키를 여기서 심는다.** 이 화면은 끌어 넣을 때마다 POST 하는데,
+# 쿠키가 없으면 서버가 403 을 내고 화면은 "서버가 403 을 냈다" 만 말한다 —
+# 무엇이 없는지는 안 말한다. 격자 화면(`index`)이 이미 같은 이유로 붙어 있다.
+@ensure_csrf_cookie
 @require_GET
 def reid(request):
     """**사람이 손으로 분류하는 자리.** 지느러미를 상자에 끌어 넣는다.
