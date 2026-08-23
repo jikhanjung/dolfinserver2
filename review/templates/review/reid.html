@@ -171,6 +171,16 @@ function view() {
   return v;
 }
 
+// **고른 표시만 바꾼다 — 격자를 다시 그리지 않는다.**
+// `draw()` 는 `innerHTML` 을 통째로 갈아 끼우는데, 누르는 순간 그것을 부르면
+// **끌려던 그 요소가 사라져 `dragstart` 가 아예 안 난다.** 그래서 누를 때는
+// 표시만 손대고, 격자를 다시 그리는 것은 실제로 목록이 바뀔 때만 한다.
+function paint() {
+  document.querySelectorAll("#grid .fin").forEach(f =>
+    f.classList.toggle("sel", sel.has(+f.dataset.id)));
+  document.getElementById("selinfo").textContent = `고른 것 ${sel.size}`;
+}
+
 function draw() {
   const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
   document.getElementById("grid").innerHTML = view().map(i =>
@@ -209,10 +219,16 @@ function drawBoxes() {
 }
 
 // ---- 고르기 ---------------------------------------------------------------
-document.getElementById("grid").onclick = e => {
+//
+// **누르는 순간 골라진다.** 떼야 골라지면 끌기 시작할 때까지 무엇이 잡혔는지
+// 안 보이고, 여러 장을 끌 때 특히 불안하다.
+let downOn = null;
+document.getElementById("grid").onpointerdown = e => {
+  if (e.button !== 0) return;
   const f = e.target.closest(".fin");
-  if (!f) { sel.clear(); draw(); return; }
+  if (!f) { sel.clear(); paint(); downOn = null; return; }
   const id = +f.dataset.id;
+  downOn = id;
   if (e.shiftKey && lastClick !== null) {
     // **범위로 고른다.** 닮은 순서로 이웃해 있는 것을 하나씩 누르게 하면
     // 손이 너무 많이 간다 — 이 화면의 목적이 한 번에 넣는 것이다
@@ -222,13 +238,25 @@ document.getElementById("grid").onclick = e => {
       v.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => sel.add(x));
   } else if (e.ctrlKey || e.metaKey) {
     sel.has(id) ? sel.delete(id) : sel.add(id);
-  } else if (sel.has(id) && sel.size === 1) {
-    sel.delete(id);
-  } else {
+  } else if (!sel.has(id)) {
     sel.clear(); sel.add(id);
   }
+  // **이미 골라져 있으면 그대로 둔다** — 무리를 잡아 끌 수 있어야 한다.
+  // 하나만 골라 둔 것을 다시 눌러 푸는 것은 뗄 때 한다(아래)
   lastClick = id;
-  draw();
+  paint();
+};
+
+// 끌지 않고 떼었을 때만 푼다 — 끌기와 구별해야 한다
+document.getElementById("grid").onclick = e => {
+  const f = e.target.closest(".fin");
+  if (!f || dragging) { dragging = false; return; }
+  const id = +f.dataset.id;
+  if (!e.shiftKey && !e.ctrlKey && !e.metaKey
+      && downOn === id && sel.size === 1 && sel.has(id)) {
+    sel.delete(id);
+    paint();
+  }
 };
 document.getElementById("grid").oncontextmenu = e => {
   const f = e.target.closest(".fin");
@@ -239,14 +267,18 @@ document.getElementById("grid").oncontextmenu = e => {
 
 // ---- 끌기 -----------------------------------------------------------------
 // 고른 것이 여럿이면 **함께 간다**
+let dragging = false;
 document.getElementById("grid").ondragstart = e => {
   const f = e.target.closest(".fin");
   if (!f) return;
   const id = +f.dataset.id;
-  if (!sel.has(id)) { sel.clear(); sel.add(id); draw(); }
+  // 누를 때 이미 골랐으므로 여기서는 확인만 한다
+  if (!sel.has(id)) { sel.clear(); sel.add(id); paint(); }
+  dragging = true;
   e.dataTransfer.setData("text/plain", JSON.stringify([...sel]));
   e.dataTransfer.effectAllowed = "move";
 };
+document.getElementById("grid").ondragend = () => { dragging = false; };
 
 function bindBoxes() {
   document.querySelectorAll(".box, #unbox").forEach(el => {
@@ -353,9 +385,9 @@ setThumb();
 ["sort", "fside", "hidedone"].forEach(id =>
   document.getElementById(id).onchange = () => { sel.clear(); draw(); });
 addEventListener("keydown", e => {
-  if (e.key === "Escape") { sel.clear(); draw(); }
+  if (e.key === "Escape") { sel.clear(); paint(); }
   if ((e.ctrlKey || e.metaKey) && e.key === "a") {
-    e.preventDefault(); view().forEach(i => sel.add(i.id)); draw();
+    e.preventDefault(); view().forEach(i => sel.add(i.id)); paint();
   }
 });
 draw();
