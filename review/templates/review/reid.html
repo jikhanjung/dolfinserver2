@@ -50,6 +50,12 @@
   /* **이미 상자에 든 것은 흐리게.** 남은 일이 무엇인지 한눈에 보여야 한다 */
   .fin.done { opacity:.4 }
   .fin.done img { opacity:.55 }
+  /* **한 상자만 볼 때는 흐리게도 가리지도 않는다.** 거기서는 전부 그 상자
+     것이라 "넣었다" 는 표시가 아무것도 안 가른다 — 정작 물음은 "이게 정말
+     한 개체인가" 이고 그것은 그림을 그대로 봐야 답이 나온다 */
+  #grid.solo .fin.done { opacity:1 }
+  #grid.solo .fin.done img { opacity:1 }
+  #grid.solo .fin.done::after { content:none }
   /* **어느 상자에 넣었는지 한가운데 크게.** 아래 구석의 작은 글씨는 흐린 칸
      위에서 안 읽힌다 — 정작 자주 하는 일이 "얘는 어디 넣었더라" 다.
      칸 크기가 슬라이더로 바뀌므로 글자도 따라 커진다 */
@@ -219,6 +225,7 @@ function draw() {
   const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
   const bar = document.getElementById("focusbar");
   bar.classList.toggle("on", focusOn !== null);
+  document.getElementById("grid").classList.toggle("solo", focusOn !== null);
   if (focusOn !== null) {
     document.getElementById("fname").textContent = nm[focusOn] || "?";
     document.getElementById("fcount").textContent =
