@@ -389,6 +389,9 @@ def detect(request):
     무엇이 빠졌는지 알 길이 없다.
     """
     model = Path(settings.BASE_DIR) / "static" / "models" / "detect-v2.onnx"
+    # **분할은 있으면 얹고 없으면 상자만 그린다.** 두 단이라 검출만으로도
+    # 화면이 돌아가야 한다 — 없다고 아무것도 안 나오면 무엇이 빠졌는지 모른다
+    seg = Path(settings.BASE_DIR) / "static" / "models" / "seg-v2.onnx"
     ort = Path(settings.BASE_DIR) / "static" / "vendor" / "ort"
     # **`.mjs` 하나만 보고 있으면 안 된다.** 묶음은 실행 중에 `.wasm` 을 이름으로
     # 불러오고, 그 이름이 판마다 바뀐다(1.27 은 `jsep` 이 아니라 `asyncify` 다).
@@ -402,6 +405,11 @@ def detect(request):
     missing = [f for f in need if not (ort / f).exists()]
     return render(request, "review/detect.html", {
         "model_ok": model.exists(),
+        "seg_ok": seg.exists(),
+        "seg_imgsz": onnxdet.SEG_IMGSZ,
+        "seg_nc": onnxdet.SEG_NC,
+        "crop_pad": onnxdet.CROP_PAD,
+        "mask_thres": onnxdet.MASK_THRES,
         "ort_ok": not missing,
         "missing": missing,
         "imgsz": onnxdet.IMGSZ,

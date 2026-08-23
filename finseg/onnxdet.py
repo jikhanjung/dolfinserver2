@@ -184,3 +184,77 @@ def detect(session, img, conf_thres=CONF, iou_thres=IOU, size=IMGSZ):
     name = session.get_inputs()[0].name
     out = session.run(None, {name: x})[0]
     return postprocess(out, meta, conf_thres, iou_thres)
+
+
+# ---- 분할 (2단) --------------------------------------------------------------
+#
+# **검출과 분할은 두 단이다.** 원본을 640으로 줄이면 지느러미가 16px 이 되고
+# 결각은 그 그림에 아예 없다 — `CLAUDE.md` 가 "한 모델로 합치기" 를 안 하기로
+# 한 이유다. 그래서 1280으로 상자를 찾고, 상자마다 크롭을 떠서 640으로 분할한다.
+#
+# 크롭 규칙은 `geometry.crop_rect` 하나뿐이다. 여기서 다시 쓰지 않는다 —
+# 학습 자료를 만든 식과 어긋나면 모델이 본 적 없는 틀이 들어간다.
+
+SEG_IMGSZ = 640
+SEG_NC = 3          # fin · dolphin · nonfin (`models.CLASS_GROUPS['coarse']`)
+CROP_PAD = 2.0      # 상자 긴 변의 배수 (`crops --pad`)
+MASK_THRES = 0.5
+
+
+def seg_masks(out0, out1, box_in_crop, conf_thres=CONF, iou_thres=IOU,
+              size=SEG_IMGSZ, nc=SEG_NC):
+    """YOLO-seg 출력 → (마스크, 상자, 확신, 분류) 하나. 없으면 None.
+
+    `out0` 은 `(1, 4+nc+32, N)`, `out1` 은 `(1, 32, 160, 160)` 이다.
+    마스크는 **크롭 좌표의 `size`×`size` 불리언 배열**로 낸다.
+
+    ## 여럿 나오면 프롬프트 상자와 가장 많이 겹치는 것
+
+    크롭은 "가운데 것 하나" 라는 약속으로 만들었지만 이웃 지느러미가 걸쳐
+    들어오는 크롭이 20%쯤 된다. 그때 **가운데에서 가장 가까운 것**이 아니라
+    **상자와 가장 많이 겹치는 것**이 옳다 — `infer`·`infer_base` 와 같은 규칙이다.
+    """
+    p = np.asarray(out0)
+    if p.ndim == 3:
+        p = p[0]
+    nf = 4 + nc + 32
+    if p.shape[-1] != nf:
+        if p.shape[0] != nf:
+            raise ValueError(f"모르는 출력 모양이다: {p.shape} (칸 {nf} 개를 기대)")
+        p = p.T
+    cls_scores = p[:, 4:4 + nc]
+    scores = cls_scores.max(1)
+    cls = cls_scores.argmax(1)
+    m = scores >= conf_thres
+    p, scores, cls = p[m], scores[m], cls[m]
+    if not len(p):
+        return None
+    cx, cy, bw, bh = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
+    boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], 1)
+    keep = nms(boxes, scores, iou_thres)
+    if not keep:
+        return None
+    # 프롬프트 상자와 겹치는 넓이가 가장 큰 것
+    bx1, by1, bx2, by2 = box_in_crop
+    best, best_ov = None, -1.0
+    for i in keep:
+        x1, y1, x2, y2 = boxes[i]
+        ov = (max(0.0, min(x2, bx2) - max(x1, bx1))
+              * max(0.0, min(y2, by2) - max(y1, by1)))
+        if ov > best_ov:
+            best, best_ov = i, ov
+    proto = np.asarray(out1)[0]                 # (32, 160, 160)
+    coef = p[best, 4 + nc:]                     # (32,)
+    k, mh, mw = proto.shape
+    z = (coef @ proto.reshape(k, -1)).reshape(mh, mw)
+    mask = 1.0 / (1.0 + np.exp(-z))             # 시그모이드
+    # 160 → size. **상자 밖은 지운다** — ultralytics 와 같은 규칙이다
+    from PIL import Image
+    big = np.asarray(Image.fromarray((mask * 255).astype(np.uint8))
+                     .resize((size, size), Image.BILINEAR)) / 255.0
+    x1, y1, x2, y2 = boxes[best]
+    out = np.zeros((size, size), bool)
+    xs, ys = slice(max(0, int(x1)), int(np.ceil(x2))), \
+        slice(max(0, int(y1)), int(np.ceil(y2)))
+    out[ys, xs] = big[ys, xs] > MASK_THRES
+    return out, boxes[best], float(scores[best]), int(cls[best])

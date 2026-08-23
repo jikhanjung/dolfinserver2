@@ -12,6 +12,8 @@
   h1 { font-size:15px; margin:0; font-weight:600; }
   .stat { color:var(--dim); font-size:12.5px; }
   .stat b { color:var(--ink) }
+  kbd { background:#1d2733; border:1px solid var(--line); border-radius:3px;
+        padding:0 5px; font:11px "IBM Plex Mono",monospace; color:var(--ink) }
   button, label.file { font:inherit; font-size:13px; background:var(--panel);
     color:var(--ink); border:1px solid var(--line); border-radius:5px;
     padding:5px 12px; cursor:pointer; }
@@ -19,10 +21,16 @@
   button:disabled { opacity:.45; cursor:default }
   input[type=file] { display:none }
   input[type=range] { width:150px; vertical-align:middle }
-  #wrap { position:relative; margin:14px; display:inline-block; }
-  #wrap img { display:block; max-width:calc(100vw - 28px);
-              max-height:calc(100vh - 150px); }
-  #wrap svg { position:absolute; inset:0; width:100%; height:100%; }
+  /* **틀은 고정하고 안을 옮긴다.** 사진·마스크·상자가 한 겹에 얹혀 있어서
+     통째로 변형하면 셋이 저절로 같이 움직인다 — 따로 옮기면 언젠가 어긋난다 */
+  #view { position:absolute; inset:56px 0 0 0; overflow:hidden;
+          background:#070a0e; cursor:grab; touch-action:none; }
+  #view.panning { cursor:grabbing }
+  #view.panready { cursor:grab }
+  #wrap { position:absolute; left:0; top:0; transform-origin:0 0; }
+  #wrap img { display:block; }
+  #wrap svg, #wrap canvas { position:absolute; inset:0;
+                            width:100%; height:100%; pointer-events:none; }
   rect.box { fill:none; stroke:var(--fin); stroke-width:2;
              vector-effect:non-scaling-stroke; }
   text.lab { fill:var(--fin); font:600 11px "IBM Plex Mono", monospace;
@@ -45,6 +53,9 @@
     문턱 <b id="cv">{{ conf }}</b>
     <input type="range" id="conf" min="0.01" max="0.95" step="0.01" value="{{ conf }}">
   </span>
+  <span class="stat"><kbd>휠</kbd>확대 · <kbd>끌기</kbd>/<kbd>Space</kbd>이동 ·
+    <kbd>0</kbd>전체</span>
+  <button onclick="fit()">전체 보기</button>
   <span style="flex:1"></span>
   <span class="stat" id="stat">모델을 읽는 중…</span>
 </header>
@@ -77,8 +88,10 @@ cp runs/detect-v2-det/weights/best.onnx static/models/detect-v2.onnx</pre>
   {% endif %}
 </div>
 {% else %}
-<div class="drop" id="drop">사진을 여기로 끌어다 놓거나 위에서 고른다</div>
-<div id="wrap" hidden><img id="img" alt=""><svg id="ov"></svg></div>
+<div id="view">
+  <div class="drop" id="drop">사진을 여기로 끌어다 놓거나 위에서 고른다</div>
+  <div id="wrap" hidden><img id="img" alt=""><canvas id="mk"></canvas><svg id="ov"></svg></div>
+</div>
 
 <script type="module">
 import * as ort from "{% static 'vendor/ort/ort.webgpu.bundle.min.mjs' %}";
@@ -87,11 +100,40 @@ import * as ort from "{% static 'vendor/ort/ort.webgpu.bundle.min.mjs' %}";
 // 어긋나면 파이썬 쪽을 고치고 여기를 따라오게 한다. 파이썬은 8장에서
 // 좌표 0.26px 안쪽으로 ultralytics 와 일치하는 것을 확인해 두었다.
 const IMGSZ = {{ imgsz }}, PAD = {{ pad }}, IOU = {{ iou }};
+// 분할은 2단이다 — 1280 으로 상자를 찾고, 상자마다 크롭을 떠서 640 으로 나눈다.
+// 원본을 640 으로 줄이면 지느러미가 16px 이 되고 결각은 그 그림에 아예 없다
+const SEG = {{ seg_ok|yesno:"true,false" }};
+const SEGSZ = {{ seg_imgsz }}, SEG_NC = {{ seg_nc }};
+const CROP_PAD = {{ crop_pad }}, MASK_T = {{ mask_thres }};
+const CLS_KO = ["등지느러미", "돌고래(그 밖)", "돌고래 아님"];
 let conf = {{ conf }};
 
 ort.env.wasm.wasmPaths = "{% static 'vendor/ort/' %}";
 const stat = document.getElementById("stat");
 const say = h => stat.innerHTML = h;
+
+// **입력을 먼저 받는다.** 이 스크립트는 모듈이라 아래의 최상위 `await` 가
+// 끝나기 전에는 그 뒤 줄이 실행되지 않는다 — 리스너를 거기 두었더니 모델을
+// 읽는 십수 초 동안 **떨궈도 아무 일이 없었다.** 화면은 멀쩡해 보이는데
+// 입력만 조용히 버려지는, 이 저장소가 계속 겪은 그 모양이다.
+//
+// 그러니 리스너는 맨 앞에 걸고, 실제로 돌릴 때 `ready` 를 기다린다.
+let ready = null, pending = null;
+function take(file) {
+  if (!file) return;
+  pending = file;
+  if (!ready) { say("모델을 읽는 중… 다 되면 이 사진을 돌린다"); return; }
+  ready.then(() => { if (pending) { const f = pending; pending = null; run(f); } });
+}
+document.getElementById("file").onchange = e => take(e.target.files[0]);
+const dropEl = document.getElementById("drop");
+for (const ev of ["dragenter", "dragover"])
+  addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add("on"); });
+addEventListener("dragleave", () => dropEl.classList.remove("on"));
+addEventListener("drop", e => {
+  e.preventDefault(); dropEl.classList.remove("on");
+  take(e.dataTransfer.files[0]);
+});
 
 // **WebGPU 는 보안 컨텍스트에서만 된다** — https 이거나 localhost 여야 한다.
 // LAN 주소(예: 172.x)로 열면 `navigator.gpu` 가 아예 없고, 그러면 조용히
@@ -103,7 +145,11 @@ const why = !window.isSecureContext
   ? "이 브라우저에 WebGPU 가 없다"
   : "";
 
-let session = null, backend = "", warmMs = 0;
+let session = null, segSession = null, backend = "", warmMs = 0;
+let markReady;
+ready = new Promise(res => { markReady = res; });
+// 리스너가 이미 걸려 있다 — 기다리던 파일이 있으면 준비된 뒤 돌린다
+ready.then(() => { if (pending) { const f = pending; pending = null; run(f); } });
 try {
   // **어느 쪽으로 잡혔는지 짐작하지 않는다.** `navigator.gpu` 가 있다고
   // WebGPU 로 도는 것이 아니다 — 만들어 보고 되는 쪽을 적는다
@@ -121,14 +167,35 @@ try {
   // **예열한다.** WebGPU 는 첫 추론에서 셰이더를 다 컴파일해서, 그 한 번이
   // 실제 속도의 몇 배가 된다. 예열 없이 재면 "GPU 가 CPU 보다 별로 안 빠르다"
   // 는 틀린 결론이 나온다 — 실제로 그렇게 읽을 뻔했다.
-  say(`예열 중… (<b>${backend}</b> 셰이더 컴파일)`);
-  const t0 = performance.now();
+  // **한 번으로는 모자라다.** 실측으로 920 → 665 → 94ms 였다. 셰이더 컴파일이
+  // 한 번에 다 끝나지 않고 몇 번에 걸쳐 자리를 잡는다 — 한 번만 예열하고 재면
+  // 여전히 열 배 느린 숫자를 진짜 속도로 읽는다.
   const zero = new ort.Tensor("float32",
       new Float32Array(IMGSZ * IMGSZ * 3), [1, 3, IMGSZ, IMGSZ]);
-  await session.run({[session.inputNames[0]]: zero});
-  warmMs = performance.now() - t0;
-  say(`모델 준비됨 · <b>${backend}</b> · 예열 ${warmMs.toFixed(0)}ms`
+  let t0 = 0;
+  for (let i = 0; i < 4; i++) {
+    say(`예열 ${i + 1}/4… (<b>${backend}</b> 셰이더 컴파일)`);
+    t0 = performance.now();
+    await session.run({[session.inputNames[0]]: zero});
+    warmMs = performance.now() - t0;
+  }
+  if (SEG) {
+    say(`분할 모델도 읽는 중…`);
+    try {
+      segSession = await ort.InferenceSession.create(
+        "{% static 'models/seg-v2.onnx' %}",
+        {executionProviders: [backend === "WebGPU" ? "webgpu" : "wasm"],
+         graphOptimizationLevel: "all"});
+      const z = new ort.Tensor("float32",
+          new Float32Array(SEGSZ * SEGSZ * 3), [1, 3, SEGSZ, SEGSZ]);
+      for (let i = 0; i < 3; i++)
+        await segSession.run({[segSession.inputNames[0]]: z});
+    } catch (e) { segSession = null; }
+  }
+  say(`모델 준비됨 · <b>${backend}</b> · 예열 뒤 ${warmMs.toFixed(0)}ms`
+    + (segSession ? " · 분할 얹음" : SEG ? " · 분할 실패" : " · 상자만")
     + (backend !== "WebGPU" && why ? ` · ${why}` : ""));
+  markReady();
 } catch (e) {
   say(`<span style="color:var(--none)">모델을 못 읽었다 — ${e}</span>`);
 }
@@ -184,8 +251,97 @@ function nms(boxes, iouThres) {
   return keep;
 }
 
+// **크롭 규칙은 `geometry.crop_rect` 와 같아야 한다** — 학습 자료를 만든 식과
+// 어긋나면 모델이 본 적 없는 틀이 들어간다. 정사각형을 고집하는 이유는 640 으로
+// 펼 때 가로세로가 다르면 지느러미가 눌리기 때문이다
+function cropRect(b, w, h) {
+  let side = Math.round(Math.max(b[2] - b[0], b[3] - b[1]) * CROP_PAD);
+  side = Math.min(side, w, h);
+  const cx0 = (b[0] + b[2]) / 2, cy0 = (b[1] + b[3]) / 2;
+  const x0 = Math.max(0, Math.min(Math.round(cx0 - side / 2), w - side));
+  const y0 = Math.max(0, Math.min(Math.round(cy0 - side / 2), h - side));
+  return {x0, y0, side};
+}
+
+const sc = document.createElement("canvas");
+sc.width = sc.height = SEGSZ;
+const scx = sc.getContext("2d", {willReadFrequently: true});
+const tc = document.createElement("canvas");      // 마스크 한 장을 담는 자리
+tc.width = tc.height = SEGSZ;
+const tcx = tc.getContext("2d");
+
+// 상자 하나 → 마스크. `onnxdet.seg_masks` 와 같은 규칙이다
+async function segOne(img, b) {
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const {x0, y0, side} = cropRect(b, W, H);
+  scx.imageSmoothingEnabled = false;             // 부드럽게 줄이면 안 된다
+  scx.drawImage(img, x0, y0, side, side, 0, 0, SEGSZ, SEGSZ);
+  const d = scx.getImageData(0, 0, SEGSZ, SEGSZ).data;
+  const n = SEGSZ * SEGSZ, f = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    f[i] = d[i*4]/255; f[n+i] = d[i*4+1]/255; f[n*2+i] = d[i*4+2]/255;
+  }
+  const o = await segSession.run({[segSession.inputNames[0]]:
+      new ort.Tensor("float32", f, [1, 3, SEGSZ, SEGSZ])});
+  const p = o[segSession.outputNames[0]], proto = o[segSession.outputNames[1]];
+  const N = p.dims[2], nf = 4 + SEG_NC + 32, P = p.data;
+  // 크롭 좌표로 옮긴 프롬프트 상자 — 겹치는 넓이로 고른다
+  const s = SEGSZ / side;
+  const q = [(b[0]-x0)*s, (b[1]-y0)*s, (b[2]-x0)*s, (b[3]-y0)*s];
+  let best = -1, bestOv = -1, bestScore = 0, bestCls = 0;
+  for (let i = 0; i < N; i++) {
+    let sc2 = 0, ci = 0;
+    for (let c = 0; c < SEG_NC; c++) {
+      const v = P[(4+c)*N + i];
+      if (v > sc2) { sc2 = v; ci = c; }
+    }
+    if (sc2 < conf) continue;
+    const cx1 = P[i], cy1 = P[N+i], bw = P[2*N+i], bh = P[3*N+i];
+    const x1 = cx1-bw/2, y1 = cy1-bh/2, x2 = cx1+bw/2, y2 = cy1+bh/2;
+    const ov = Math.max(0, Math.min(x2,q[2])-Math.max(x1,q[0]))
+             * Math.max(0, Math.min(y2,q[3])-Math.max(y1,q[1]));
+    if (ov > bestOv) { bestOv = ov; best = i; bestScore = sc2; bestCls = ci; }
+  }
+  if (best < 0) return null;
+  // 마스크 = 시그모이드(계수 · 원형) — 160x160
+  const K = proto.dims[1], MH = proto.dims[2], MW = proto.dims[3], PR = proto.data;
+  const m = new Float32Array(MH * MW);
+  for (let k = 0; k < K; k++) {
+    const c = P[(4+SEG_NC+k)*N + best], off = k*MH*MW;
+    if (c === 0) continue;
+    for (let j = 0; j < MH*MW; j++) m[j] += c * PR[off + j];
+  }
+  return {m, MH, MW, x0, y0, side, cls: bestCls, score: bestScore,
+          box: [P[best]-P[2*N+best]/2, P[N+best]-P[3*N+best]/2,
+                P[best]+P[2*N+best]/2, P[N+best]+P[3*N+best]/2]};
+}
+
 // 모델 출력은 `(1, 5, N)` — cx, cy, w, h, conf. **레터박스 안의 화소 좌표**다
-let raw = null, meta = null;      // 문턱을 돌릴 때 모델을 다시 안 돌린다
+let raw = null, meta = null, orig = [];   // 문턱을 돌릴 때 모델을 다시 안 돌린다
+const mk = document.getElementById("mk");
+const mkx = mk.getContext("2d");
+
+// 마스크 하나를 원본 좌표의 겹칩 캔버스에 그린다
+function paintMask(r) {
+  const {m, MH, MW, x0, y0, side, box} = r;
+  const id = tcx.createImageData(MW, MH);
+  const s = MW / SEGSZ;                       // 160 격자에서의 상자
+  const bx1 = box[0]*s, by1 = box[1]*s, bx2 = box[2]*s, by2 = box[3]*s;
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    const j = y*MW + x;
+    // **상자 밖은 지운다** — ultralytics 와 같은 규칙이다
+    const inside = x >= bx1 && x <= bx2 && y >= by1 && y <= by2;
+    const v = inside ? 1/(1+Math.exp(-m[j])) : 0;
+    if (v > MASK_T) {
+      id.data[j*4] = 74; id.data[j*4+1] = 222; id.data[j*4+2] = 128;
+      id.data[j*4+3] = 110;
+    }
+  }
+  tc.width = MW; tc.height = MH;              // 크기를 맞추면 내용이 지워진다
+  tcx.putImageData(id, 0, 0);
+  mkx.drawImage(tc, 0, 0, MW, MH, x0, y0, side, side);
+  tc.width = tc.height = SEGSZ;
+}
 
 function decode() {
   if (!raw) return;
@@ -202,14 +358,14 @@ function decode() {
   const {r, dx, dy, w, h} = meta;
   const ov = document.getElementById("ov");
   ov.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  ov.innerHTML = kept.map(b => {
-    const x1 = Math.max(0, (b[0]-dx)/r), y1 = Math.max(0, (b[1]-dy)/r);
-    const x2 = Math.min(w, (b[2]-dx)/r), y2 = Math.min(h, (b[3]-dy)/r);
-    return `<rect class="box" x="${x1}" y="${y1}" width="${x2-x1}" `
-         + `height="${y2-y1}"></rect>`
-         + `<text class="lab" x="${x1}" y="${Math.max(12, y1-4)}">`
-         + `${b[4].toFixed(2)}</text>`;
-  }).join("");
+  orig = kept.map(b => [
+    Math.max(0, (b[0]-dx)/r), Math.max(0, (b[1]-dy)/r),
+    Math.min(w, (b[2]-dx)/r), Math.min(h, (b[3]-dy)/r), b[4]]);
+  ov.innerHTML = orig.map(b =>
+      `<rect class="box" x="${b[0]}" y="${b[1]}" width="${b[2]-b[0]}" `
+    + `height="${b[3]-b[1]}"></rect>`
+    + `<text class="lab" x="${b[0]}" y="${Math.max(12, b[1]-4)}">`
+    + `${b[4].toFixed(2)}</text>`).join("");
   return kept.length;
 }
 
@@ -220,6 +376,7 @@ async function run(file) {
   await img.decode();
   document.getElementById("wrap").hidden = false;
   document.getElementById("drop").hidden = true;
+  fit();
   say(`돌리는 중… (${img.naturalWidth}×${img.naturalHeight})`);
   // **전처리와 추론을 따로 잰다.** 5520×3680 을 1280 으로 줄이고 화소
   // 490만 개를 훑는 일도 공짜가 아니라, 한 숫자로 뭉치면 어디가 무거운지
@@ -233,29 +390,120 @@ async function run(file) {
   const ms = performance.now() - t0;
   raw = r[session.outputNames[0]];
   const n = decode();
+  const tail = ` · ${img.naturalWidth}×${img.naturalHeight}`
+    + (backend !== "WebGPU" && why ? ` · <span style="color:var(--warn)">${why}</span>` : "");
   say(`<b>${backend}</b> · 추론 <b>${ms.toFixed(0)}ms</b>`
-    + ` · 전처리 ${preMs.toFixed(0)}ms · 상자 <b>${n}</b>`
-    + ` · ${img.naturalWidth}×${img.naturalHeight}`
-    + (backend !== "WebGPU" && why ? ` · <span style="color:var(--warn)">${why}</span>` : ""));
+    + ` · 전처리 ${preMs.toFixed(0)}ms · 상자 <b>${n}</b>${tail}`);
+  await paintAll(img, tail, ms, preMs, n);
 }
 
-document.getElementById("file").onchange = e => {
-  if (e.target.files[0]) run(e.target.files[0]);
+// **상자마다 크롭을 떠서 나눈다.** 상자가 여럿이면 그만큼 돈다 — 몇 개째인지
+// 화면이 말해야 한다. 안 그러면 멈춘 것처럼 보인다
+async function paintAll(img, tail, ms, preMs, n) {
+  mk.width = img.naturalWidth; mk.height = img.naturalHeight;
+  mkx.clearRect(0, 0, mk.width, mk.height);
+  if (!segSession || !orig.length) return;
+  const t0 = performance.now();
+  const named = [];
+  for (let i = 0; i < orig.length; i++) {
+    say(`<b>${backend}</b> · 상자 ${n} · 윤곽 ${i + 1}/${orig.length}…${tail}`);
+    const r = await segOne(img, orig[i]);
+    if (r) { paintMask(r); named.push(CLS_KO[r.cls]); }
+  }
+  const segMs = performance.now() - t0;
+  const tally = named.reduce((a, k) => (a[k] = (a[k] || 0) + 1, a), {});
+  say(`<b>${backend}</b> · 추론 <b>${ms.toFixed(0)}ms</b>`
+    + ` · 전처리 ${preMs.toFixed(0)}ms · 윤곽 ${segMs.toFixed(0)}ms`
+    + ` · 상자 <b>${n}</b>`
+    + (named.length ? ` (${Object.entries(tally).map(([k, v]) =>
+        v > 1 ? `${k} ${v}` : k).join(" · ")})` : "")
+    + tail);
+}
+
+// ---- 확대·이동 -------------------------------------------------------------
+//
+// **사진·마스크·상자를 통째로 변형한다.** 셋이 한 겹에 얹혀 있어서 틀 하나만
+// 옮기면 저절로 같이 간다 — 따로 옮기면 언젠가 어긋나고, 어긋난 마스크는
+// "모델이 못 땄다" 로 읽힌다.
+//
+// 조작법은 `/photo` 와 같다. 손에 익은 것을 화면마다 다르게 두면 안 된다.
+const view = document.getElementById("view");
+const wrap = document.getElementById("wrap");
+let k = 1, tx = 0, ty = 0, space = false;
+
+function apply() {
+  wrap.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
+}
+function fit() {
+  const img = document.getElementById("img");
+  if (!img.naturalWidth) return;
+  const r = view.getBoundingClientRect();
+  k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight) * 0.98;
+  tx = (r.width - img.naturalWidth * k) / 2;
+  ty = (r.height - img.naturalHeight * k) / 2;
+  apply();
+}
+window.fit = fit;
+
+view.onwheel = e => {
+  if (wrap.hidden) return;
+  e.preventDefault();
+  const r = view.getBoundingClientRect();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  // 위로는 사진 전체, 아래로는 화소가 보일 때까지 (`/photo` 와 같은 폭)
+  const nk = Math.min(Math.max(k * (e.deltaY > 0 ? 1 / 1.2 : 1.2), 0.02), 8);
+  // **커서 밑에 있던 자리를 커서 밑에 붙들어 둔다**
+  tx = px - (px - tx) * (nk / k);
+  ty = py - (py - ty) * (nk / k);
+  k = nk; apply();
 };
-const drop = document.getElementById("drop");
-for (const ev of ["dragenter", "dragover"])
-  addEventListener(ev, e => { e.preventDefault(); drop.classList.add("on"); });
-addEventListener("dragleave", () => drop.classList.remove("on"));
-addEventListener("drop", e => {
-  e.preventDefault(); drop.classList.remove("on");
-  if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0]);
+
+// 여기서는 고를 것이 없으니 **좌클릭 끌기가 그대로 이동**이다 (`/photo` 와 같다)
+view.onpointerdown = e => {
+  if (wrap.hidden || (e.button !== 0 && e.button !== 1)) return;
+  e.preventDefault();
+  view.classList.add("panning");
+  const sx = e.clientX - tx, sy = e.clientY - ty;
+  const move = ev => { tx = ev.clientX - sx; ty = ev.clientY - sy; apply(); };
+  const up = () => { view.classList.remove("panning");
+                     removeEventListener("pointermove", move);
+                     removeEventListener("pointerup", up); };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+};
+
+addEventListener("keydown", e => {
+  if (e.key === " ") { e.preventDefault();
+                       if (!space) { space = true; view.classList.add("panready"); } }
+  else if (e.key === "0") fit();
 });
-// **문턱은 모델을 다시 안 돌리고 바뀐다** — NMS 를 밖에 둔 값이 이것이다
+addEventListener("keyup", e => {
+  if (e.key === " ") { space = false; view.classList.remove("panready"); }
+});
+// 창에서 포커스가 나가면 Space 를 뗀 것을 못 받는다 — 눌린 채로 남지 않게 한다
+addEventListener("blur", () => { space = false; view.classList.remove("panready"); });
+// Space 를 누르고 있으면 단추 없이 움직임만으로 밀린다 (`/photo`·편집 창과 같다)
+let anchor = null;
+addEventListener("pointermove", e => {
+  if (!space) { anchor = null; return; }
+  if (!anchor) { anchor = [e.clientX, e.clientY]; return; }
+  tx += e.clientX - anchor[0]; ty += e.clientY - anchor[1];
+  anchor = [e.clientX, e.clientY]; apply();
+});
+addEventListener("resize", () => { if (!wrap.hidden) fit(); });
+
+// **문턱을 돌리면 상자는 곧바로 바뀐다** (모델을 다시 안 돌린다). 윤곽은
+// 상자마다 다시 나눠야 해서, 손을 멈춘 뒤에 한 번만 돈다
+let redraw = null;
 document.getElementById("conf").oninput = e => {
   conf = +e.target.value;
   document.getElementById("cv").textContent = conf.toFixed(2);
   const n = decode();
-  if (n !== undefined) say(`<b>${backend}</b> · 문턱 ${conf.toFixed(2)} · 상자 <b>${n}</b>`);
+  if (n === undefined) return;
+  say(`<b>${backend}</b> · 문턱 ${conf.toFixed(2)} · 상자 <b>${n}</b>`);
+  mkx.clearRect(0, 0, mk.width, mk.height);
+  clearTimeout(redraw);
+  redraw = setTimeout(() => paintAll(document.getElementById("img"), "", 0, 0, n), 250);
 };
 </script>
 {% endif %}
