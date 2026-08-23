@@ -99,6 +99,11 @@
           color:var(--dim); text-align:center; font-size:12.5px;
           margin-bottom:7px }
   .drop.over { border-color:var(--no); color:var(--no) }
+  /* 목록 밖에 붙여 늘 보이게 한다 — 목록만 그 사이에서 구른다 */
+  .drop.pin { flex:none; margin:8px 8px 0 }
+  .drop.pin.new { margin:0 8px 8px; border-color:#2f4a3d; color:var(--dim) }
+  .drop.pin.new.over { border-style:solid; border-color:var(--ok);
+                       background:#16302b; color:var(--ok) }
   /* **맨 아래 빈 상자.** 단추를 눌러 만들고 다시 끄는 것은 걸음이 둘이다 —
      끌어 넣는 그 동작 하나로 상자가 생기게 한다. 넣고 나면 아래에 또 하나
      빈 것이 생기므로 "다음 개체" 가 늘 준비되어 있다 */
@@ -148,7 +153,11 @@
     <div class="top">
       <span class="stat" id="selinfo">고른 것 0</span>
     </div>
+    <!-- **둘은 늘 보인다.** 상자가 늘면 목록이 길어져 맨 위와 맨 아래가
+         스크롤 밖으로 나가는데, 정작 그 둘이 가장 자주 쓰는 자리다 -->
+    <div class="drop pin" id="unbox">여기로 끌면 <b>상자에서 뺀다</b></div>
     <div id="boxes"></div>
+    <div class="drop pin new" id="newbox">여기로 끌면 <b>새 상자</b></div>
   </div>
 </div>
 
@@ -208,9 +217,7 @@ function draw() {
 function drawBoxes() {
   const mine = {};
   ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
-  document.getElementById("boxes").innerHTML =
-    `<div class="drop" id="unbox">여기로 끌면 <b>상자에서 뺀다</b></div>`
-    + BOXES.map(b => `
+  document.getElementById("boxes").innerHTML = BOXES.map(b => `
       <div class="box" data-box="${b.id}">
         <div class="hd">
           <span class="nm" contenteditable="plaintext-only"
@@ -220,10 +227,7 @@ function drawBoxes() {
         <div class="thumbs">${(mine[b.id] || []).map(id =>
           `<img src="/reid/chip/${id}.png" data-id="${id}" loading="lazy"
                 title="눌러서 격자에서 찾기">`).join("")}</div>
-      </div>`).join("")
-    + `<div class="box new" data-box="new">
-         <div class="hd">여기로 끌면 <b>새 상자</b></div>
-       </div>`;
+      </div>`).join("");
   bindBoxes();
 }
 
@@ -289,25 +293,32 @@ document.getElementById("grid").ondragstart = e => {
 };
 document.getElementById("grid").ondragend = () => { dragging = false; };
 
+function dropTarget(el) {
+  el.ondragover = ev => { ev.preventDefault(); el.classList.add("over"); };
+  el.ondragleave = () => el.classList.remove("over");
+  el.ondrop = async ev => {
+    ev.preventDefault(); el.classList.remove("over");
+    let ids = [];
+    try { ids = JSON.parse(ev.dataTransfer.getData("text/plain")); } catch (x) {}
+    if (!ids.length) return;
+    if (el.id === "newbox") {
+      const r = await post("/api/reid/box", {});
+      if (!r) return;
+      BOXES.push({id: r.id, name: r.name, n: 0});
+      await assign(r.id, ids);
+      document.getElementById("boxes").scrollTop = 1e9;
+      return;
+    }
+    await assign(el.id === "unbox" ? null : +el.dataset.box, ids);
+  };
+}
+// 붙박이 둘은 다시 그려지지 않으므로 한 번만 묶는다
+dropTarget(document.getElementById("unbox"));
+dropTarget(document.getElementById("newbox"));
+
 function bindBoxes() {
-  document.querySelectorAll(".box, #unbox").forEach(el => {
-    el.ondragover = ev => { ev.preventDefault(); el.classList.add("over"); };
-    el.ondragleave = () => el.classList.remove("over");
-    el.ondrop = async ev => {
-      ev.preventDefault(); el.classList.remove("over");
-      let ids = [];
-      try { ids = JSON.parse(ev.dataTransfer.getData("text/plain")); } catch (x) {}
-      if (!ids.length) return;
-      if (el.dataset.box === "new") {
-        const r = await post("/api/reid/box", {});
-        if (!r) return;
-        BOXES.push({id: r.id, name: r.name, n: 0});
-        await assign(r.id, ids);
-        document.getElementById("boxes").scrollTop = 1e9;
-        return;
-      }
-      await assign(el.id === "unbox" ? null : +el.dataset.box, ids);
-    };
+  document.querySelectorAll("#boxes .box").forEach(el => {
+    dropTarget(el);
   });
   document.querySelectorAll(".box .nm").forEach(el => {
     el.onkeydown = ev => {
