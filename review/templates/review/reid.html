@@ -4,6 +4,9 @@
 <style>
   :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
           --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --sel:#60a5fa;
+          /* 찾아 준 칸에만 쓰는 순색 빨강. `--no`(#f87171)는 경고용이라
+             톤을 낮춰 둔 색이고, 흐린 칸들 사이에서는 그만큼 덜 걸린다 */
+          --find:#ff1f2e;
           /* **결각은 작은 흠이라 하필 사람이 알아보는 문턱 근처에 있다**
              (`TODOs`). 작게 늘어놓으면 빨리 넘길 수는 있어도 판정이 흐려진다.
              화면 크기에 따라 다르니 손으로 고르게 둔다 */
@@ -60,13 +63,14 @@
      어느 칸인지 스스로 찾아야 한다면 보내 준 뜻이 없다 — 흐려진 칸들
      사이에서 파란 테 하나는 잘 안 걸린다 */
   @keyframes findme {
-    0%, 100% { border-color:var(--no); box-shadow:0 0 0 0 #f8717100 }
-    50%      { border-color:var(--no); box-shadow:0 0 0 7px #f8717166 }
+    0%, 100% { border-color:var(--find); box-shadow:0 0 0 0 #ff1f2e00 }
+    50%      { border-color:var(--find); box-shadow:0 0 0 9px #ff1f2eaa }
   }
   .fin.found { animation:findme .45s ease-in-out 4; opacity:1 !important;
-               border-color:var(--no) }
+               border-color:var(--find); border-width:3px; z-index:2 }
+  .fin.found img { opacity:1 }
   @media (prefers-reduced-motion:reduce) {
-    .fin.found { animation:none; box-shadow:0 0 0 5px #f8717188 }
+    .fin.found { animation:none; box-shadow:0 0 0 6px #ff1f2ecc }
   }
   .fin .r { position:absolute; right:4px; top:4px; background:#000b;
     color:#cfd8e3; font:11px "IBM Plex Mono",monospace; padding:1px 5px;
