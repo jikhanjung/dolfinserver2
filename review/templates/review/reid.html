@@ -3,7 +3,11 @@
 <title>개체 분류</title>
 <style>
   :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
-          --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --sel:#60a5fa; }
+          --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --sel:#60a5fa;
+          /* **결각은 작은 흠이라 하필 사람이 알아보는 문턱 근처에 있다**
+             (`TODOs`). 작게 늘어놓으면 빨리 넘길 수는 있어도 판정이 흐려진다.
+             화면 크기에 따라 다르니 손으로 고르게 둔다 */
+          --fin:220px; }
   * { box-sizing:border-box }
   html, body { height:100% }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6
@@ -31,7 +35,7 @@
                display:flex; gap:7px; align-items:center }
   #boxes { flex:1; overflow-y:auto; padding:8px }
 
-  .fin { position:relative; width:120px; height:120px; cursor:grab;
+  .fin { position:relative; width:var(--fin); height:var(--fin); cursor:grab;
          border:2px solid transparent; border-radius:6px; background:#000 }
   .fin img { width:100%; height:100%; object-fit:cover; border-radius:4px;
              display:block; pointer-events:none }
@@ -42,9 +46,11 @@
     bottom:3px; right:3px; background:#000c; color:var(--ok); font-size:10px;
     padding:0 4px; border-radius:3px; overflow:hidden; white-space:nowrap;
     text-overflow:ellipsis }
-  .fin .r { position:absolute; right:3px; top:3px; background:#000b;
-    color:#cfd8e3; font:10px "IBM Plex Mono",monospace; padding:0 4px;
+  .fin .r { position:absolute; right:4px; top:4px; background:#000b;
+    color:#cfd8e3; font:11px "IBM Plex Mono",monospace; padding:1px 5px;
     border-radius:3px }
+  .fin.done::after { font-size:11px }
+  input[type=range] { width:110px; vertical-align:middle }
 
   .box { border:1px solid var(--line); border-radius:6px; margin-bottom:7px;
          background:var(--panel) }
@@ -81,6 +87,8 @@
   </select>
   <label class="stat"><input type="checkbox" id="hidedone" checked>
     넣은 것 숨기기</label>
+  <span class="stat">크기 <input type="range" id="size" min="96" max="380"
+    step="4" value="220"></span>
   <span style="flex:1"></span>
   <span class="stat"><kbd>클릭</kbd>고르기 <kbd>Shift</kbd>범위
     <kbd>Ctrl</kbd>더하기 <kbd>우클릭</kbd>원본 <kbd>끌기</kbd>상자로</span>
@@ -265,6 +273,17 @@ document.getElementById("newbox").onclick = async () => {
   else draw();
   document.getElementById("boxes").scrollTop = 1e9;
 };
+
+// **크기는 손에 맞춰 두고 기억한다** — 화면마다 다르고, 매번 다시 맞추게
+// 하면 그것이 곧 안 쓰게 되는 이유가 된다
+const size = document.getElementById("size");
+size.value = localStorage.getItem("finSize") || 220;
+const setSize = () => {
+  document.documentElement.style.setProperty("--fin", size.value + "px");
+  localStorage.setItem("finSize", size.value);
+};
+size.oninput = setSize;
+setSize();
 
 ["sort", "fside", "hidedone"].forEach(id =>
   document.getElementById(id).onchange = () => { sel.clear(); draw(); });
