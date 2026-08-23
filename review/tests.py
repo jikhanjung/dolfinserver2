@@ -763,3 +763,13 @@ class ReidTests(TestCase):
         화면은 "서버가 403 을 냈다" 만 말하고 무엇이 없는지는 안 말한다."""
         r = self.client.get("/reid")
         self.assertIn("csrftoken", r.cookies)
+
+    def test_boxes_come_in_the_order_they_were_made(self):
+        """이름순이면 `상자 10` 이 `상자 2` 앞에 오고, **이름을 고치는 순간
+        그 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 다시 찾아야 한다."""
+        made = [self.box().json()["id"] for _ in range(3)]
+        self.box(id=made[0], name="힣마지막이름")     # 이름순이면 맨 뒤로 갈 것
+        html = self.client.get("/reid").content.decode()
+        m = re.search(r"let BOXES = (\[.*?\]);", html, re.S)
+        self.assertIsNotNone(m)
+        self.assertEqual([b["id"] for b in json.loads(m.group(1))], made)

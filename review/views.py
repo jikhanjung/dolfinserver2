@@ -404,9 +404,13 @@ def reid(request):
             latest[box_id] = ind
         for it in items:
             it["in"] = latest.get(it["id"])
+        # **만든 순서로 낸다.** 기본은 이름순인데(`Individual.Meta`) 그러면
+        # `상자 10` 이 `상자 2` 앞에 오고, 무엇보다 **이름을 고치는 순간 그
+        # 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 눈으로 다시
+        # 찾아야 한다. 분류는 만든 순서대로 쌓이는 일이라 그 순서가 맞다.
         boxes = [{"id": i.id, "name": i.name,
                   "n": sum(1 for v in latest.values() if v == i.id)}
-                 for i in Individual.objects.all()]
+                 for i in Individual.objects.order_by("id")]
     return render(request, "review/reid.html", {
         "ready": ready,
         "items": json.dumps(items, ensure_ascii=False),
