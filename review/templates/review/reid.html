@@ -1,179 +1,279 @@
 {% load static %}<!doctype html>
 <meta charset="utf-8">
-<title>개체 묶음 검토</title>
+<title>개체 분류</title>
 <style>
   :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
-          --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --warn:#ffc9cd; }
+          --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --sel:#60a5fa; }
   * { box-sizing:border-box }
+  html, body { height:100% }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6
-         "IBM Plex Sans KR", system-ui, sans-serif; }
-  header { border-bottom:1px solid var(--line); padding:9px 14px;
-           display:flex; gap:12px; align-items:center; flex-wrap:wrap;
-           position:sticky; top:0; background:var(--bg); z-index:5; }
+         "IBM Plex Sans KR", system-ui, sans-serif; display:flex;
+         flex-direction:column; overflow:hidden }
+  header { border-bottom:1px solid var(--line); padding:8px 13px;
+           display:flex; gap:11px; align-items:center; flex-wrap:wrap }
   h1 { font-size:15px; margin:0; font-weight:600 }
   .stat { color:var(--dim); font-size:12.5px }
   .stat b { color:var(--ink) }
   kbd { background:#1d2733; border:1px solid var(--line); border-radius:3px;
         padding:0 5px; font:11px "IBM Plex Mono",monospace; color:var(--ink) }
-  .rule { flex-basis:100%; background:#1b1710; border:1px solid #3a2f14;
-          border-left:3px solid #ffd479; border-radius:6px; padding:6px 11px;
-          font-size:13px; color:#f0dcae }
-  .rule b { color:#ffd479 }
+  button, select { font:inherit; font-size:13px; background:var(--panel);
+    color:var(--ink); border:1px solid var(--line); border-radius:5px;
+    padding:4px 11px; cursor:pointer }
+  button:hover, select:hover { border-color:var(--dim) }
+  button.pri { background:#16302b; border-color:var(--ok); color:var(--ok) }
+
+  #main { flex:1; display:flex; min-height:0 }
+  #grid { flex:1; overflow-y:auto; padding:10px; display:flex;
+          flex-wrap:wrap; gap:6px; align-content:flex-start }
+  #side { width:310px; flex:none; border-left:1px solid var(--line);
+          display:flex; flex-direction:column; min-height:0 }
+  #side .top { padding:8px 10px; border-bottom:1px solid var(--line);
+               display:flex; gap:7px; align-items:center }
+  #boxes { flex:1; overflow-y:auto; padding:8px }
+
+  .fin { position:relative; width:120px; height:120px; cursor:grab;
+         border:2px solid transparent; border-radius:6px; background:#000 }
+  .fin img { width:100%; height:100%; object-fit:cover; border-radius:4px;
+             display:block; pointer-events:none }
+  .fin.sel { border-color:var(--sel) }
+  /* **이미 상자에 든 것은 흐리게.** 남은 일이 무엇인지 한눈에 보여야 한다 */
+  .fin.done { opacity:.32 }
+  .fin.done::after { content:attr(data-box-name); position:absolute; left:3px;
+    bottom:3px; right:3px; background:#000c; color:var(--ok); font-size:10px;
+    padding:0 4px; border-radius:3px; overflow:hidden; white-space:nowrap;
+    text-overflow:ellipsis }
+  .fin .r { position:absolute; right:3px; top:3px; background:#000b;
+    color:#cfd8e3; font:10px "IBM Plex Mono",monospace; padding:0 4px;
+    border-radius:3px }
+
+  .box { border:1px solid var(--line); border-radius:6px; margin-bottom:7px;
+         background:var(--panel) }
+  .box.over { border-color:var(--ok); background:#16302b }
+  .box .hd { display:flex; gap:6px; align-items:center; padding:6px 8px }
+  .box .nm { flex:1; font-weight:600; font-size:13px; outline:none }
+  .box .nm:focus { color:var(--ok) }
+  .box .cnt { color:var(--dim); font-size:12px;
+              font-family:"IBM Plex Mono",monospace }
+  .box .thumbs { display:flex; flex-wrap:wrap; gap:3px; padding:0 8px 8px }
+  .box .thumbs img { width:44px; height:44px; object-fit:cover;
+                     border-radius:3px; cursor:pointer }
+  .drop { padding:10px; border:2px dashed var(--line); border-radius:6px;
+          color:var(--dim); text-align:center; font-size:12.5px;
+          margin-bottom:7px }
+  .drop.over { border-color:var(--no); color:var(--no) }
   .warn { margin:14px; padding:10px 13px; background:#2a1416;
           border:1px solid #5c2a2f; border-left:3px solid var(--no);
-          border-radius:6px; color:var(--warn); font-size:13px; max-width:74ch }
-  .grp { border-bottom:1px solid var(--line); padding:12px 14px;
-         display:flex; gap:14px; align-items:flex-start }
-  .grp.saved { opacity:.35 }
-  .chips { display:flex; gap:8px; flex-wrap:wrap; flex:1 }
-  /* **크게 본다.** 결각은 작은 흠이라 하필 사람이 알아보는 문턱 근처에 있다
-     (`TODOs`). 작게 늘어놓으면 빨리 넘길 수는 있어도 판정이 흐려진다 */
-  .chip { position:relative; width:240px; cursor:pointer;
-          border:2px solid transparent; border-radius:6px; background:#000 }
-  .chip:hover { border-color:var(--dim) }
-  .chip img { width:100%; display:block; border-radius:4px }
-  /* **뺀 것이 한눈에 보여야 한다.** 무엇을 빼고 저장하는지 모르면
-     "같은 개체다" 라는 말의 뜻이 흐려진다 */
-  .chip.out { border-color:var(--no); opacity:.4 }
-  .chip.out::after { content:"뺌"; position:absolute; right:4px; top:4px;
-    background:var(--no); color:#0b0f14; font-size:10px; font-weight:700;
-    padding:0 5px; border-radius:3px }
-  .chip .day { position:absolute; left:5px; bottom:5px; font-size:11px;
-    color:#cfd8e3; background:#000b; padding:1px 6px; border-radius:3px }
-  .chip .no { position:absolute; right:5px; bottom:5px; font-size:11px;
-    color:#cfd8e3; background:#000b; padding:1px 6px; border-radius:3px;
-    font-family:"IBM Plex Mono",monospace }
-  .side { width:200px; flex:none; color:var(--dim); font-size:12.5px }
-  .tag { display:inline-block; font-size:10.5px; padding:0 6px; border-radius:3px;
-         font-family:"IBM Plex Mono",monospace }
-  .tag.c { background:#16302b; color:var(--ok) }
-  .tag.s { background:#32271a; color:#d9a052 }
-  /* **기준이 되는 칸은 눈에 띄어야 한다** — 나머지는 그와 견주는 것이다 */
-  .chip.seed { border-color:#d9a052 }
-  .chip.seed::before { content:"기준"; position:absolute; left:5px; top:5px;
-    background:#d9a052; color:#0b0f14; font-size:10px; font-weight:700;
-    padding:0 5px; border-radius:3px; z-index:1 }
-  .side b { color:var(--ink) }
-  input[type=text] { font:inherit; font-size:13px; background:var(--panel);
-    color:var(--ink); border:1px solid var(--line); border-radius:5px;
-    padding:5px 9px; width:100%; margin:6px 0 }
-  button { font:inherit; font-size:13px; background:var(--panel);
-    color:var(--ink); border:1px solid var(--line); border-radius:5px;
-    padding:5px 12px; cursor:pointer; margin-right:6px }
-  button.ok { background:#16302b; border-color:var(--ok); color:var(--ok) }
-  button.no { background:#331e1b; border-color:var(--no); color:var(--no) }
-  button:hover { border-color:var(--dim) }
-  datalist { color:#000 }
+          border-radius:6px; color:#ffc9cd; font-size:13px; max-width:74ch }
 </style>
 
 <header>
-  <h1>개체 묶음 검토</h1>
-  <span class="stat">남은 묶음 <b>{{ n_groups }}</b> · 개체 <b>{{ n_named }}</b>
-    · 답한 상자 <b>{{ n_done }}</b></span>
+  <h1>개체 분류</h1>
+  <span class="stat">아직 안 넣은 것 <b id="nleft">0</b> / {{ n_items }}</span>
+  <select id="sort">
+    <option value="sim">닮은 것끼리</option>
+    <option value="rough">특징적인 것부터</option>
+    <option value="day">날짜순</option>
+  </select>
+  <select id="fside">
+    <option value="">좌·우 모두</option>
+    <option value="left">왼쪽이 앞</option>
+    <option value="right">오른쪽이 앞</option>
+  </select>
+  <label class="stat"><input type="checkbox" id="hidedone" checked>
+    넣은 것 숨기기</label>
   <span style="flex:1"></span>
-  <span class="stat"><kbd>클릭</kbd>빼기 · <kbd>우클릭</kbd>원본 사진</span>
-  <div class="rule">
-    묻는 것은 하나다 — <b>이 줄이 같은 개체인가.</b> 아닌 것을 눌러 빼고
-    이름을 붙인다. 하나도 같지 않으면 <b>전부 아님</b>.
-    <b>특징적인 것부터 나온다</b> — 앞날이 패였거나 뒷날이 톱니인 개체가
-    알아보기 쉽고, 첫 정답으로 값이 가장 크다.
-    <b>닮은 것 모음</b>은 맨 앞이 기준이고 나머지는 그와 닮은 순서다 —
-    묶음에 못 든 특이한 애들이 여기 있다.
-    <b>아니라고 한 것도 저장된다</b> — 그것이 어려운 음성이고, 다음 바퀴에
-    같은 짝을 다시 안 보여 준다. 판단이 안 서면 <b>우클릭</b>으로 원본 사진.
-  </div>
+  <span class="stat"><kbd>클릭</kbd>고르기 <kbd>Shift</kbd>범위
+    <kbd>Ctrl</kbd>더하기 <kbd>우클릭</kbd>원본 <kbd>끌기</kbd>상자로</span>
 </header>
 
 {% if not ready %}
 <div class="warn">
-  <b>묶음이 없다.</b> 먼저 만들 것:
-  <pre>python manage.py reid_cluster --thres 0.06 --out reid/v1</pre>
-  그리고 조각을 PNG 로 내야 화면이 그린다 (<code>reid/v1/chips/</code>).
+  <b>분류할 것이 없다.</b> <code>reid/v1/items.json</code> 과
+  <code>reid/v1/look/</code> 이 있어야 한다.
 </div>
 {% else %}
-<div id="list"></div>
-<script>
-const GROUPS = {{ groups|safe }};
-let INDS = {{ individuals|safe }};
-const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+<div id="main">
+  <div id="grid"></div>
+  <div id="side">
+    <div class="top">
+      <button class="pri" id="newbox">새 상자</button>
+      <span class="stat" id="selinfo">고른 것 0</span>
+    </div>
+    <div id="boxes"></div>
+  </div>
+</div>
 
-// **묶음이 스스로를 못 잰다는 것이 실측으로 드러났다** — 밝기로 뭉친 정도가
-// 68%였고, 밝기를 지우면 점수가 오히려 내려갔다. 양성쌍이 같은 장면이라
-// 자가 조명 닮음에 상을 주기 때문이다. 그래서 사람의 이름이 필요하다.
-const list = document.getElementById("list");
-GROUPS.forEach((g, gi) => {
-  const el = document.createElement("div");
-  el.className = "grp";
-  el.dataset.i = gi;
-  const days = [...new Set(g.boxes.map(b => b.day))].sort();
-  el.innerHTML =
-    `<div class="side">
-       <span class="tag ${g.kind === "similar" ? "s" : "c"}">${
-         g.kind === "similar" ? "닮은 것 모음" : "묶음"}</span><br>
-       <b>${g.side === "left" ? "왼쪽이 앞" : "오른쪽이 앞"}</b>
-       · ${g.boxes.length}장<br>
-       <span style="font-size:11.5px">관찰일 ${days.length}일
-         ${days.length > 1 ? "· <b>날을 건너뛴다</b>" : ""}
-         ${g.rough ? `· 결각 ${g.rough.toFixed(3)}` : ""}</span>
-       <input type="text" list="inds" placeholder="개체 이름" class="nm">
-       <button class="ok">같은 개체</button>
-       <button class="no">전부 아님</button>
-     </div>
-     <div class="chips">${g.boxes.map((b, bi) =>
-       `<div class="chip${g.kind === "similar" && bi === 0 ? " seed" : ""}"
-             data-box="${b.id}">
-          <img src="/reid/chip/${b.id}.png" loading="lazy" alt="">
-          <span class="day">${b.day}</span>
-          <span class="no">${b.id}</span>
-        </div>`).join("")}</div>`;
-  list.appendChild(el);
-  el.querySelectorAll(".chip").forEach(c => {
-    c.onclick = () => c.classList.toggle("out");
-    // **원본 사진을 볼 길이 있어야 한다.** 조각만으로 판단이 안 서는 것이
-    // 반드시 나온다 — 물에 잠겼거나 옆에 다른 개체가 있는 경우다
-    c.oncontextmenu = ev => {
-      ev.preventDefault();
-      open(`/photo/${c.dataset.box}`, "finphoto");
+<script>
+const ITEMS = {{ items|safe }};
+let BOXES = {{ boxes|safe }};
+const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+const byId = Object.fromEntries(ITEMS.map(i => [i.id, i]));
+let sel = new Set(), lastClick = null;
+
+// **모델은 순서만 돕는다.** 묶음을 만들어 보였더니 쓸모가 없었다 — 묶음이
+// 밝기로 뭉친 정도가 68%였고, 특이한 개체는 남과 안 닮아 혼자 남아서 오히려
+// 안 보였다. 판단은 사람이 하고, 이쪽은 **이웃이 닮게 늘어놓아 눈이 덜
+// 움직이게만** 한다.
+function view() {
+  const s = document.getElementById("sort").value;
+  const side = document.getElementById("fside").value;
+  const hide = document.getElementById("hidedone").checked;
+  const v = ITEMS.filter(i => (!side || i.facing === side) && !(hide && i.in));
+  v.sort(s === "rough" ? (a, b) => b.rough - a.rough
+       : s === "day" ? (a, b) => (a.day + a.id).localeCompare(b.day + b.id)
+       : (a, b) => a.sim - b.sim);
+  return v;
+}
+
+function draw() {
+  const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
+  document.getElementById("grid").innerHTML = view().map(i =>
+    `<div class="fin${sel.has(i.id) ? " sel" : ""}${i.in ? " done" : ""}"
+          draggable="true" data-id="${i.id}"
+          data-box-name="${i.in ? (nm[i.in] || "") : ""}"
+          title="box ${i.id} · ${i.day} · 결각 ${i.rough}">
+       <img src="/reid/chip/${i.id}.png" loading="lazy" alt="">
+       <span class="r">${i.rough}</span>
+     </div>`).join("");
+  document.getElementById("nleft").textContent = ITEMS.filter(i => !i.in).length;
+  document.getElementById("selinfo").textContent = `고른 것 ${sel.size}`;
+  drawBoxes();
+}
+
+function drawBoxes() {
+  const mine = {};
+  ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
+  document.getElementById("boxes").innerHTML =
+    `<div class="drop" id="unbox">여기로 끌면 <b>상자에서 뺀다</b></div>`
+    + BOXES.map(b => `
+      <div class="box" data-box="${b.id}">
+        <div class="hd">
+          <span class="nm" contenteditable="plaintext-only"
+                data-id="${b.id}">${b.name}</span>
+          <span class="cnt">${(mine[b.id] || []).length}</span>
+        </div>
+        <div class="thumbs">${(mine[b.id] || []).slice(0, 30).map(id =>
+          `<img src="/reid/chip/${id}.png" data-id="${id}" loading="lazy"
+                title="눌러서 격자에서 찾기">`).join("")}</div>
+      </div>`).join("");
+  bindBoxes();
+}
+
+// ---- 고르기 ---------------------------------------------------------------
+document.getElementById("grid").onclick = e => {
+  const f = e.target.closest(".fin");
+  if (!f) { sel.clear(); draw(); return; }
+  const id = +f.dataset.id;
+  if (e.shiftKey && lastClick !== null) {
+    // **범위로 고른다.** 닮은 순서로 이웃해 있는 것을 하나씩 누르게 하면
+    // 손이 너무 많이 간다 — 이 화면의 목적이 한 번에 넣는 것이다
+    const v = view().map(i => i.id);
+    const a = v.indexOf(lastClick), b = v.indexOf(id);
+    if (a >= 0 && b >= 0)
+      v.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => sel.add(x));
+  } else if (e.ctrlKey || e.metaKey) {
+    sel.has(id) ? sel.delete(id) : sel.add(id);
+  } else if (sel.has(id) && sel.size === 1) {
+    sel.delete(id);
+  } else {
+    sel.clear(); sel.add(id);
+  }
+  lastClick = id;
+  draw();
+};
+document.getElementById("grid").oncontextmenu = e => {
+  const f = e.target.closest(".fin");
+  if (!f) return;
+  e.preventDefault();
+  open(`/photo/${f.dataset.id}`, "finphoto");
+};
+
+// ---- 끌기 -----------------------------------------------------------------
+// 고른 것이 여럿이면 **함께 간다**
+document.getElementById("grid").ondragstart = e => {
+  const f = e.target.closest(".fin");
+  if (!f) return;
+  const id = +f.dataset.id;
+  if (!sel.has(id)) { sel.clear(); sel.add(id); draw(); }
+  e.dataTransfer.setData("text/plain", JSON.stringify([...sel]));
+  e.dataTransfer.effectAllowed = "move";
+};
+
+function bindBoxes() {
+  document.querySelectorAll(".box, #unbox").forEach(el => {
+    el.ondragover = ev => { ev.preventDefault(); el.classList.add("over"); };
+    el.ondragleave = () => el.classList.remove("over");
+    el.ondrop = async ev => {
+      ev.preventDefault(); el.classList.remove("over");
+      let ids = [];
+      try { ids = JSON.parse(ev.dataTransfer.getData("text/plain")); } catch (x) {}
+      if (ids.length) await assign(el.id === "unbox" ? null : +el.dataset.box, ids);
     };
   });
-  el.querySelector(".ok").onclick = () => save(el, false);
-  el.querySelector(".no").onclick = () => save(el, true);
-});
-
-const dl = document.createElement("datalist");
-dl.id = "inds";
-const fillList = () => dl.innerHTML =
-  INDS.map(i => `<option value="${i.name}">`).join("");
-fillList();
-document.body.appendChild(dl);
-
-async function save(el, allNo) {
-  const chips = [...el.querySelectorAll(".chip")];
-  const name = el.querySelector(".nm").value.trim();
-  let keep = [], drop = [];
-  if (allNo) {
-    drop = chips.map(c => +c.dataset.box);
-  } else {
-    keep = chips.filter(c => !c.classList.contains("out")).map(c => +c.dataset.box);
-    drop = chips.filter(c => c.classList.contains("out")).map(c => +c.dataset.box);
-    if (!keep.length) return alert("남긴 것이 없다 — 전부 아님을 누를 것.");
-    // **한 장만 남기고 이름을 붙이는 것도 뜻이 있다** — 카탈로그에 새 개체가
-    // 하나 생기고, 다음 묶음에서 그 이름으로 이을 수 있다
-    if (!name) return alert("이름이 없다. 새 이름이든 이미 있는 이름이든 적을 것.");
-  }
-  const res = await fetch("/api/reid", {
-    method: "POST",
-    headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
-    body: JSON.stringify({name, keep, drop, source: "cluster"}),
+  document.querySelectorAll(".box .nm").forEach(el => {
+    el.onkeydown = ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); el.blur(); }
+    };
+    el.onblur = () => rename(+el.dataset.id, el.textContent.trim());
   });
-  if (!res.ok) return alert(`저장 실패 — 서버가 ${res.status} 를 냈다`);
-  const r = await res.json();
-  if (r.error) return alert(r.error);
-  el.classList.add("saved");
-  el.querySelectorAll("button").forEach(b => b.disabled = true);
-  if (r.individual && !INDS.some(i => i.name === r.individual)) {
-    INDS.push({name: r.individual}); fillList();
-  }
+  // 상자 안의 작은 그림을 누르면 격자에서 그것을 찾아 준다 — 다시 꺼낼 때
+  document.querySelectorAll(".box .thumbs img").forEach(im => {
+    im.onclick = () => {
+      sel = new Set([+im.dataset.id]);
+      document.getElementById("hidedone").checked = false;
+      draw();
+      const t = document.querySelector(`.fin[data-id="${im.dataset.id}"]`);
+      if (t) t.scrollIntoView({block: "center"});
+    };
+  });
 }
+
+async function post(url, body) {
+  const r = await fetch(url, {method: "POST",
+    headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
+    body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({error: `서버가 ${r.status} 를 냈다`}));
+  if (j.error) { alert(j.error); return null; }
+  return j;
+}
+
+async function assign(indId, ids) {
+  const r = await post("/api/reid/assign", {individual: indId, boxes: ids});
+  if (!r) return;
+  ids.forEach(id => { if (byId[id]) byId[id].in = indId; });
+  sel.clear();
+  draw();
+}
+
+async function rename(id, name) {
+  const b = BOXES.find(x => x.id === id);
+  if (!b) return;
+  if (!name || b.name === name) return draw();
+  const r = await post("/api/reid/box", {id, name});
+  if (!r) return draw();
+  b.name = r.name;
+  draw();
+}
+
+document.getElementById("newbox").onclick = async () => {
+  const r = await post("/api/reid/box", {});
+  if (!r) return;
+  BOXES.push({id: r.id, name: r.name, n: 0});
+  // **고른 것이 있으면 만들자마자 넣는다** — 만들고 다시 끌게 하면 걸음이
+  // 하나 는다. 같은 개체를 골라 놓고 "새 상자" 를 누르는 것이 가장 잦다
+  if (sel.size) await assign(r.id, [...sel]);
+  else draw();
+  document.getElementById("boxes").scrollTop = 1e9;
+};
+
+["sort", "fside", "hidedone"].forEach(id =>
+  document.getElementById(id).onchange = () => { sel.clear(); draw(); });
+addEventListener("keydown", e => {
+  if (e.key === "Escape") { sel.clear(); draw(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+    e.preventDefault(); view().forEach(i => sel.add(i.id)); draw();
+  }
+});
+draw();
 </script>
 {% endif %}

@@ -371,92 +371,107 @@ def save(request):
 
 @require_GET
 def reid(request):
-    """**묶음을 사람에게 보이고 최소한의 정답을 받는 자리.**
+    """**사람이 손으로 분류하는 자리.** 지느러미를 상자에 끌어 넣는다.
 
-    군집이 스스로를 못 잰다는 것이 실측으로 드러났다 — 묶음이 밝기로 뭉친
-    정도가 68%였고, 밝기를 지우면 점수가 오히려 내려갔다. 양성쌍이 같은
-    장면이라 **자가 조명 닮음에 상을 주기 때문**이다. 개체와 조명을 가르려면
-    사람이 붙인 이름이 있어야 한다.
+    군집을 먼저 만들어 보였는데 쓸모가 없었다 — 묶음이 밝기로 뭉친 정도가
+    68%였고, 특이한 개체는 남과 안 닮아 혼자 남아서 오히려 안 보였다.
+    **모델이 판단하고 사람이 고치는 것이 아니라, 사람이 판단하고 모델은
+    순서만 돕는다.**
 
-    묻는 것은 하나다 — **"이 줄이 같은 개체인가."** 아닌 것을 빼고 이름을
-    붙이면 그것이 첫 정답이 된다.
+    정렬 셋을 준다. `sim` 은 임베딩으로 닮은 것끼리 한 줄로 편 것이다 — 이웃이
+    닮아 있어야 눈이 덜 움직인다. `rough` 는 결각이 깊은 것부터. `day` 는 날짜순.
 
-    **아니라고 한 것도 저장한다.** 그것이 어려운 음성이고, 다음 바퀴에 같은
-    짝을 또 보여 주지 않게 한다 (`Identification.individual = NULL`).
+    상자 하나가 `Individual` 하나다. **이름은 나중에 붙인다** — 먼저 모아 놓고
+    보아야 그 개체가 누구인지 정할 수 있고, 이름부터 물으면 손이 멎는다.
     """
-    from finseg import reid as reid_mod
     from finseg.models import Individual
 
     root = Path(settings.BASE_DIR) / "reid" / "v1"
-    groups_f = root / "groups.json"
-    ready = groups_f.exists() and ((root / "look").is_dir()
-                                   or (root / "chips").is_dir())
-    groups = []
+    items_f = root / "items.json"
+    ready = items_f.exists() and ((root / "look").is_dir()
+                                  or (root / "chips").is_dir())
+    items, boxes = [], []
     if ready:
-        data = json.loads(groups_f.read_text(encoding="utf-8"))
-        raw = [g for g in data.get("groups", []) if len(g.get("boxes", [])) > 1]
-        # **이미 답한 묶음은 뒤로 보낸다.** 다 답한 것은 아예 안 보여 준다 —
-        # 남은 일이 무엇인지 화면이 말해야 한다
-        done_ids = reid_mod.decided([b for g in raw for b in g["boxes"]])
-        boxes = {b.id: b for b in Box.objects.select_related("image")
-                 .filter(id__in=[b for g in raw for b in g["boxes"]])}
-        for g in raw:
-            left = [b for b in g["boxes"] if b not in done_ids]
-            if not left:
-                continue
-            groups.append({
-                "side": g.get("side", ""),
-                "kind": g.get("kind", "cluster"),
-                "rough": g.get("rough"),
-                "spread": g.get("spread"),
-                "boxes": [{"id": b,
-                           "day": str(boxes[b].image.obsdate) if b in boxes else "",
-                           "done": b in done_ids} for b in g["boxes"]
-                          if b in boxes],
-                "left": len(left),
-            })
-        # **특징적인 것부터.** 앞날이 패였거나 뒷날이 톱니인 개체는 사람이
-        # 가장 쉽게 알아보는 것이고, 첫 정답을 만들기에 값이 가장 크다.
-        # 순서는 만들 때 이미 정해져 있으므로(`rough` 내림차순) 그대로 둔다
+        items = json.loads(items_f.read_text(encoding="utf-8")).get("items", [])
+        # 지금 어느 상자에 들어 있나 — **가장 늦은 판정이 이긴다**
+        latest = {}
+        for box_id, ind in (Identification.objects.order_by("id")
+                            .values_list("box_id", "individual_id")):
+            latest[box_id] = ind
+        for it in items:
+            it["in"] = latest.get(it["id"])
+        boxes = [{"id": i.id, "name": i.name,
+                  "n": sum(1 for v in latest.values() if v == i.id)}
+                 for i in Individual.objects.all()]
     return render(request, "review/reid.html", {
         "ready": ready,
-        "groups": json.dumps(groups, ensure_ascii=False),
-        "individuals": json.dumps(
-            [{"id": i.id, "name": i.name,
-              "n": i.identifications.filter(individual=i).count()}
-             for i in Individual.objects.all()], ensure_ascii=False),
-        "n_groups": len(groups),
-        "n_named": Individual.objects.count(),
-        "n_done": Identification.objects.values("box").distinct().count(),
+        "items": json.dumps(items, ensure_ascii=False),
+        "boxes": json.dumps(boxes, ensure_ascii=False),
+        "n_items": len(items),
     })
 
 
 @require_POST
 @transaction.atomic
-def reid_save(request):
-    """개체 판정을 저장한다. **쌓는다, 덮어쓰지 않는다** (`Review` 와 같다)."""
+def reid_box(request):
+    """상자를 새로 만들거나 이름을 고친다.
+
+    **이름 없이도 만들어진다.** 먼저 모아 놓고 보아야 누구인지 정할 수 있는데,
+    이름부터 물으면 거기서 손이 멎는다. 임시 이름은 겹치지 않게 붙인다.
+    """
     from finseg.models import Individual
 
     body = json.loads(request.body or "{}")
+    ind_id = body.get("id")
     name = (body.get("name") or "").strip()
-    keep = [int(b) for b in body.get("keep", [])]
-    drop = [int(b) for b in body.get("drop", [])]
-    if keep and not name:
-        raise_ = {"error": "이름이 없다 — 같다고 한 것에는 이름을 붙여야 한다"}
-        return JsonResponse(raise_, status=400)
+    if ind_id:
+        ind = Individual.objects.filter(id=ind_id).first()
+        if ind is None:
+            return JsonResponse({"error": "그런 상자가 없다"}, status=404)
+        if not name:
+            return JsonResponse({"error": "이름이 비었다"}, status=400)
+        if Individual.objects.filter(name=name).exclude(id=ind.id).exists():
+            return JsonResponse({"error": f"'{name}' 은 이미 있다"}, status=400)
+        ind.name = name
+        ind.save(update_fields=["name"])
+        return JsonResponse({"id": ind.id, "name": ind.name})
+    if not name:
+        n = Individual.objects.count() + 1
+        while Individual.objects.filter(name=f"상자 {n}").exists():
+            n += 1
+        name = f"상자 {n}"
+    ind, made = Individual.objects.get_or_create(name=name)
+    return JsonResponse({"id": ind.id, "name": ind.name, "made": made})
+
+
+@require_POST
+@transaction.atomic
+def reid_assign(request):
+    """지느러미를 상자에 넣거나 뺀다. **쌓는다, 덮어쓰지 않는다.**
+
+    `individual` 이 없으면 뺀 것이다(`NULL`). 아니라고 말한 것도 자료이고,
+    옮겨 다닌 자취가 있어야 나중에 판단이 언제 바뀌었는지 잴 수 있다.
+    """
+    from finseg.models import Individual
+
+    body = json.loads(request.body or "{}")
+    ind_id = body.get("individual")
     ind = None
-    if keep:
-        ind, _ = Individual.objects.get_or_create(name=name)
+    if ind_id:
+        ind = Individual.objects.filter(id=ind_id).first()
+        if ind is None:
+            return JsonResponse({"error": "그런 상자가 없다"}, status=404)
+    box_ids = [int(b) for b in body.get("boxes", [])]
+    if not box_ids:
+        return JsonResponse({"error": "고른 것이 없다"}, status=400)
     user = request.user if request.user.is_authenticated else None
-    src = body.get("source") or "cluster"
-    rows = [Identification(box_id=b, individual=ind, source=src, reviewer=user)
-            for b in keep]
-    # **아니라고 한 것도 남긴다** — 어려운 음성이고, 같은 짝을 또 안 보여 준다
-    rows += [Identification(box_id=b, individual=None, source=src, reviewer=user)
-             for b in drop]
-    Identification.objects.bulk_create(rows)
-    return JsonResponse({"saved": len(rows),
-                         "individual": ind.name if ind else None})
+    Identification.objects.bulk_create([
+        Identification(box_id=b, individual=ind, source=body.get("source", "hand"),
+                       reviewer=user) for b in box_ids])
+    n = Identification.objects.filter(individual=ind).values("box").distinct().count() \
+        if ind else 0
+    return JsonResponse({"saved": len(box_ids),
+                         "individual": ind.id if ind else None, "n": n})
 
 
 @require_GET

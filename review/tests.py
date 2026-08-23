@@ -688,8 +688,7 @@ class ReidTests(TestCase):
     """**개체 판정은 쌓인다, 덮어쓰지 않는다** — `Review` 와 같은 규칙이다.
 
     카탈로그가 자라면 판정이 갈라지거나 합쳐진다. 자취가 없으면 언제 생각이
-    바뀌었는지 잴 수 없다. 그리고 **아니라고 한 것도 남긴다** — 어려운
-    음성이고, 다음 바퀴에 같은 짝을 또 보여 주지 않게 한다.
+    바뀌었는지 잴 수 없다. 상자에서 뺀 것도 줄이 남는다.
     """
 
     def setUp(self):
@@ -699,51 +698,62 @@ class ReidTests(TestCase):
             Box.objects.create(image=img, x1=10 * i, y1=10, x2=60 * (i + 1),
                                y2=60, source="yolov5") for i in range(3)]
 
-    def post(self, **kw):
-        return self.client.post("/api/reid", data=json.dumps(kw),
+    def box(self, **kw):
+        return self.client.post("/api/reid/box", data=json.dumps(kw),
                                 content_type="application/json")
 
-    def test_it_names_and_excludes_in_one_go(self):
-        r = self.post(name="JJ01", keep=[self.a.id, self.b.id], drop=[self.c.id])
+    def assign(self, **kw):
+        return self.client.post("/api/reid/assign", data=json.dumps(kw),
+                                content_type="application/json")
+
+    def test_a_box_is_made_without_a_name(self):
+        """**먼저 모아 놓고 보아야 누구인지 정할 수 있다.** 이름부터 물으면
+        거기서 손이 멎는다."""
+        r = self.box()
         self.assertEqual(r.status_code, 200)
-        ind = Individual.objects.get(name="JJ01")
-        self.assertEqual(
-            set(Identification.objects.filter(individual=ind)
-                .values_list("box_id", flat=True)), {self.a.id, self.b.id})
-        # **아니라고 한 것도 줄이 남는다** — 답을 한 것이지 안 한 것이 아니다
-        no = Identification.objects.get(box=self.c)
-        self.assertIsNone(no.individual)
+        self.assertTrue(Individual.objects.filter(id=r.json()["id"]).exists())
+        self.assertTrue(r.json()["name"])
 
-    def test_a_name_is_required_when_something_is_kept(self):
-        """같다고 해 놓고 이름이 없으면 카탈로그에 못 얹는다."""
-        self.assertEqual(self.post(name="", keep=[self.a.id]).status_code, 400)
-        self.assertFalse(Identification.objects.exists())
+    def test_names_do_not_collide(self):
+        a, b = self.box().json(), self.box().json()
+        self.assertNotEqual(a["name"], b["name"])
 
-    def test_all_no_needs_no_name(self):
-        r = self.post(name="", keep=[], drop=[self.a.id, self.b.id])
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(Identification.objects.count(), 2)
-        self.assertFalse(Individual.objects.exists())
+    def test_renaming_refuses_a_taken_name(self):
+        a, b = self.box().json(), self.box().json()
+        self.assertEqual(self.box(id=b["id"], name=a["name"]).status_code, 400)
 
-    def test_the_latest_wins_and_the_trail_stays(self):
-        self.post(name="JJ01", keep=[self.a.id], drop=[])
-        self.post(name="JJ02", keep=[self.a.id], drop=[])
+    def test_many_go_in_at_once(self):
+        """같은 개체를 한 번에 넣는 것이 이 화면의 목적이다."""
+        ind = self.box().json()
+        self.assign(individual=ind["id"], boxes=[self.a.id, self.b.id])
+        self.assertEqual(reid.catalog()[ind["id"]].sort(),
+                         [self.a.id, self.b.id].sort())
+
+    def test_moving_leaves_a_trail_and_the_latest_wins(self):
+        one, two = self.box().json(), self.box().json()
+        self.assign(individual=one["id"], boxes=[self.a.id])
+        self.assign(individual=two["id"], boxes=[self.a.id])
         self.assertEqual(Identification.objects.filter(box=self.a).count(), 2)
-        self.assertEqual(reid.effective_id(self.a).individual.name, "JJ02")
-        self.assertEqual(reid.catalog(),
-                         {Individual.objects.get(name="JJ02").id: [self.a.id]})
+        self.assertEqual(reid.effective_id(self.a).individual_id, two["id"])
+        self.assertEqual(reid.catalog(), {two["id"]: [self.a.id]})
 
-    def test_a_box_taken_back_leaves_the_catalog(self):
-        """빼면 카탈로그에서 빠져야 한다 — 자취는 남되 값은 최신이 이긴다."""
-        self.post(name="JJ01", keep=[self.a.id], drop=[])
-        self.post(name="", keep=[], drop=[self.a.id])
+    def test_taking_it_out_leaves_the_catalog(self):
+        """뺀 것도 답이다 — 자취는 남되 카탈로그에서는 빠진다."""
+        ind = self.box().json()
+        self.assign(individual=ind["id"], boxes=[self.a.id])
+        self.assign(individual=None, boxes=[self.a.id])
         self.assertEqual(reid.catalog(), {})
         self.assertEqual(reid.decided([self.a.id]), {self.a.id})
 
+    def test_it_refuses_an_unknown_box(self):
+        self.assertEqual(self.assign(individual=9999,
+                                     boxes=[self.a.id]).status_code, 404)
+        self.assertFalse(Identification.objects.exists())
+
     def test_the_screen_says_what_is_missing(self):
-        """묶음이 없으면 만드는 법이 떠야 한다 — 빈 화면은 아무 말도 안 한다."""
+        """빈 화면은 아무 말도 안 한다."""
         html = self.client.get("/reid").content.decode()
-        if "묶음이 없다" in html:
-            self.assertIn("reid_cluster", html)
+        if "분류할 것이 없다" in html:
+            self.assertIn("items.json", html)
         else:
-            self.assertIn("GROUPS = ", html)
+            self.assertIn("const ITEMS = ", html)
