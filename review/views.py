@@ -181,6 +181,18 @@ def batch(request):
     cls = request.GET.get("cls", "")
     if cls not in {c for c, _ in CLASSES}:
         cls = ""
+    # **보류.** 판단이 안 서는 칸을 지나가려는 것이다. 묶음 저장은 손 안 댄
+    # 칸까지 전부 판정으로 적으므로(`save`), 화면에서 빼지 않으면 "모르겠다"
+    # 를 말할 자리가 없다 — 찍는 쪽이든 안 찍는 쪽이든 없는 판단이 들어간다.
+    #
+    # **서버에서 뺀다.** 화면에서만 걸러 내면 한 쪽이 통째로 보류일 때 빈
+    # 격자가 뜨고 쪽수도 어긋난다. 여기서 빼면 `total`·`pages` 가 곧바로 맞는다.
+    #
+    # 어디에도 저장하지 않는다. 보류는 **아무 말도 안 한 것**(`rules.PENDING`)
+    # 이고 그것이 이미 정확한 상태다 — 표를 만들면 "모른다" 가 판정인 척
+    # 남는다. 화면이 이번 판(sessionStorage)만 기억하고, 새로 열면 다시 만난다.
+    hold = {int(v) for v in request.GET.get("hold", "").split(",")
+            if v.strip().isdigit()}
     # **마스크를 요구하지 않는다.** 옛 상자는 전부 마스크가 있어 이 줄이 걸러
     # 내는 것이 없었지만, 새 검출기가 들인 상자는 아직 없다 — 그것을 묻는 것은
     # "이 안에 지느러미가 있나" 지 "이 윤곽이 맞나" 가 아니라서 마스크가 필요
@@ -194,7 +206,7 @@ def batch(request):
         # 어디로 잡을지도 위에서부터 훑어야 보인다.
         qs = (base.exclude(source="yolov5").filter(reviews__isnull=True)
               .distinct().order_by("-conf", "id"))
-        ids, total = None, qs.count()
+        ids = None
     elif mode == "stale":
         # **판정이 본 마스크와 지금 현재가 다른 것.** 엔진을 갈아 끼우면
         # `verdict`("이 마스크가 맞다")가 그때 그 마스크에 대한 말이 되어
@@ -209,7 +221,7 @@ def batch(request):
             latest[bid] = (mid, at)
         ids = [b for b, (mid, _) in sorted(latest.items(), key=lambda x: x[1][1])
                if b in cur and mid != cur[b]]
-        total, qs = len(ids), None
+        qs = None
     elif mode == "stuck":
         # **고쳐야 한다고 해 놓고 안 고친 것.** 판정이 붙어 있어 `todo` 에 안
         # 나오고, 자료로도 안 나간다 — 여기 말고는 다시 만날 길이 없다.
@@ -219,10 +231,10 @@ def batch(request):
             id__in=latest, verdict="fix", polygon="", base_line="")
             .exclude(cls="none").exclude(cls="")
             .order_by("at", "id").values_list("box_id", flat=True))
-        total, qs = len(ids), None
+        qs = None
     elif mode == "done":
         ids = _reviewed_order(cls)
-        total, qs = len(ids), None
+        qs = None
     else:
         # **`todo` 는 마스크가 있는 것만이다** — 여기서 묻는 것에 "이 윤곽이
         # 맞나" 가 들어 있다. 마스크 없는 새 상자는 `new` 로 간다. 둘을 한
@@ -230,7 +242,14 @@ def batch(request):
         ids = None
         qs = (base.filter(masks__is_current=True, reviews__isnull=True)
               .distinct().order_by("id"))
-        total = qs.count()
+
+    # **보류한 것은 목록에서 빠진다** — 쪽수를 세기 전에 뺀다.
+    if hold:
+        if qs is not None:
+            qs = qs.exclude(id__in=hold)
+        else:
+            ids = [i for i in ids if i not in hold]
+    total = qs.count() if qs is not None else len(ids)
 
     # **쪽수를 먼저 정하고 자른다.** 범위를 넘긴 요청은 마지막 쪽으로 접어
     # 준다 — 안 그러면 빈 격자가 뜨는데 화면이 "끝이다" 인지 "뭔가 잘못됐다"
