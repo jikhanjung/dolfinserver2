@@ -75,9 +75,13 @@
     <kbd>휠</kbd>확대 · <kbd>Space</kbd>누른 채 움직이면 이동
     (<kbd>가운데끌기</kbd>도) ·
     변 가운데 점: 추가 <kbd>우클릭</kbd>삭제 ·
+    <kbd>n</kbd>윤곽 새로 그리기 (마스크가 없을 때) ·
     <kbd>Ctrl+Z</kbd>되돌리기 <kbd>0</kbd>크롭에 맞추기 <kbd>9</kbd>넓게
     <kbd>Esc</kbd>선택해제 <kbd>Ctrl+A</kbd>전부
   </span>
+  <button id="seed" onclick="seed()" hidden
+          title="상자에서 출발 윤곽을 만든다 — 그 뒤로는 점을 끌어 다듬는다"
+          >윤곽 새로 그리기 (n)</button>
   <button id="undo" onclick="undo()">되돌리기</button>
   <button onclick="fit()">크롭에 맞추기</button>
   <button onclick="wide()">넓게 보기</button>
@@ -102,6 +106,7 @@
 const T = {{ tile|safe }};
 const PHOTO = "{{ photo }}";      // 원본이 있으면 그것을 깐다. 없으면 크롭
 const G = {{ geom|safe }};        // 크롭이 원본의 어디를 어떤 배율로 잘랐나
+const BOX = {{ boxrect|safe }};   // 프롬프트 상자 (크롭 좌표) — 새로 그릴 때 출발점
 const FACINGS = {{ facings|safe }};   // 밑동 두 점 중 앞(머리 쪽)
 const SIZE = T.size;
 let pts = T.points.map(p => p.slice());     // 크롭 좌표. **끝까지 이것만 쓴다**
@@ -225,6 +230,9 @@ function draw() {
   document.getElementById("undo").disabled = !stack.length;
   bind();
   paint();   // #vtxs 를 새로 만들었으니 고른 표시를 다시 입힌다
+  // **단추는 그릴 점이 없을 때만 뜬다.** 윤곽이 있는데 뜨면 "새로 그리기" 가
+  // 그것을 지우는 것으로 읽힌다 — 지우는 것은 Del 이 한다
+  document.getElementById("seed").hidden = pts.length > 0;
 }
 
 function bind() {
@@ -434,7 +442,8 @@ addEventListener("keydown", e => {
     pts = pts.filter((_, i) => !sel.has(i));
     sel = new Set();          // 자리가 밀렸으니 번호로 든 선택은 뜻을 잃는다
     warn(""); draw();
-  } else if (e.key === "0") fit();
+  } else if (e.key === "n") { e.preventDefault(); seed(); }
+  else if (e.key === "0") fit();
   else if (e.key === "Escape") {
     // **Esc 로는 창을 닫지 않는다.** 고치던 윤곽은 저장 전까지 이 창에만 있어서
     // 닫으면 확인 없이 사라진다. 닫는 것은 '저장하고 닫기' 나 창의 닫기 단추다
@@ -463,10 +472,47 @@ addEventListener("pointermove", e => {
   draw();
 });
 
+// **마스크가 없는 상자에서 윤곽을 처음부터 그린다.**
+//
+// 이 화면은 이미 있는 점을 끌고 변 가운데를 눌러 늘리는 식이라, 점이 하나도
+// 없으면 **누를 데가 없다.** 분할 모델이 아무것도 못 낸 상자가 그렇고, 그중
+// 열여덟 개는 사람이 "등지느러미다" 라고 판정한 것이라 여기 말고는 윤곽을
+// 만들 길이 없다.
+//
+// **상자에서 만든다.** 밑동 첫 제안과 같은 이유다 (`finseg/baseline.py`) —
+// 틀린 자동 제안은 사람의 눈을 끌고 가지만 **대충의 제안은 그러지 않는다.**
+// 상자 모양은 지느러미와 안 닮아서 "이미 맞다" 로 읽힐 수가 없다.
+//
+// **`polyMoved` 를 안 세운다.** 눌러 놓고 한 점도 안 옮긴 채 저장하면 상자
+// 네모가 사람이 그린 마스크인 척 들어간다 — 밑동 제안을 저장 안 하는 것과
+// 같은 규칙이다. 되돌리기(Ctrl+Z)로 지울 수 있게 stack 에도 넣는다.
+function seed() {
+  if (pts.length) return warn("이미 윤곽이 있다 — 새로 그리려면 먼저 지울 것.");
+  push();
+  const [x1, y1, x2, y2] = BOX;
+  const ix = (x2 - x1) * 0.08, iy = (y2 - y1) * 0.08;
+  const a = x1 + ix, b = y1 + iy, cw = (x2 - ix) - a, ch = (y2 - iy) - b;
+  // 변마다 셋씩 — 끌 점과 그 사이에 더할 자리가 함께 생긴다
+  const N = 3, out = [];
+  for (let i = 0; i < N; i++) out.push([a + cw * i / N, b]);
+  for (let i = 0; i < N; i++) out.push([a + cw, b + ch * i / N]);
+  for (let i = 0; i < N; i++) out.push([a + cw - cw * i / N, b + ch]);
+  for (let i = 0; i < N; i++) out.push([a, b + ch - ch * i / N]);
+  pts = out;
+  warn("상자에서 만든 **출발 윤곽**이다 — 맞다고 여기지 말 것. 점을 끌어 "
+     + "실제 경계에 맞춘 뒤에야 저장된다 (한 점도 안 옮기면 저장이 막힌다).");
+  draw();
+}
+
 async function commit() {
+  if (!pts.length && !T.mask_id)
+    return warn("윤곽이 없다 — **n**(윤곽 새로 그리기)으로 상자에서 시작할 것.");
   if (pts.length < 3) return warn("점이 셋은 있어야 한다.");
   if (!polyMoved && !baseMoved && !facingMoved)
-    return warn("고친 것이 없다 — 저장할 것이 없다.");
+    return warn(pts.length && !T.points.length
+      ? "출발 윤곽을 아직 한 점도 안 옮겼다 — **상자 네모는 마스크가 아니다.** "
+        + "점을 끌어 실제 경계에 맞출 것."
+      : "고친 것이 없다 — 저장할 것이 없다.");
   const csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
   // **격자와 같은 문(`/api/review`)으로 넣는다.** 저장 경로가 둘이 되면 규칙도
   // 둘이 된다. 윤곽을 고친 것은 그 자체로 '교정함' 이다 — 밑동과 같다.

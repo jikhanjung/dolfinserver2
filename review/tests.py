@@ -10,7 +10,7 @@ import re
 
 from django.test import SimpleTestCase, TestCase
 
-from finseg import baseline, rules
+from finseg import baseline, geometry, rules
 from finseg.models import Box, Crop, Image, Mask, Review, Run
 
 BLOCK = re.compile(r'<div class="rule">(.*?)</div>', re.S)
@@ -261,3 +261,39 @@ class ExportDetectReviewTests(TestCase):
         add, reject, imgs, note = self.cmd()._from_reviews(set())
         self.assertEqual((add, reject, imgs), ({}, set(), set()))
         self.assertTrue(any("infer_boxes" in n for n in note))
+
+
+class DrawFromScratchTests(TestCase):
+    """**마스크가 없는 상자에서 윤곽을 처음부터 그릴 수 있나.**
+
+    편집 화면은 이미 있는 점을 끌고 변 가운데를 눌러 늘리는 식이라, 점이 하나도
+    없으면 **누를 데가 없다.** 분할 모델이 아무것도 못 낸 상자가 그렇고, 그중
+    일부는 사람이 "등지느러미다" 라고 판정한 것이라 여기 말고는 윤곽을 만들
+    길이 없다. 출발점은 프롬프트 상자다 — 밑동 첫 제안과 같은 이유로,
+    **대충의 제안은 사람의 눈을 끌고 가지 않는다** (`finseg/baseline.py`).
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="t/d.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.box = Box.objects.create(image=img, x1=100, y1=200, x2=300, y2=400,
+                                      source="yolo11", conf=0.4)
+        self.crop = Crop.objects.create(box=self.box, path="t/d0.jpg",
+                                        x0=50, y0=150, x1=690, y1=790,
+                                        w=640, h=640)
+
+    def test_prompt_box_comes_through_in_crop_coordinates(self):
+        """**이 식은 `geometry` 한 곳에만 있어야 한다** — 저장할 때 되돌리는
+        식과 어긋나면 사람이 그린 윤곽이 엉뚱한 자리에 적힌다."""
+        html = self.client.get(f"/edit/{self.box.id}").content.decode()
+        m = re.search(r"const BOX = (\[[^\]]*\])", html)
+        self.assertIsNotNone(m, "편집 화면이 프롬프트 상자를 안 보낸다")
+        got = json.loads(m.group(1))
+        want = geometry.to_crop([(self.box.x1, self.box.y1),
+                                 (self.box.x2, self.box.y2)], self.crop)
+        self.assertEqual([round(v, 1) for xy in want for v in xy], got)
+
+    def test_the_screen_offers_a_way_to_start(self):
+        """화면이 말하지 않으면 없는 것과 같다 — `e`/`x` 를 못 찾은 그 값이다."""
+        html = self.client.get(f"/edit/{self.box.id}").content.decode()
+        self.assertIn("윤곽 새로 그리기", html)

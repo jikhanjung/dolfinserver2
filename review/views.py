@@ -364,8 +364,15 @@ def edit(request, box_id):
     # 저장 경로가 안 바뀐다 — 화질이 살아나고 크롭 밖 주변까지 보인다.
     geom = {"x0": crop.x0, "y0": crop.y0, "scale": crop.scale,
             "iw": img.width or 0, "ih": img.height or 0}
+    # **프롬프트 상자를 크롭 좌표로 함께 보낸다.** 마스크가 아예 없는 상자에서
+    # 사람이 윤곽을 처음부터 그릴 때 출발점이 된다 — 이 화면은 이미 있는 점을
+    # 끌고 변 가운데를 눌러 늘리는 식이라, **점이 하나도 없으면 누를 데가 없다.**
+    (bx1, by1), (bx2, by2) = geometry.to_crop(
+        [(box.x1, box.y1), (box.x2, box.y2)], crop)
     return render(request, "review/edit.html", {
         "tile": json.dumps(_tile(rules.resolve(box), crop), ensure_ascii=False),
+        "boxrect": json.dumps([round(bx1, 1), round(by1, 1),
+                               round(bx2, 1), round(by2, 1)]),
         "box": box, "img": img,
         "photo": f"/photos/{img.path}" if src.exists() else "",
         "geom": json.dumps(geom),
