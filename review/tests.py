@@ -773,3 +773,21 @@ class ReidTests(TestCase):
         m = re.search(r"let BOXES = (\[.*?\]);", html, re.S)
         self.assertIsNotNone(m)
         self.assertEqual([b["id"] for b in json.loads(m.group(1))], made)
+
+    def test_a_representative_can_be_chosen_and_cleared(self):
+        """**아무거나 하나를 보이면 하필 흐린 것이 대표가 된다** — 사람이 고른다."""
+        ind = self.box().json()
+        self.assign(individual=ind["id"], boxes=[self.a.id, self.b.id])
+        r = self.box(id=ind["id"], rep=self.b.id)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(Individual.objects.get(id=ind["id"]).rep_id, self.b.id)
+        self.box(id=ind["id"], rep=None)
+        self.assertIsNone(Individual.objects.get(id=ind["id"]).rep_id)
+
+    def test_the_page_carries_the_representative(self):
+        ind = self.box().json()
+        self.assign(individual=ind["id"], boxes=[self.a.id])
+        self.box(id=ind["id"], rep=self.a.id)
+        html = self.client.get("/reid").content.decode()
+        m = re.search(r"let BOXES = (\[.*?\]);", html, re.S)
+        self.assertEqual(json.loads(m.group(1))[0]["rep"], self.a.id)

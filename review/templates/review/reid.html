@@ -82,6 +82,15 @@
   @media (prefers-reduced-motion:reduce) {
     .fin.found { animation:none; box-shadow:0 0 0 6px #ff1f2ecc }
   }
+  /* **대표를 고르는 별표.** 한 상자만 보는 화면에서만 뜬다 — 전체 격자에서는
+     그 지느러미가 어느 상자 것인지가 아직 안 정해진 것이 대부분이다 */
+  .fin .star { display:none; position:absolute; left:5px; top:4px; z-index:3;
+    background:#000b; color:#ffd479; border:0; border-radius:5px;
+    font-size:calc(var(--fin) / 8); line-height:1; padding:2px 7px;
+    cursor:pointer }
+  #grid.solo .fin .star { display:block }
+  .fin .star:hover { background:#000e }
+  .fin.isrep { border-color:#ffd479 }
   .fin .r { position:absolute; right:4px; top:4px; background:#000b;
     color:#cfd8e3; font:11px "IBM Plex Mono",monospace; padding:1px 5px;
     border-radius:3px }
@@ -107,7 +116,9 @@
   #focusbar.on { display:flex }
   #focusbar b { color:var(--sel) }
   .box .thumbs { display:flex; flex-wrap:wrap; gap:3px; padding:0 8px 8px }
-  .box .thumbs img { width:var(--thumb); height:var(--thumb);
+  /* 대표 한 장만 보이므로 넉넉히 키운다 */
+  .box .thumbs img { width:calc(var(--thumb) * 1.7);
+                     height:calc(var(--thumb) * 1.7);
                      object-fit:cover; border-radius:4px; cursor:pointer;
                      border:2px solid transparent }
   .box .thumbs img:hover { border-color:var(--sel) }
@@ -194,6 +205,15 @@ let sel = new Set(), lastClick = null;
 // 움직이게만** 한다.
 let focusOn = null;      // 한 상자만 볼 때 그 상자 번호
 
+// 그 상자의 대표. 안 골랐으면 든 것 중 첫 번째 — 상자가 비어 보이면 안 된다
+function repOf(indId) {
+  if (!indId) return null;
+  const b = BOXES.find(x => x.id === indId);
+  if (!b) return null;
+  const has = ITEMS.filter(i => i.in === indId).map(i => i.id);
+  return has.includes(b.rep) ? b.rep : (has[0] ?? null);
+}
+
 function view() {
   const s = document.getElementById("sort").value;
   const side = document.getElementById("fside").value;
@@ -237,12 +257,16 @@ function draw() {
   const fs = name => Math.max(11, Math.min(fin / 1.9,
                        (fin - 10) / Math.max(2, name.length) / 0.62));
   document.getElementById("grid").innerHTML = view().map(i =>
-    `<div class="fin${sel.has(i.id) ? " sel" : ""}${i.in ? " done" : ""}"
+    `<div class="fin${sel.has(i.id) ? " sel" : ""}${i.in ? " done" : ""}${
+            repOf(i.in) === i.id ? " isrep" : ""}"
           draggable="true" data-id="${i.id}"
           data-box-name="${i.in ? (nm[i.in] || "") : ""}"
           style="${i.in ? `--nfs:${fs(nm[i.in] || "").toFixed(0)}px` : ""}"
           title="box ${i.id} · ${i.day} · 결각 ${i.rough}">
        <img src="/reid/chip/${i.id}.png" loading="lazy" alt="">
+       <button class="star" data-star="${i.id}"
+               title="이 사진을 상자의 대표로">${
+                 repOf(i.in) === i.id ? "★" : "☆"}</button>
        <span class="r">${i.rough}</span>
      </div>`).join("");
   document.getElementById("nleft").textContent = ITEMS.filter(i => !i.in).length;
@@ -262,10 +286,16 @@ function drawBoxes() {
           <button class="look" data-look="${b.id}"
                   title="이 상자만 격자에 크게 편다">보기</button>
         </div>
-        <div class="thumbs">${(mine[b.id] || []).map(id =>
-          `<img src="/reid/chip/${id}.png" data-id="${id}" data-from="${b.id}"
-                draggable="true" loading="lazy"
-                title="끌어서 다른 상자로 · 눌러서 격자에서 찾기">`).join("")}</div>
+        <div class="thumbs">${(() => {
+          const has = mine[b.id] || [];
+          if (!has.length) return "";
+          // **대표 한 장만.** 다 늘어놓으면 목록이 금세 길어져 상자 사이를
+          // 오가기 어렵다. 안 고른 상자는 든 것 중 첫 번째를 쓴다
+          const id = has.includes(b.rep) ? b.rep : has[0];
+          return `<img class="rep" src="/reid/chip/${id}.png" data-id="${id}"
+                       data-from="${b.id}" draggable="true" loading="lazy"
+                       title="끌어서 다른 상자로 · 눌러서 격자에서 찾기">`;
+        })()}</div>
       </div>`).join("");
   bindBoxes();
 }
@@ -345,7 +375,7 @@ function dropTarget(el) {
     if (el.id === "newbox") {
       const r = await post("/api/reid/box", {});
       if (!r) return;
-      BOXES.push({id: r.id, name: r.name, n: 0});
+      BOXES.push({id: r.id, name: r.name, n: 0, rep: null});
       await assign(r.id, ids);
       document.getElementById("boxes").scrollTop = 1e9;
       return;
@@ -361,6 +391,21 @@ function bindBoxes() {
   document.querySelectorAll("#boxes .box").forEach(el => {
     dropTarget(el);
     el.classList.toggle("focus", focusOn === +el.dataset.box);
+  });
+  document.querySelectorAll("#grid .star").forEach(st => {
+    st.onclick = async ev => {
+      ev.stopPropagation();          // 고르기와 겹치면 안 된다
+      const id = +st.dataset.star;
+      const it = ITEMS.find(x => x.id === id);
+      if (!it || !it.in) return;
+      const b = BOXES.find(x => x.id === it.in);
+      const next = (b && b.rep === id) ? null : id;
+      const r = await post("/api/reid/box", {id: it.in, rep: next});
+      if (!r) return;
+      if (b) b.rep = r.rep;
+      draw();
+    };
+    st.onpointerdown = ev => ev.stopPropagation();
   });
   document.querySelectorAll(".box .look").forEach(b => {
     b.onclick = () => {

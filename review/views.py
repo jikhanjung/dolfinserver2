@@ -408,7 +408,7 @@ def reid(request):
         # `상자 10` 이 `상자 2` 앞에 오고, 무엇보다 **이름을 고치는 순간 그
         # 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 눈으로 다시
         # 찾아야 한다. 분류는 만든 순서대로 쌓이는 일이라 그 순서가 맞다.
-        boxes = [{"id": i.id, "name": i.name,
+        boxes = [{"id": i.id, "name": i.name, "rep": i.rep_id,
                   "n": sum(1 for v in latest.values() if v == i.id)}
                  for i in Individual.objects.order_by("id")]
     return render(request, "review/reid.html", {
@@ -432,6 +432,16 @@ def reid_box(request):
     body = json.loads(request.body or "{}")
     ind_id = body.get("id")
     name = (body.get("name") or "").strip()
+    if ind_id and "rep" in body:
+        # **대표를 고른다.** 상자에 든 것을 다 보이면 목록이 길어지고, 아무거나
+        # 하나를 보이면 하필 흐린 것이 대표가 되어 누구인지 알아볼 수 없다
+        ind = Individual.objects.filter(id=ind_id).first()
+        if ind is None:
+            return JsonResponse({"error": "그런 상자가 없다"}, status=404)
+        rep = body["rep"]
+        ind.rep_id = int(rep) if rep else None
+        ind.save(update_fields=["rep"])
+        return JsonResponse({"id": ind.id, "rep": ind.rep_id})
     if ind_id:
         ind = Individual.objects.filter(id=ind_id).first()
         if ind is None:

@@ -359,6 +359,13 @@ class Individual(models.Model):
     # 옛 DB 의 이름과 이어졌다면 적어 둔다. 믿어서가 아니라 **되짚으려고** 다
     src_name = models.CharField(max_length=50, blank=True, default="",
                                 help_text="옛 dolfinrest_dolfinbox.boxname")
+    # **대표 사진.** 상자에 든 것을 다 늘어놓으면 목록이 금세 길어져 상자
+    # 사이를 오가기가 어려워진다. 그렇다고 아무거나 하나를 보이면 하필 물에
+    # 잠겼거나 흐린 것이 대표가 되어 **그 상자가 누구인지 알아볼 수 없다** —
+    # 그래서 사람이 고른다. 안 고르면 든 것 중 첫 번째를 쓴다.
+    rep = models.ForeignKey("Box", on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="represents",
+                            help_text="이 개체를 대표하는 상자(사진)")
     at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
