@@ -5,6 +5,7 @@
 `finseg.baseline` 에 있고 화면이 그것을 그대로 띄운다. 여기서 잡는 것은
 **둘이 갈라지는 것**이다.
 """
+import io
 import json
 import re
 
@@ -599,3 +600,84 @@ class DetectPageTests(TestCase):
         html = self.page()
         if 'id="drop"' in html:
             self.assertIn("imageSmoothingEnabled = false", html)
+
+
+class ImportDetectionsTests(TestCase):
+    """**다른 기계가 훑은 결과를 들이는 자리.**
+
+    옛 운영 DB 를 날짜별로 펴 보니 관찰일 255일 중 28일(사진의 0.78%)만 썼다.
+    나머지를 훑으려면 이 기계 말고도 돌아야 하고, 그 결과가 루프로 돌아올 길이
+    있어야 한다. `infer_boxes` 와 **같은 규칙**으로 들이는지가 여기서 잴 것이다.
+    """
+
+    def setUp(self):
+        from django.core.management import call_command
+        self.call = call_command
+        img = Image.objects.create(path="t/i.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.img = img
+        Box.objects.create(image=img, x1=100, y1=100, x2=200, y2=200,
+                           source="yolov5")
+
+    def scan(self, boxes, path="t/i.jpg", **kw):
+        import json as _json
+        import tempfile
+        d = {"model": "detect-v2", "conf": 0.05, "imgsz": 1280,
+             "photos": [{"path": path, "w": 1000, "h": 800, "boxes": boxes}]}
+        d.update(kw)
+        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        _json.dump(d, f)
+        f.close()
+        return f.name
+
+    def run_it(self, boxes, **kw):
+        out = io.StringIO()
+        self.call("import_detections", self.scan(boxes, **kw),
+                  src_db="", stdout=out)
+        return out.getvalue()
+
+    def test_a_new_box_is_taken(self):
+        self.run_it([[400, 400, 500, 500, 0.42]])
+        b = Box.objects.get(source="detect-v2")
+        self.assertEqual((b.x1, b.y1, b.x2, b.y2), (400, 400, 500, 500))
+        self.assertAlmostEqual(b.conf, 0.42)
+
+    def test_a_box_we_already_know_is_dropped(self):
+        """`새 검출` 은 **옛 상자와 안 겹치는 것뿐**이어야 한다."""
+        self.run_it([[102, 102, 198, 198, 0.9]])
+        self.assertFalse(Box.objects.filter(source="detect-v2").exists())
+
+    def test_a_narrow_box_inside_an_old_one_is_also_known(self):
+        """새 검출기가 좁게 따는 버릇이 있어 IoU 만 보면 남처럼 보인다."""
+        self.run_it([[140, 140, 160, 160, 0.9]])
+        self.assertFalse(Box.objects.filter(source="detect-v2").exists())
+
+    def test_two_boxes_in_one_scan_do_not_double_up(self):
+        self.run_it([[400, 400, 500, 500, 0.5], [402, 402, 498, 498, 0.4]])
+        self.assertEqual(Box.objects.filter(source="detect-v2").count(), 1)
+
+    def test_a_tiny_box_is_dropped(self):
+        self.run_it([[400, 400, 405, 405, 0.9]])
+        self.assertFalse(Box.objects.filter(source="detect-v2").exists())
+
+    def test_it_refuses_when_the_model_is_unnamed(self):
+        """어느 검출기가 낸 것인지 모르면 문턱별 정밀도를 되읽을 수 없다."""
+        from django.core.management.base import CommandError
+        f = self.scan([[400, 400, 500, 500, 0.5]])
+        import json as _json
+        d = _json.load(open(f)); d.pop("model")
+        _json.dump(d, open(f, "w"))
+        with self.assertRaises(CommandError):
+            self.call("import_detections", f, src_db="", stdout=io.StringIO())
+
+    def test_an_unknown_photo_is_made_and_the_missing_date_is_said(self):
+        """`obsdate` 가 비면 `export_detect` 의 날짜 가르기에 안 잡힌다."""
+        out = self.run_it([[400, 400, 500, 500, 0.5]], path="t/새것.jpg")
+        img = Image.objects.get(path="t/새것.jpg")
+        self.assertIsNone(img.obsdate)
+        self.assertIn("관찰일을 모른다", out)
+
+    def test_it_warns_when_the_old_db_is_absent(self):
+        """`fin.db` 만 보면 옛 검출기가 이미 찾은 것이 '새 검출' 로 둔갑한다."""
+        out = self.run_it([[400, 400, 500, 500, 0.5]])
+        self.assertIn("이미 아는 상자를 못 걸러낸다", out)

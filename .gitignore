@@ -35,3 +35,4 @@ devdocs/
 # 내려받은 것 — 저장소에 안 넣는다 (ort 26MB · 모델 37MB)
 static/vendor/
 static/models/
+bundles/

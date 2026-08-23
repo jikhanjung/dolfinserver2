@@ -98,6 +98,9 @@ class Command(BaseCommand):
         # **이름은 자료에서 딴다.** `fin-det-v2` 가 `det-v1` 로 돌린 두 번째
         # 실험이었는데 이름만 보면 `det-v2` 로 돌린 것처럼 읽혔다 — 자료 판과
         # 학습 판이 각각 번호를 갖는 순간 헷갈린다.
+        # **이름을 run 기록에 남긴다.** 안 남기면 나중에 그 run 의 가중치가
+        # 어느 디렉토리인지 되짚을 수 없다 — `--name` 을 준 옛 run 들(`seg-v2-s`)
+        # 에서 실제로 못 찾아 `export_bundle` 이 걸렸다
         name = o["name"] or f"{data.name}-{task[:3]}"
         w = self.stdout.write
         w(f"자료   {data}  ({task})")
@@ -107,7 +110,7 @@ class Command(BaseCommand):
 
         from ultralytics import YOLO
         run = runs.start("train", model=model, params={
-            "data": str(data), "task": task,
+            "data": str(data), "task": task, "name": name,
             "epochs": o["epochs"], "imgsz": o["imgsz"],
             "batch": o["batch"], "manifest_git_sha": m["git_sha"],
             "mask_runs": m.get("mask_runs"), "val_date": m["val_date"], **aug})
