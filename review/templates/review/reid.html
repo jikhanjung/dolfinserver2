@@ -56,9 +56,12 @@
   .fin.done::after { content:attr(data-box-name); position:absolute;
     left:0; right:0; top:50%; transform:translateY(-50%);
     color:#fff; font-weight:700; text-align:center;
-    font-size:calc(var(--fin) / 5.5); line-height:1.15; padding:0 4px;
-    letter-spacing:-.01em;
-    text-shadow:0 2px 7px #000, 0 0 4px #000, 0 0 12px #000;
+    /* **글자 크기를 이름 길이에 맞춘다.** 그냥 세 배로 키우면 `상자 12` 같은
+       이름이 칸을 넘어 잘린다 — 커지되 안에 들어와야 읽힌다. 짧은 이름은
+       칸을 꽉 채우고, 길어질수록 저절로 작아진다 */
+    font-size:var(--nfs, calc(var(--fin) / 5.5));
+    line-height:1.05; padding:0 3px; letter-spacing:-.02em;
+    text-shadow:0 2px 8px #000, 0 0 5px #000, 0 0 14px #000;
     overflow:hidden; white-space:nowrap; text-overflow:ellipsis }
   /* **찾아 준 것이 눈에 띄어야 한다.** 상자에서 눌러 격자로 보냈는데 그것이
      어느 칸인지 스스로 찾아야 한다면 보내 준 뜻이 없다 — 흐려진 칸들
@@ -183,10 +186,16 @@ function paint() {
 
 function draw() {
   const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
+  const fin = parseInt(getComputedStyle(document.documentElement)
+                       .getPropertyValue("--fin")) || 220;
+  // 한 글자를 대략 0.62배 너비로 보고 칸에 맞춘다. 위로는 칸의 절반까지
+  const fs = name => Math.max(11, Math.min(fin / 1.9,
+                       (fin - 10) / Math.max(2, name.length) / 0.62));
   document.getElementById("grid").innerHTML = view().map(i =>
     `<div class="fin${sel.has(i.id) ? " sel" : ""}${i.in ? " done" : ""}"
           draggable="true" data-id="${i.id}"
           data-box-name="${i.in ? (nm[i.in] || "") : ""}"
+          style="${i.in ? `--nfs:${fs(nm[i.in] || "").toFixed(0)}px` : ""}"
           title="box ${i.id} · ${i.day} · 결각 ${i.rough}">
        <img src="/reid/chip/${i.id}.png" loading="lazy" alt="">
        <span class="r">${i.rough}</span>
@@ -365,7 +374,7 @@ const setSize = () => {
   document.documentElement.style.setProperty("--fin", size.value + "px");
   localStorage.setItem("finSize", size.value);
 };
-size.oninput = setSize;
+size.oninput = () => { setSize(); draw(); };
 setSize();
 
 // 상자 쪽도 같이 — 옆 칸 너비는 썸네일 넉 줄이 들어가게 따라 넓힌다.
