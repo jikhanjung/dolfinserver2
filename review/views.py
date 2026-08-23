@@ -389,7 +389,8 @@ def reid(request):
 
     root = Path(settings.BASE_DIR) / "reid" / "v1"
     groups_f = root / "groups.json"
-    ready = groups_f.exists() and (root / "chips").is_dir()
+    ready = groups_f.exists() and ((root / "look").is_dir()
+                                   or (root / "chips").is_dir())
     groups = []
     if ready:
         data = json.loads(groups_f.read_text(encoding="utf-8"))
@@ -405,6 +406,8 @@ def reid(request):
                 continue
             groups.append({
                 "side": g.get("side", ""),
+                "kind": g.get("kind", "cluster"),
+                "rough": g.get("rough"),
                 "spread": g.get("spread"),
                 "boxes": [{"id": b,
                            "day": str(boxes[b].image.obsdate) if b in boxes else "",
@@ -412,7 +415,9 @@ def reid(request):
                           if b in boxes],
                 "left": len(left),
             })
-        groups.sort(key=lambda g: -len(g["boxes"]))
+        # **특징적인 것부터.** 앞날이 패였거나 뒷날이 톱니인 개체는 사람이
+        # 가장 쉽게 알아보는 것이고, 첫 정답을 만들기에 값이 가장 크다.
+        # 순서는 만들 때 이미 정해져 있으므로(`rough` 내림차순) 그대로 둔다
     return render(request, "review/reid.html", {
         "ready": ready,
         "groups": json.dumps(groups, ensure_ascii=False),
@@ -456,12 +461,24 @@ def reid_save(request):
 
 @require_GET
 def reid_chip(request, box_id):
-    """조각 한 장. `reid/v1/chips/` 에서 낸다 — 저장소 밖이라 정적 서빙이 없다."""
-    f = (Path(settings.BASE_DIR) / "reid" / "v1" / "chips"
-         / f"{int(box_id):08d}.png")
-    if not f.exists():
-        raise Http404("그 조각이 없다")
-    return FileResponse(open(f, "rb"), content_type="image/png")
+    """조각 한 장. 저장소 밖이라 정적 서빙이 없어 여기서 낸다.
+
+    **사람이 보는 것과 모델이 먹는 것이 다르다.** 사람에게는 색과 배경이 있는
+    큰 그림(`look/`)을 낸다 — 지느러미가 물에 얼마나 잠겼는지, 빛이 어느
+    쪽에서 오는지, 옆에 다른 개체가 있는지가 다 판단에 든다. 모델이 먹는
+    조각(`chips/`)은 배경을 지운 회색조이고, 그것은 **그날 바다를 안 배우게**
+    하려는 것이다.
+
+    정렬은 둘이 같다(`reid.frame`). 사람이 "이건 달라" 라고 한 것이 모델에게는
+    다른 자리였다면 그 판정을 못 쓴다.
+    """
+    root = Path(settings.BASE_DIR) / "reid" / "v1"
+    for sub_dir, ext, mime in (("look", "jpg", "image/jpeg"),
+                               ("chips", "png", "image/png")):
+        f = root / sub_dir / f"{int(box_id):08d}.{ext}"
+        if f.exists():
+            return FileResponse(open(f, "rb"), content_type=mime)
+    raise Http404("그 조각이 없다")
 
 
 @require_GET

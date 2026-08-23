@@ -336,10 +336,22 @@ def frame(base, pts, facing):
     return np.hstack([A, t.reshape(2, 1)]), chord
 
 
-def chip(state, crop, size=CHIP, pad=CHIP_PAD):
-    """상자 하나 → **회전·크기를 맞추고 배경을 지운** 회색조 조각.
+def chip(state, crop, size=CHIP, pad=CHIP_PAD, color=False, cut=True):
+    """상자 하나 → **회전·크기를 맞춘** 조각.
 
-    돌려주는 것은 `(size, size)` float32 (0~1). 못 만들면 `None`.
+    - `cut=True` (기본) — 마스크 밖을 지운다. **모델이 먹는 것**이다. 배경은
+      그날 바다라, 안 지우면 같은 날 찍힌 것끼리 물빛이 닮아 개체보다 먼저
+      묶인다
+    - `cut=False`, `color=True` — **사람이 볼 것**이다. 배경과 색이 있어야
+      판단이 쉽다. 지느러미가 물에 얼마나 잠겼는지, 빛이 어느 쪽에서 오는지,
+      옆에 다른 개체가 있는지가 다 판단에 든다
+
+    **정렬은 두 경우가 같다.** 같은 `frame()` 을 쓰므로 사람이 보는 그림과
+    모델이 먹는 그림이 어긋나지 않는다 — 사람이 "이건 달라" 라고 한 것이
+    모델에게는 다른 자리였다면 그 판정을 못 쓴다.
+
+    돌려주는 것은 `(size, size)` 또는 `(size, size, 3)` float32 (0~1).
+    못 만들면 `None`.
     """
     import cv2
     from django.conf import settings
@@ -374,9 +386,13 @@ def chip(state, crop, size=CHIP, pad=CHIP_PAD):
     if p_img is None or not p_img.exists():
         # 그림이 없으면 **실루엣만** 낸다 — 아무것도 안 내는 것보다 낫다
         return (m > 0).astype(np.float32)
-    img = np.asarray(Image.open(p_img).convert("L"), np.uint8)
+    img = np.asarray(Image.open(p_img).convert("RGB" if color else "L"), np.uint8)
     warp = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LINEAR,
                           borderValue=0)
+    if not cut:
+        return warp.astype(np.float32) / 255.0
+    if warp.ndim == 3:
+        m = m[:, :, None]
     return np.where(m > 0, warp, 0).astype(np.float32) / 255.0
 
 
@@ -416,3 +432,84 @@ def decided(box_ids):
     from finseg.models import Identification
     return set(Identification.objects.filter(box_id__in=box_ids)
                .values_list("box_id", flat=True))
+
+
+# ---- 얼마나 특징적인가 --------------------------------------------------------
+#
+# **특이한 개체가 오히려 안 보인다.** 묶음은 둘 이상 든 것만 내는데, 특이하다는
+# 것은 남과 안 닮았다는 뜻이라 혼자 남기 쉽다. 그런데 앞날이 패였거나 뒷날이
+# 많이 울퉁불퉁한 개체가 **사람이 가장 쉽게 알아보는 것**이고, 첫 정답을
+# 만들기에 가장 값이 크다.
+#
+# 그래서 결각을 재서 **특징적인 것부터** 보여 준다. 재는 법은 볼록껍질과의
+# 차이다 — 파인 자리가 곧 결각이고, 그 깊이가 곧 특징의 크기다.
+
+
+def roughness(state, crop, n=256, smooth=0.08):
+    """윤곽이 얼마나 **울퉁불퉁한가** → dict. 길이는 밑동 현 기준이다.
+
+    ## 볼록껍질로 재면 안 된다 — 실측
+
+    처음에 `convexityDefects` 로 쟀다. 그랬더니 깊이 중앙값이 **0.187**(현의
+    19%)이 나오고 659개 중 641개가 "특징적" 이었다. 진짜 결각은 현의 2~5%다.
+    볼록껍질과의 차이는 결각이 아니라 **끝에서 밑동으로 내려오는 자연스러운
+    휨**을 재고 있었다. 다 특징적이면 아무것도 특징적이지 않다.
+
+    그래서 **자기 자신을 매끄럽게 편 것과 견준다.** 낮은 주파수(전체 모양)를
+    빼면 높은 주파수(패임·톱니)만 남는다. `smooth` 는 미는 창의 크기이고
+    윤곽 길이의 비다 — 크면 큰 휨까지 결각으로 세고, 작으면 마스크의
+    들쭉날쭉함까지 센다.
+
+    앞날·뒷날을 갈라 낸다. **앞날이 패인 개체와 뒷날이 톱니인 개체는 사람이
+    가장 쉽게 알아보는 둘**이고, 첫 정답을 만들기에 값이 가장 크다.
+    """
+    from finseg import rules
+
+    pts = rules.final_points(state, crop)
+    if len(pts) < 8:
+        return None
+    base = geometry.to_crop(geometry.loads(state["base_line"]), crop)
+    if len(base) != 2:
+        return None
+    F, chord = frame(base, pts, state["facing"])
+    if F is None:
+        return None
+    q = (np.asarray(pts, float) @ F[:, :2].T) + F[:, 2]
+
+    # 밑동 현 위(위쪽 윤곽)만 본다 — 아래는 우리가 그은 직선이라 뜻이 없다
+    tip = int(np.argmax(q[:, 1]))
+    # 호 길이로 고르게 다시 샘플한다. 꼭짓점 간격이 들쭉날쭉해서 그냥 쓰면
+    # 촘촘한 데를 무겁게 센다
+    closed = np.vstack([q, q[:1]])
+    seg = np.hypot(*np.diff(closed, axis=0).T)
+    t = np.concatenate([[0.0], np.cumsum(seg)])
+    if t[-1] < 1e-6:
+        return None
+    want = np.linspace(0, t[-1], n, endpoint=False)
+    r = np.stack([np.interp(want, t, closed[:, 0]),
+                  np.interp(want, t, closed[:, 1])], 1)
+
+    # 고리를 따라 미는 평균 — 낮은 주파수(전체 모양)
+    k = max(3, int(round(n * smooth)) | 1)
+    pad = np.vstack([r[-(k // 2):], r, r[:k // 2]])
+    ker = np.ones(k) / k
+    low = np.stack([np.convolve(pad[:, 0], ker, "valid"),
+                    np.convolve(pad[:, 1], ker, "valid")], 1)[:n]
+    dev = np.hypot(*(r - low).T)          # 높은 주파수만 남는다
+
+    # 밑동 아래(우리가 그은 직선)는 뺀다
+    up = r[:, 1] > 0.02
+    if up.sum() < 8:
+        return None
+    tx = float(q[tip, 0])
+    front = up & (r[:, 0] < tx)
+    rear = up & (r[:, 0] >= tx)
+    f = lambda m: (float(dev[m].mean()), float(dev[m].max())) if m.sum() > 3 \
+        else (0.0, 0.0)
+    fm, fx = f(front)
+    rm, rx = f(rear)
+    return {"chord": chord,
+            "front_mean": fm, "front_max": fx,
+            "rear_mean": rm, "rear_max": rx,
+            "total": float(dev[up].mean()),
+            "max": float(dev[up].max())}
