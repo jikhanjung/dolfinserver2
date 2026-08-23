@@ -168,8 +168,8 @@
   <span class="stat">상자 <input type="range" id="tsize" min="44" max="160"
     step="4" value="88"></span>
   <span style="flex:1"></span>
-  <span class="stat"><kbd>클릭</kbd>고르기 <kbd>Shift</kbd>범위
-    <kbd>Ctrl</kbd>더하기 <kbd>우클릭</kbd>원본 <kbd>끌기</kbd>상자로</span>
+  <span class="stat"><kbd>클릭</kbd>더하기·빼기 <kbd>Shift</kbd>범위
+    <kbd>빈 곳</kbd>해제 <kbd>우클릭</kbd>원본 <kbd>끌기</kbd>상자로</span>
 </header>
 
 {% if not ready %}
@@ -318,13 +318,20 @@ function drawBoxes() {
 //
 // **누르는 순간 골라진다.** 떼야 골라지면 끌기 시작할 때까지 무엇이 잡혔는지
 // 안 보이고, 여러 장을 끌 때 특히 불안하다.
-let downOn = null;
+// **누르면 쌓인다.** 이 화면에서 가장 잦은 일이 같은 개체 여러 장을 골라
+// 한 번에 넣는 것이라, 하나 고를 때마다 앞의 것이 풀리면 못 쓴다. 그래서
+// 누를 때마다 더하고, **이미 골라진 것을 다시 누르면 뗄 때 푼다.**
+//
+// 누를 때 바로 안 푸는 이유는 무리를 잡아 끌 수 있어야 하기 때문이다 —
+// 무리 안의 하나를 눌러 끌기 시작하는데 그때 풀리면 그 하나가 빠진다.
+let downOn = null, wasSel = false;
 document.getElementById("grid").onpointerdown = e => {
   if (e.button !== 0) return;
   const f = e.target.closest(".fin");
   if (!f) { sel.clear(); paint(); downOn = null; return; }
   const id = +f.dataset.id;
   downOn = id;
+  wasSel = sel.has(id);         // **누르기 전에** 이미 골라져 있었나
   if (e.shiftKey && lastClick !== null) {
     // **범위로 고른다.** 닮은 순서로 이웃해 있는 것을 하나씩 누르게 하면
     // 손이 너무 많이 간다 — 이 화면의 목적이 한 번에 넣는 것이다
@@ -332,24 +339,21 @@ document.getElementById("grid").onpointerdown = e => {
     const a = v.indexOf(lastClick), b = v.indexOf(id);
     if (a >= 0 && b >= 0)
       v.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => sel.add(x));
-  } else if (e.ctrlKey || e.metaKey) {
-    sel.has(id) ? sel.delete(id) : sel.add(id);
-  } else if (!sel.has(id)) {
-    sel.clear(); sel.add(id);
+  } else if (!wasSel) {
+    sel.add(id);
   }
-  // **이미 골라져 있으면 그대로 둔다** — 무리를 잡아 끌 수 있어야 한다.
-  // 하나만 골라 둔 것을 다시 눌러 푸는 것은 뗄 때 한다(아래)
   lastClick = id;
   paint();
 };
 
-// 끌지 않고 떼었을 때만 푼다 — 끌기와 구별해야 한다
+// 끌지 않고 떼었고, **누르기 전에 이미 골라져 있던 것**이면 푼다.
+// 처음에 `sel.size === 1` 로 판단했더니 방금 고른 것까지 그대로 풀렸다 —
+// 누를 때 고른 것과 원래 골라져 있던 것을 구별해야 한다
 document.getElementById("grid").onclick = e => {
   const f = e.target.closest(".fin");
   if (!f || dragging) { dragging = false; return; }
   const id = +f.dataset.id;
-  if (!e.shiftKey && !e.ctrlKey && !e.metaKey
-      && downOn === id && sel.size === 1 && sel.has(id)) {
+  if (!e.shiftKey && downOn === id && wasSel) {
     sel.delete(id);
     paint();
   }
