@@ -53,12 +53,18 @@
 <div class="warn">
   <b>받아 와야 하는 것이 없다.</b> 둘 다 저장소 밖이라 <code>.gitignore</code> 다.
   {% if not ort_ok %}
-  <p><code>onnxruntime-web</code> (26MB):</p>
+  <p><code>onnxruntime-web</code> — 없는 것:
+     <code>{{ missing|join:"</code> <code>" }}</code></p>
   <pre>mkdir -p static/vendor/ort &amp;&amp; cd static/vendor/ort
 B=https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist
-curl -O $B/ort.webgpu.bundle.min.mjs
-curl -O $B/ort-wasm-simd-threaded.jsep.mjs
-curl -O $B/ort-wasm-simd-threaded.jsep.wasm</pre>
+for f in ort.webgpu.bundle.min.mjs \
+         ort-wasm-simd-threaded.asyncify.mjs ort-wasm-simd-threaded.asyncify.wasm \
+         ort-wasm-simd-threaded.mjs ort-wasm-simd-threaded.wasm; do
+  curl -O $B/$f
+done</pre>
+  <p><b>`.wasm` 이름은 판마다 바뀐다</b> — 1.27 은 <code>asyncify</code> 고
+     그 앞은 <code>jsep</code> 이었다. 하나라도 없으면 브라우저는
+     <code>no available backend found</code> 만 내고 무엇이 빠졌는지는 안 말한다.</p>
   {% endif %}
   {% if not model_ok %}
   <p><code>static/models/detect-v2.onnx</code> (37MB):</p>
@@ -87,15 +93,42 @@ ort.env.wasm.wasmPaths = "{% static 'vendor/ort/' %}";
 const stat = document.getElementById("stat");
 const say = h => stat.innerHTML = h;
 
-let session = null, backend = "";
+// **WebGPU 는 보안 컨텍스트에서만 된다** — https 이거나 localhost 여야 한다.
+// LAN 주소(예: 172.x)로 열면 `navigator.gpu` 가 아예 없고, 그러면 조용히
+// WASM(CPU)으로 떨어져 **열 배 넘게 느려진다.** 그 사실을 화면이 말하지
+// 않으면 "원래 이런가 보다" 하고 넘어간다.
+const why = !window.isSecureContext
+  ? `보안 컨텍스트가 아니다 — <b>127.0.0.1</b> 로 열면 WebGPU 를 쓴다`
+  : !navigator.gpu
+  ? "이 브라우저에 WebGPU 가 없다"
+  : "";
+
+let session = null, backend = "", warmMs = 0;
 try {
-  session = await ort.InferenceSession.create(
-    "{% static 'models/detect-v2.onnx' %}",
-    {executionProviders: ["webgpu", "wasm"], graphOptimizationLevel: "all"});
-  // 어느 쪽으로 잡혔는지 화면이 말해야 한다 — WebGPU 가 아니면 훨씬 느리고,
-  // 그 사실을 모르면 "원래 이런가 보다" 하고 넘어간다
-  backend = navigator.gpu ? "WebGPU" : "WASM (CPU)";
-  say(`모델 준비됨 · <b>${backend}</b>`);
+  // **어느 쪽으로 잡혔는지 짐작하지 않는다.** `navigator.gpu` 가 있다고
+  // WebGPU 로 도는 것이 아니다 — 만들어 보고 되는 쪽을 적는다
+  try {
+    session = await ort.InferenceSession.create(
+      "{% static 'models/detect-v2.onnx' %}",
+      {executionProviders: ["webgpu"], graphOptimizationLevel: "all"});
+    backend = "WebGPU";
+  } catch (gpuErr) {
+    session = await ort.InferenceSession.create(
+      "{% static 'models/detect-v2.onnx' %}",
+      {executionProviders: ["wasm"], graphOptimizationLevel: "all"});
+    backend = "WASM (CPU)";
+  }
+  // **예열한다.** WebGPU 는 첫 추론에서 셰이더를 다 컴파일해서, 그 한 번이
+  // 실제 속도의 몇 배가 된다. 예열 없이 재면 "GPU 가 CPU 보다 별로 안 빠르다"
+  // 는 틀린 결론이 나온다 — 실제로 그렇게 읽을 뻔했다.
+  say(`예열 중… (<b>${backend}</b> 셰이더 컴파일)`);
+  const t0 = performance.now();
+  const zero = new ort.Tensor("float32",
+      new Float32Array(IMGSZ * IMGSZ * 3), [1, 3, IMGSZ, IMGSZ]);
+  await session.run({[session.inputNames[0]]: zero});
+  warmMs = performance.now() - t0;
+  say(`모델 준비됨 · <b>${backend}</b> · 예열 ${warmMs.toFixed(0)}ms`
+    + (backend !== "WebGPU" && why ? ` · ${why}` : ""));
 } catch (e) {
   say(`<span style="color:var(--none)">모델을 못 읽었다 — ${e}</span>`);
 }
@@ -188,15 +221,22 @@ async function run(file) {
   document.getElementById("wrap").hidden = false;
   document.getElementById("drop").hidden = true;
   say(`돌리는 중… (${img.naturalWidth}×${img.naturalHeight})`);
+  // **전처리와 추론을 따로 잰다.** 5520×3680 을 1280 으로 줄이고 화소
+  // 490만 개를 훑는 일도 공짜가 아니라, 한 숫자로 뭉치면 어디가 무거운지
+  // 모른 채로 GPU 탓을 하게 된다
+  const tp = performance.now();
   const {t, meta: m} = toTensor(img);
+  const preMs = performance.now() - tp;
   meta = m;
   const t0 = performance.now();
   const r = await session.run({[session.inputNames[0]]: t});
   const ms = performance.now() - t0;
   raw = r[session.outputNames[0]];
   const n = decode();
-  say(`<b>${backend}</b> · ${ms.toFixed(0)}ms · 상자 <b>${n}</b> `
-    + `· ${img.naturalWidth}×${img.naturalHeight}`);
+  say(`<b>${backend}</b> · 추론 <b>${ms.toFixed(0)}ms</b>`
+    + ` · 전처리 ${preMs.toFixed(0)}ms · 상자 <b>${n}</b>`
+    + ` · ${img.naturalWidth}×${img.naturalHeight}`
+    + (backend !== "WebGPU" && why ? ` · <span style="color:var(--warn)">${why}</span>` : ""));
 }
 
 document.getElementById("file").onchange = e => {

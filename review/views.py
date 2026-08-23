@@ -390,9 +390,20 @@ def detect(request):
     """
     model = Path(settings.BASE_DIR) / "static" / "models" / "detect-v2.onnx"
     ort = Path(settings.BASE_DIR) / "static" / "vendor" / "ort"
+    # **`.mjs` 하나만 보고 있으면 안 된다.** 묶음은 실행 중에 `.wasm` 을 이름으로
+    # 불러오고, 그 이름이 판마다 바뀐다(1.27 은 `jsep` 이 아니라 `asyncify` 다).
+    # 하나라도 없으면 화면이 "no available backend found" 만 내는데 그것만 보고는
+    # 무엇이 빠졌는지 알 수 없다 — 여기서 미리 세어 이름을 대 준다.
+    need = ["ort.webgpu.bundle.min.mjs",
+            "ort-wasm-simd-threaded.asyncify.mjs",
+            "ort-wasm-simd-threaded.asyncify.wasm",
+            "ort-wasm-simd-threaded.mjs",
+            "ort-wasm-simd-threaded.wasm"]
+    missing = [f for f in need if not (ort / f).exists()]
     return render(request, "review/detect.html", {
         "model_ok": model.exists(),
-        "ort_ok": (ort / "ort.webgpu.bundle.min.mjs").exists(),
+        "ort_ok": not missing,
+        "missing": missing,
         "imgsz": onnxdet.IMGSZ,
         "conf": onnxdet.CONF,
         "iou": onnxdet.IOU,
