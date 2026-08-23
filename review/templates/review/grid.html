@@ -75,8 +75,15 @@
   /* **새 검출기가 낸 상자는 한눈에 갈린다.** 마스크가 없어 윤곽선이 안 그려지는데,
      그것이 "분할이 실패했다" 로 읽히면 안 된다 — 아직 안 딴 것이다 */
   .tile[data-src]:not([data-src="yolov5"]):not([data-src=""]) { border-style:dashed; }
-  .src { position:absolute; left:5px; top:5px; font-size:10px; color:#0b0f14;
+  /* **왼쪽 아래로 둔다.** 왼쪽 위는 `.lab`(분류) 자리라, 새 검출기가 낸 상자를
+     지느러미가 아니라고 판정하면 둘이 같은 자리에 겹쳐 찍혔다 — 판정이 배지에
+     가려 안 보였다. 겹치는 것은 화면이 자기 상태를 안 말하는 것과 같다 */
+  .src { position:absolute; left:5px; bottom:5px; font-size:10px; color:#0b0f14;
          background:#cfd8e3; border-radius:3px; padding:0 4px; opacity:.85; }
+  /* 옛 표시(`.hint`)는 옛 상자에만 붙어 배지와 같이 뜰 일이 없지만, 생기면
+     비켜 준다 — 안 그러면 또 겹친다 */
+  .tile[data-src]:not([data-src="yolov5"]):not([data-src=""]) .hint
+    { bottom:23px; }
   .conf { position:absolute; right:5px; bottom:5px; font-size:10px; color:#cfd8e3;
           background:#000b; padding:1px 6px; border-radius:5px; }
   /* **보류 — 판단을 미룬 칸.** 저장할 때 이 칸만 payload 에서 빠져 `PENDING`
