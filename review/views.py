@@ -15,6 +15,7 @@ SAM2 는 그 안의 것 하나를 딸 뿐이라, 사람이 하는 일은 틀린 
 """
 import json
 import re
+from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
@@ -26,7 +27,7 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from finseg import baseline, evaluate, geometry, rules
+from finseg import baseline, evaluate, geometry, onnxdet, rules
 from finseg.models import (BASE_PARTIAL, CLASS_KEYS, CLASSES, EDGES, FACING,
                            Box, Crop, Mask, Review, Run)
 
@@ -366,6 +367,37 @@ def save(request):
             reviewer=request.user if request.user.is_authenticated else None)
         n += 1
     return JsonResponse({"saved": n, "progress": dict(rules.progress())})
+
+
+@require_GET
+def detect(request):
+    """**브라우저에서 검출기를 돌린다** — 사진을 떨구면 상자를 그린다.
+
+    서버 GPU 를 안 쓴다. 2080ti 는 학습이 잡고 있는 시간이 길고, 그동안 서버
+    추론은 줄을 서야 한다 — `onnxruntime-web` 이 보는 사람의 GPU(WebGPU)를
+    쓰면 그와 무관해진다.
+
+    **NMS 는 JS 가 한다.** 정렬하고 반복문으로 지우는 일이라 GPU 셰이더에 안
+    맞아서, 모델 안에 넣으면 그 연산자만 CPU 로 떨어져 이득이 깎인다. 밖에
+    두면 **문턱을 다시 안 돌리고 바꿔 볼 수 있다**는 값이 따라온다 — 이
+    프로젝트에서 `conf` 를 어디로 둘지가 계속 문제였다.
+
+    규칙의 원본은 `finseg/onnxdet.py` 다. 여기 JS 는 그것을 옮긴 것이고,
+    **어긋나면 파이썬 쪽을 고치고 여기를 따라오게 한다.**
+
+    받아 온 것 둘이 없으면 화면이 왜 없는지 말한다 — 조용히 빈 화면을 내면
+    무엇이 빠졌는지 알 길이 없다.
+    """
+    model = Path(settings.BASE_DIR) / "static" / "models" / "detect-v2.onnx"
+    ort = Path(settings.BASE_DIR) / "static" / "vendor" / "ort"
+    return render(request, "review/detect.html", {
+        "model_ok": model.exists(),
+        "ort_ok": (ort / "ort.webgpu.bundle.min.mjs").exists(),
+        "imgsz": onnxdet.IMGSZ,
+        "conf": onnxdet.CONF,
+        "iou": onnxdet.IOU,
+        "pad": onnxdet.PAD,
+    })
 
 
 @require_GET

@@ -8,6 +8,7 @@ urlpatterns = [
     path("api/review", views.save, name="save"),
     path("api/progress", views.progress, name="progress"),
     path("compare", views.compare, name="compare"),
+    path("detect", views.detect, name="detect"),
     path("photo/<int:box_id>", views.photo, name="photo"),
     path("edit/<int:box_id>", views.edit, name="edit"),
 ]

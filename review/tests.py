@@ -8,9 +8,11 @@
 import json
 import re
 
+import numpy as np
+
 from django.test import SimpleTestCase, TestCase
 
-from finseg import baseline, geometry, rules
+from finseg import baseline, geometry, onnxdet, rules
 from finseg.models import Box, Crop, Image, Mask, Review, Run
 
 BLOCK = re.compile(r'<div class="rule">(.*?)</div>', re.S)
@@ -467,3 +469,133 @@ class HandDrawnIsAnAnswerTests(TestCase):
         rv = Review.objects.create(box=self.box, cls="none",
                                    polygon="20,20 50,20 35,50")
         self.assertEqual(rules.label_of(rv), rules.BACKGROUND)
+
+
+class OnnxPreprocessTests(SimpleTestCase):
+    """**전처리가 어긋나도 에러가 안 난다** — 상자가 조금 밀린 채로 나올 뿐이다.
+
+    `.onnx` 하나를 파이썬·브라우저·(나중에) 데스크톱이 함께 쓰는데, 셋이 같은
+    상자를 내야 한다. `finseg.onnxdet` 이 그 기준이고 여기서 그 산수를 잰다 —
+    좌표 사상을 `geometry.py` 한 곳에만 두는 것과 같은 이유다.
+
+    모델을 안 부른다. 부르는 시험은 가중치와 GPU 를 요구해서 `manage.py test`
+    가 0.2초에 끝나는 것을 깬다 — 그쪽은 따로 돌린다.
+    """
+
+    def test_letterbox_keeps_the_aspect_and_centers(self):
+        r, dx, dy, nw, nh = onnxdet.letterbox(4928, 3280, 1280)
+        self.assertAlmostEqual(r, 1280 / 4928)
+        self.assertEqual(nw, 1280)              # 긴 변이 꽉 찬다
+        self.assertEqual(dx, 0)
+        self.assertEqual(nh, round(3280 * r))
+        self.assertEqual(dy, (1280 - nh) // 2)  # 짧은 변은 가운데
+        self.assertAlmostEqual(nw / nh, 4928 / 3280, places=2)
+
+    def test_a_square_photo_fills_the_canvas(self):
+        r, dx, dy, nw, nh = onnxdet.letterbox(640, 640, 1280)
+        self.assertEqual((dx, dy, nw, nh), (0, 0, 1280, 1280))
+
+    def test_nms_drops_the_overlapping_and_keeps_the_far_one(self):
+        boxes = np.array([[100., 100., 200., 200.],   # 확신 0.9
+                          [105., 105., 205., 205.],   # 거의 같은 자리
+                          [400., 400., 500., 500.]])  # 다른 자리
+        keep = onnxdet.nms(boxes, np.array([0.9, 0.8, 0.7]), 0.7)
+        self.assertEqual(sorted(keep), [0, 2])
+
+    def test_nms_keeps_neighbours_that_merely_touch(self):
+        """돌고래는 무리로 다녀 지느러미가 붙는다 — 너무 지우면 손해다."""
+        boxes = np.array([[100., 100., 200., 200.],
+                          [180., 100., 280., 200.]])   # IoU 약 0.11
+        self.assertEqual(sorted(onnxdet.nms(boxes, np.array([0.9, 0.8]), 0.7)),
+                         [0, 1])
+
+    def test_boxes_come_back_in_original_coordinates(self):
+        """**여백을 빼고 배율로 나눈다.** 이 두 줄이 어긋나면 상자가 밀린다."""
+        w, h = 4928, 3280
+        r, dx, dy, _, _ = onnxdet.letterbox(w, h, 1280)
+        # 원본 한가운데의 상자를 레터박스 좌표로 옮겨 모델 출력인 척 만든다
+        want = (2000.0, 1500.0, 2400.0, 1800.0)
+        cx = ((want[0] + want[2]) / 2) * r + dx
+        cy = ((want[1] + want[3]) / 2) * r + dy
+        bw, bh = (want[2] - want[0]) * r, (want[3] - want[1]) * r
+        out = np.array([[[cx], [cy], [bw], [bh], [0.9]]])   # (1, 5, 1)
+        got = onnxdet.postprocess(out, (r, dx, dy, w, h))
+        self.assertEqual(len(got), 1)
+        for a, b in zip(got[0][:4], want):
+            self.assertAlmostEqual(a, b, places=1)
+
+    def test_low_confidence_is_dropped_before_nms(self):
+        out = np.array([[[100.], [100.], [50.], [50.], [0.05]]])
+        meta = (1.0, 0, 0, 1280, 1280)
+        self.assertEqual(onnxdet.postprocess(out, meta, conf_thres=0.25), [])
+        self.assertEqual(len(onnxdet.postprocess(out, meta, conf_thres=0.01)), 1)
+
+    def test_it_takes_either_axis_order(self):
+        """내보내기 판에 따라 `(1,5,N)` 이기도 `(1,N,5)` 이기도 하다."""
+        meta = (1.0, 0, 0, 1280, 1280)
+        a = np.array([[[100.], [100.], [50.], [50.], [0.9]]])      # (1,5,1)
+        b = np.array([[[100., 100., 50., 50., 0.9]]])              # (1,1,5)
+        self.assertEqual(onnxdet.postprocess(a, meta),
+                         onnxdet.postprocess(b, meta))
+
+    def test_downscaling_matches_cv2(self):
+        """**부드럽게 줄이면 작은 지느러미가 사라진다.**
+
+        학습(ultralytics)은 `cv2.resize(INTER_LINEAR)` 로 줄인 그림을 봤다.
+        `PIL.Image.resize(BILINEAR)` 은 축소할 때 필터를 넓혀 안티에일리어싱을
+        하는데, 그러면 **학습이 본 적 없는 그림**이 된다. 실측으로 29×21px
+        상자의 확신이 0.36 → 0.17 로 반토막 났고 문턱 0.25 에서 없어졌다 —
+        이 검출기가 여는 것의 3분의 2가 끄트머리만 보이는 작은 지느러미라
+        하필 그쪽부터 먼저 사라진다.
+
+        그래서 `PIL.Image.transform(AFFINE, BILINEAR)` 을 쓴다. **여기서 재는
+        것은 그것이 정말 `cv2` 와 같은가**다 — 닮았다는 짐작이 아니라.
+        """
+        try:
+            import cv2
+        except ImportError:
+            self.skipTest("cv2 가 없다 (검토 전용 설치)")
+        from PIL import Image as PILImage
+        rng = np.random.default_rng(3)
+        a = (rng.random((512, 512, 3)) * 255).astype(np.uint8)
+        a[63:66, 63:66] = 255              # 축소 배수보다 작은 밝은 점
+        x, _ = onnxdet.preprocess(PILImage.fromarray(a), size=128)
+        got = x[0].transpose(1, 2, 0) * 255
+        want = cv2.resize(a, (128, 128),
+                          interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        self.assertLess(np.abs(got - want).max(), 2.0,
+                        "축소가 cv2 와 다르다 — 작은 지느러미가 조용히 사라진다")
+
+
+class DetectPageTests(TestCase):
+    """**받아 와야 하는 것이 없으면 화면이 왜 없는지 말하나.**
+
+    `/detect` 는 저장소 밖의 것 둘에 기댄다 — `onnxruntime-web`(26MB)과
+    내보낸 `.onnx`(37MB). 둘 다 `.gitignore` 라 새 클론에는 없다. 그때
+    **조용히 빈 화면을 내면 무엇이 빠졌는지 알 길이 없다** — 끊어진 심볼릭
+    링크가 빈 디렉토리처럼 보이던 것과 같은 함정이다(`CLAUDE.md`).
+    """
+
+    def page(self):
+        return self.client.get("/detect").content.decode()
+
+    def test_it_names_what_is_missing(self):
+        html = self.page()
+        # 시험 환경에는 받아 온 것이 없다 — 그러면 받는 법이 떠야 한다
+        if "받아 와야 하는 것이 없다" in html:
+            self.assertIn("onnxruntime-web", html)
+            self.assertIn("yolo export", html)
+        else:                       # 받아 둔 기계에서는 화면이 떠야 한다
+            self.assertIn('id="drop"', html)
+
+    def test_the_rule_numbers_come_from_one_place(self):
+        """화면에 박아 두면 `onnxdet` 을 고쳐도 JS 가 옛 값을 쓴다."""
+        html = self.page()
+        self.assertIn(str(onnxdet.IMGSZ), html)
+        self.assertIn(str(onnxdet.PAD), html)
+
+    def test_it_says_smoothing_must_be_off(self):
+        """canvas 는 기본으로 부드럽게 줄인다 — 그러면 작은 지느러미가 사라진다."""
+        html = self.page()
+        if 'id="drop"' in html:
+            self.assertIn("imageSmoothingEnabled = false", html)

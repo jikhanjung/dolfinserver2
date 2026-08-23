@@ -84,6 +84,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# **저장소 밖에서 받아 오는 것들이 여기 있다** — `onnxruntime-web`(26MB)과
+# 내보낸 `.onnx`(37MB). 둘 다 `.gitignore` 다. 없으면 `/detect` 가 왜 없는지
+# 화면에서 말한다 (`review.views.detect`).
+STATICFILES_DIRS = [BASE_DIR / "static"]
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGIN_URL = "/admin/login/"
