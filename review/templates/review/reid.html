@@ -196,9 +196,12 @@ function view() {
   // 훑어보려는 것이라 좌·우나 "넣은 것 숨기기" 가 끼면 뜻이 어긋난다
   if (focusOn !== null) return ITEMS.filter(i => i.in === focusOn);
   const v = ITEMS.filter(i => (!side || i.facing === side) && !(hide && i.in));
+  // **`sim` 은 좌·우 각각에서 매긴 등수다.** 그대로 정렬하면 왼쪽 0등과
+  // 오른쪽 0등이 나란히 서서 두 무리가 지퍼처럼 섞인다 — 닮은 것끼리 붙여
+  // 놓으려는 뜻이 통째로 깨진다. 쪽을 먼저 가르고 그 안에서 등수로 센다
   v.sort(s === "rough" ? (a, b) => b.rough - a.rough
        : s === "day" ? (a, b) => (a.day + a.id).localeCompare(b.day + b.id)
-       : (a, b) => a.sim - b.sim);
+       : (a, b) => a.facing.localeCompare(b.facing) || a.sim - b.sim);
   return v;
 }
 
