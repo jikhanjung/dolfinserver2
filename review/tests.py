@@ -772,7 +772,9 @@ class ReidTests(TestCase):
         html = self.client.get("/reid").content.decode()
         m = re.search(r"let BOXES = (\[.*?\]);", html, re.S)
         self.assertIsNotNone(m)
-        self.assertEqual([b["id"] for b in json.loads(m.group(1))], made)
+        # 보류함은 화면을 열 때 저절로 생긴다 — 개체가 아니라 자리다
+        got = [b["id"] for b in json.loads(m.group(1)) if not b["hold"]]
+        self.assertEqual(got, made)
 
     def test_a_representative_can_be_chosen_and_cleared(self):
         """**아무거나 하나를 보이면 하필 흐린 것이 대표가 된다** — 사람이 고른다."""
@@ -791,3 +793,14 @@ class ReidTests(TestCase):
         html = self.client.get("/reid").content.decode()
         m = re.search(r"let BOXES = (\[.*?\]);", html, re.S)
         self.assertEqual(json.loads(m.group(1))[0]["rep"], self.a.id)
+
+    def test_the_holding_box_is_made_and_is_not_a_catalog_entry(self):
+        """**보류함은 개체가 아니라 자리다.** 어디에 넣을지 모르겠는 것을
+        아무 상자에나 넣으면 그 상자가 오염되고, 미분류로 두면 다음에 또 같은
+        고민을 처음부터 한다. 그렇다고 카탈로그에 세면 개체 수가 틀린다."""
+        self.client.get("/reid")
+        hold = Individual.objects.get(holding=True)
+        self.assign(individual=hold.id, boxes=[self.a.id])
+        self.assertEqual(reid.catalog(), {})           # 개체로 안 센다
+        self.assertEqual(reid.effective_id(self.a).individual_id, hold.id)
+        self.assertEqual(reid.decided([self.a.id]), {self.a.id})

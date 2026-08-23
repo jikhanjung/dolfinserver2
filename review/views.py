@@ -408,7 +408,13 @@ def reid(request):
         # `상자 10` 이 `상자 2` 앞에 오고, 무엇보다 **이름을 고치는 순간 그
         # 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 눈으로 다시
         # 찾아야 한다. 분류는 만든 순서대로 쌓이는 일이라 그 순서가 맞다.
+        # **보류함은 늘 있다.** 어디에 넣을지 모르겠는 것이 반드시 나오는데,
+        # 아무 상자에나 넣으면 그 상자가 오염되고 미분류로 두면 다음에 또
+        # 같은 고민을 처음부터 한다
+        hold, _ = Individual.objects.get_or_create(
+            holding=True, defaults={"name": "보류함"})
         boxes = [{"id": i.id, "name": i.name, "rep": i.rep_id,
+                  "hold": i.holding,
                   "n": sum(1 for v in latest.values() if v == i.id)}
                  for i in Individual.objects.order_by("id")]
     return render(request, "review/reid.html", {

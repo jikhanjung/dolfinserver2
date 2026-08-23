@@ -366,6 +366,14 @@ class Individual(models.Model):
     rep = models.ForeignKey("Box", on_delete=models.SET_NULL, null=True,
                             blank=True, related_name="represents",
                             help_text="이 개체를 대표하는 상자(사진)")
+    # **보류함.** 개체가 아니라 **아직 못 정한 것을 모아 두는 자리**다.
+    # 특징이 뚜렷해서 언젠가 이어질 것 같은데 지금은 어느 상자인지 모르겠는
+    # 것들이 반드시 나오고, 그것을 아무 상자에나 넣으면 그 상자가 오염된다.
+    # 그렇다고 미분류로 두면 다음에 또 같은 고민을 처음부터 한다.
+    #
+    # `catalog()` 가 여기 든 것을 안 센다 — 개체가 아니기 때문이다.
+    holding = models.BooleanField(default=False,
+                                  help_text="개체가 아니라 보류함이다")
     at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

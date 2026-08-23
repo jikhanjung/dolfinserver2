@@ -416,9 +416,13 @@ def catalog():
     for i in Identification.objects.order_by("id").values_list(
             "box_id", "individual_id"):
         latest[i[0]] = i[1]
+    # **보류함은 개체가 아니다** — 카탈로그에 안 넣는다
+    from finseg.models import Individual
+    hold = set(Individual.objects.filter(holding=True)
+               .values_list("id", flat=True))
     out = defaultdict(list)
     for box_id, ind in latest.items():
-        if ind is not None:
+        if ind is not None and ind not in hold:
             out[ind].append(box_id)
     return dict(out)
 

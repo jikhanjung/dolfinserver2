@@ -107,6 +107,10 @@
               font-family:"IBM Plex Mono",monospace }
   .box .look { padding:1px 8px; font-size:12px; line-height:1.5 }
   .box.focus { border-color:var(--sel) }
+  .box.hold { border-color:#7a5a1e; background:#1b1710 }
+  .box.hold .nm { color:#ffd479 }
+  .box.hold.over { border-color:#ffd479; background:#2a2314 }
+  #holdbox { padding:0 8px; margin-bottom:2px }
   .box.focus .look { background:#1b2b40; border-color:var(--sel);
                      color:var(--sel) }
   /* **한 상자만 보고 있다는 것을 화면이 크게 말해야 한다.** 안 그러면 격자가
@@ -187,6 +191,9 @@
     <!-- **둘은 늘 보인다.** 상자가 늘면 목록이 길어져 맨 위와 맨 아래가
          스크롤 밖으로 나가는데, 정작 그 둘이 가장 자주 쓰는 자리다 -->
     <div class="drop pin" id="unbox">여기로 끌면 <b>상자에서 뺀다</b></div>
+    <!-- **보류함도 늘 보인다.** 훑다가 "얜 뭔지 모르겠다" 는 것이 가장 잦고,
+         그때 목록을 굴려 찾아야 하면 그냥 안 넣고 지나간다 -->
+    <div id="holdbox"></div>
     <div id="boxes"></div>
     <div class="drop pin new" id="newbox">여기로 끌면 <b>새 상자</b></div>
   </div>
@@ -274,31 +281,38 @@ function draw() {
   drawBoxes();
 }
 
-function drawBoxes() {
-  const mine = {};
-  ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
-  document.getElementById("boxes").innerHTML = BOXES.map(b => `
-      <div class="box" data-box="${b.id}">
+function boxHtml(b, mine) {
+  const has = mine[b.id] || [];
+  const rep = has.includes(b.rep) ? b.rep : has[0];
+  return `
+      <div class="box${b.hold ? " hold" : ""}${focusOn === b.id ? " focus" : ""}"
+           data-box="${b.id}">
         <div class="hd">
-          <span class="nm" contenteditable="plaintext-only"
+          <span class="nm"${b.hold ? "" : ' contenteditable="plaintext-only"'}
                 data-id="${b.id}">${b.name}</span>
-          <span class="cnt">${(mine[b.id] || []).length}</span>
+          <span class="cnt">${has.length}</span>
           <button class="look" data-look="${b.id}"
                   title="이 상자만 격자에 크게 편다">보기</button>
         </div>
-        <div class="thumbs">${(() => {
-          const has = mine[b.id] || [];
-          if (!has.length) return "";
-          // **대표 한 장만.** 다 늘어놓으면 목록이 금세 길어져 상자 사이를
-          // 오가기 어렵다. 안 고른 상자는 든 것 중 첫 번째를 쓴다
-          const id = has.includes(b.rep) ? b.rep : has[0];
-          return `<img class="rep" src="/reid/chip/${id}.png" data-id="${id}"
-                       data-from="${b.id}" draggable="true" loading="lazy"
-                       title="끌어서 다른 상자로 · 눌러서 격자에서 찾기">`;
-        })()}</div>
-      </div>`).join("");
+        <div class="thumbs">${rep === undefined ? "" :
+          `<img class="rep" src="/reid/chip/${rep}.png" data-id="${rep}"
+                data-from="${b.id}" draggable="true" loading="lazy"
+                title="끌어서 다른 상자로 · 눌러서 격자에서 찾기">`}</div>
+      </div>`;
+}
+
+function drawBoxes() {
+  const mine = {};
+  ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
+  const hold = BOXES.find(b => b.hold);
+  document.getElementById("holdbox").innerHTML =
+    hold ? boxHtml(hold, mine) : "";
+  document.getElementById("boxes").innerHTML =
+    BOXES.filter(b => !b.hold).map(b => boxHtml(b, mine)).join("");
   bindBoxes();
 }
+
+
 
 // ---- 고르기 ---------------------------------------------------------------
 //
@@ -388,9 +402,8 @@ dropTarget(document.getElementById("unbox"));
 dropTarget(document.getElementById("newbox"));
 
 function bindBoxes() {
-  document.querySelectorAll("#boxes .box").forEach(el => {
+  document.querySelectorAll("#boxes .box, #holdbox .box").forEach(el => {
     dropTarget(el);
-    el.classList.toggle("focus", focusOn === +el.dataset.box);
   });
   document.querySelectorAll("#grid .star").forEach(st => {
     st.onclick = async ev => {
