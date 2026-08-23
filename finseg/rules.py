@@ -195,6 +195,15 @@ def progress():
             c["교정대기"] += 1
         if mask is None:
             c["마스크없음"] += 1
+        # **윤곽을 말할 수 없는 상자.** 판정은 붙었는데(그래서 `검토할 것`·
+        # `새 검출` 에서 빠졌고) 마스크도 사람 윤곽도 없다. `label_of` 가
+        # `PENDING` 이라 내보낼 때 **그 상자가 든 크롭이 통째로 빠지고, 같은
+        # 크롭에 걸친 남의 상자까지 함께 빠진다.** 대기열 다섯 어디에도 안
+        # 걸려서 화면은 "남은 일 없다" 고 말하는데 자료는 조용히 준다 —
+        # `교정대기` 를 따로 센 것과 같은 이유다.
+        if (review is not None and review.cls and review.cls != "none"
+                and mask is None and not review.polygon):
+            c["윤곽없음"] += 1
         if review is not None:
             c["검토함"] += 1
             # **판정이 어느 마스크를 보고 내려졌나.** 엔진을 갈아 끼우면

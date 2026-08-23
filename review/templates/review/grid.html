@@ -149,7 +149,8 @@
     ><button id="mdone" onclick="load({mode:'done'})">검토한 것</button
     ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button
     ><button id="mstale" onclick="load({mode:'stale'})">엔진 바뀜</button
-    ><button id="mnew" onclick="load({mode:'new'})">새 검출</button>
+    ><button id="mnew" onclick="load({mode:'new'})">새 검출</button
+    ><button id="mnoshape" onclick="load({mode:'noshape'})">윤곽 없음</button>
     <button id="first" onclick="load({page:1})" title="첫 페이지 (Home)">«</button>
     <button id="prev" onclick="load({page:page-1})">←</button>
     <span id="pg" class="stat">1 / 1</span>
@@ -223,7 +224,7 @@ document.getElementById("keys").innerHTML =
   CLASSES.map(([k, ko], i) =>
     `<kbd style="border-color:var(--${k})">${CLASS_KEYS[k]}</kbd>${ko}`).join(" ")
   + ` · <kbd>e</kbd>날 <kbd>p</kbd>아래경계 <kbd>f</kbd>앞쪽(모름→왼쪽→오른쪽) <kbd>x</kbd>교정필요`
-  + ` · <kbd>s</kbd>보류(모르겠다 — 판정을 안 남긴다)`
+  + ` · <kbd>s</kbd>보류(모르겠다 — 판정을 안 남긴다) <kbd>n</kbd>윤곽 그리기`
   + ` · 점을 끌면 밑동 · <kbd>우클릭</kbd>메뉴 · <kbd>Enter</kbd>저장`;
 
 function setHover(d) {
@@ -331,6 +332,9 @@ function warn(msg) {
 // `new` 는 새 검출기가 낸 상자다. 여기도 묶음 저장이다 — 천 장 넘는 것을 한
 // 칸씩 저장하면 못 끝낸다. 다만 **안 누른 것이 "진짜 지느러미다" 라는 뜻이
 // 되므로**, 아래 `save()` 의 손 안 댐 경고가 `todo` 와 함께 여기에도 걸린다.
+// `noshape` 는 묶음 저장이 아니다. **여기서 할 일은 윤곽을 그리는 것 하나**고
+// 그것은 편집 창에서 한다 — 격자에서 Enter 로 넘기면 아무것도 안 그린 채
+// 판정만 한 벌 더 쌓인다
 const isBatch = () => mode === "todo" || mode === "stale" || mode === "new";
 
 // `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
@@ -364,6 +368,9 @@ async function load(opts = {}) {
     empty.textContent = held.size
       ? `여기서 볼 것은 다 봤다 — 남은 것은 보류한 ${held.size} 개뿐이다. `
         + `'보류 지우기' 를 누르면 다시 나온다 (판정은 안 남아 있다).`
+      : mode === "noshape"
+      ? "윤곽이 없는 상자가 없다 — 판정이 붙은 상자는 전부 마스크나 사람이 "
+        + "그린 윤곽을 갖고 있다."
       : mode === "new"
       ? "새 검출기가 들인 상자가 없다. manage.py infer_boxes 로 들이고 "
         + "manage.py crops 로 잘라 둘 것 — 크롭이 없으면 여기 안 뜬다."
@@ -426,6 +433,7 @@ function nav() {
   document.getElementById("mstuck").classList.toggle("on", mode === "stuck");
   document.getElementById("mstale").classList.toggle("on", mode === "stale");
   document.getElementById("mnew").classList.toggle("on", mode === "new");
+  document.getElementById("mnoshape").classList.toggle("on", mode === "noshape");
   document.getElementById("pg").textContent = `${page} / ${pages}`;
   document.getElementById("first").disabled = page <= 1;
   document.getElementById("prev").disabled = page <= 1;
@@ -445,6 +453,8 @@ function nav() {
     mode === "done" ? `검토한 것 ${total.toLocaleString()}`
     : mode === "stuck" ? `교정 대기 ${total.toLocaleString()}`
     : mode === "stale" ? `엔진 바뀜 ${total.toLocaleString()}`
+    : mode === "noshape"
+      ? `윤곽 없음 ${total.toLocaleString()} (등지느러미부터 · n 으로 그린다)`
     : mode === "new" ? `새 검출 ${total.toLocaleString()} (확신 높은 것부터)`
     : `남은 것 ${total.toLocaleString()}`;
 }
@@ -573,12 +583,14 @@ function act(d, t, key) {
     d.dataset.hold = d.dataset.hold === "1" ? "" : "1";
     warn(""); return true;
   }
+  else if (key === "n")
+    // **윤곽은 격자에서 못 그린다.** 190px 칸에서 꼭짓점을 집는 것은 밑동 점이
+    // 화면에서 2.6px 였던 것과 같은 문제다 — 편집 창이 그 자리다
+    return open(`/edit/${d.dataset.box}`, "finedit",
+                "width=1100,height=900"), true;
   else if (key === "photo")
     // 이름을 준 창이라 우클릭을 거듭해도 창이 쌓이지 않고 같은 창이 바뀐다
     return open(`/photo/${d.dataset.box}`, "finphoto"), true;
-  else if (key === "edit")
-    return open(`/edit/${d.dataset.box}`, "finedit",
-                "width=1100,height=900"), true;
   else return false;
   // **칸마다도 표시해 둔다.** '검토한 것' 을 넘겨볼 때는 손댄 칸만 저장해야
   // 한다 — 안 그러면 페이지를 넘길 때마다 똑같은 판정이 24건씩 다시 쌓인다
@@ -591,7 +603,7 @@ function act(d, t, key) {
 // 메뉴는 키가 하는 일을 **보여 주는** 자리다. 오늘 `e`(날)와 `x`(교정필요)를
 // 못 찾아 헤맨 것이 안내줄에 적혀 있었는데도 그랬다 — 우클릭이 더 눈에 띈다
 const MENU = [["원본 사진 — 주변을 본다", "photo"],
-              ["윤곽 고치기 — 크게 띄운다", "edit"], null,
+              ["윤곽 그리기·고치기 — 크게 띄운다", "n"], null,
               ...CLASSES.map(([k, ko]) => [ko, CLASS_KEYS[k]]), null,
               ["보류 — 모르겠다 (판정을 안 남긴다)", "s"],
               ["교정 필요", "x"], ["날 …", "edges"],
@@ -790,11 +802,14 @@ async function stat() {
   // **남은 일을 먼저 적는다.** 엔진을 갈아 끼우면 "검토함" 은 그대로인데 그
   // 판정들이 옛 마스크에 대한 말이 된다 — 그것만 보면 다 끝난 것처럼 보인다
   const left = (p["엔진바뀜"] || 0) + (p.pending || 0) + (p["교정대기"] || 0);
+  // **`윤곽없음` 을 따로 적는다.** `pending` 에 뭉쳐 두면 "안 본 것" 과 구별이
+  // 안 되는데, 이쪽은 판정이 이미 붙어 있어 대기열 넷에서 빠진 것들이다
   el.innerHTML = (left
       ? `<b style="color:var(--fix)">남은 일 ${left.toLocaleString()}</b>`
         + (p["엔진바뀜"] ? ` (엔진바뀜 ${n("엔진바뀜")}` : " (")
         + (p.pending ? ` 안 봄 ${n("pending")}` : "")
-        + (p["교정대기"] ? ` 교정대기 ${n("교정대기")}` : "") + ") · "
+        + (p["교정대기"] ? ` 교정대기 ${n("교정대기")}` : "")
+        + (p["윤곽없음"] ? ` 윤곽없음 ${n("윤곽없음")}` : "") + ") · "
       : `<b style="color:var(--fin)">남은 일 없다</b> · `)
     + `검토 <b>${n("검토함")}</b>/${n("상자")}`
     + ` · 양성 <b>${n("positive")}</b> 배경 <b>${n("background")}</b>`

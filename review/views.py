@@ -176,7 +176,7 @@ def batch(request):
     n = min(int(request.GET.get("n", 24)), 100)
     page = max(int(request.GET.get("page", 1)), 1)
     mode = request.GET.get("mode", "todo")
-    if mode not in ("todo", "done", "stuck", "stale", "new"):
+    if mode not in ("todo", "done", "stuck", "stale", "new", "noshape"):
         mode = "todo"
     cls = request.GET.get("cls", "")
     if cls not in {c for c, _ in CLASSES}:
@@ -221,6 +221,31 @@ def batch(request):
             latest[bid] = (mid, at)
         ids = [b for b, (mid, _) in sorted(latest.items(), key=lambda x: x[1][1])
                if b in cur and mid != cur[b]]
+        qs = None
+    elif mode == "noshape":
+        # **윤곽을 말할 수 없는 상자.** 판정은 붙었는데(그래서 `검토할 것`·
+        # `새 검출` 에서 빠졌고) 마스크도 사람 윤곽도 없다 — 분할 모델이 이
+        # 크롭에서 아무것도 못 냈고 사람도 아직 안 그린 자리다.
+        #
+        # **여기 말고는 다시 만날 길이 없었다.** `새 검출` 은 판정이 붙어서,
+        # `엔진 바뀜` 은 마스크가 없어서, `교정 대기` 는 `verdict='fix'` 가
+        # 아니라서 안 걸린다. 그동안 화면은 "남은 일 없다" 고 말했는데
+        # `export_yolo` 는 **그 상자가 든 크롭을 통째로 뺐다** — 같은 크롭에
+        # 걸친 남의 상자까지 함께. `교정 대기` 를 만든 것과 똑같은 자리다.
+        #
+        # **등지느러미부터, 그다음 확신이 높은 것부터.** 값이 가장 큰 것이
+        # 먼저 와야 도중에 멈춰도 얻는 것이 있다.
+        cur = set(Mask.objects.filter(is_current=True)
+                  .values_list("box_id", flat=True))
+        latest = {}
+        for bid, cls, poly in (Review.objects.order_by("id")
+                               .values_list("box_id", "cls", "polygon")):
+            latest[bid] = (cls, poly)
+        want = [b for b, (cl, poly) in latest.items()
+                if cl and cl != "none" and not poly and b not in cur]
+        conf = dict(Box.objects.filter(id__in=want).values_list("id", "conf"))
+        ids = sorted(want, key=lambda b: (latest[b][0] != "fin",
+                                          -(conf.get(b) or 0)))
         qs = None
     elif mode == "stuck":
         # **고쳐야 한다고 해 놓고 안 고친 것.** 판정이 붙어 있어 `todo` 에 안

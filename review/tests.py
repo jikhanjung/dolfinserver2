@@ -297,3 +297,72 @@ class DrawFromScratchTests(TestCase):
         """화면이 말하지 않으면 없는 것과 같다 — `e`/`x` 를 못 찾은 그 값이다."""
         html = self.client.get(f"/edit/{self.box.id}").content.decode()
         self.assertIn("윤곽 새로 그리기", html)
+
+
+class NoShapeQueueTests(TestCase):
+    """**윤곽을 말할 수 없는 상자가 어디에도 안 뜨던 것.**
+
+    판정이 붙으면 `검토할 것`·`새 검출` 에서 빠지고, 마스크가 없으면
+    `엔진 바뀜` 에 안 걸리고, `verdict='fix'` 가 아니면 `교정 대기` 에도 안
+    걸린다. 그동안 화면은 "남은 일 없다" 고 말하는데 `export_yolo` 는 그
+    상자가 든 크롭을 통째로 뺐다 — **같은 크롭에 걸친 남의 상자까지 함께.**
+    `교정 대기` 를 만든 것과 똑같은 자리라 같은 방식으로 푼다.
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="t/n.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.run = Run.objects.create(kind="sam2")
+        self.mk = lambda **kw: Box.objects.create(
+            image=img, x1=10, y1=10, x2=60, y2=60, **kw)
+
+    def ids(self):
+        r = self.client.get("/api/batch?mode=noshape").json()
+        return [t["box_id"] for t in r["tiles"]]
+
+    def test_a_judged_box_with_no_shape_shows_up(self):
+        b = self.mk(source="yolo11", conf=0.3)
+        Crop.objects.create(box=b, path="t/n0.jpg", x0=0, y0=0,
+                            x1=640, y1=640, w=640, h=640)
+        Review.objects.create(box=b, cls="fin")
+        self.assertEqual(self.ids(), [b.id])
+        self.assertEqual(rules.progress()["윤곽없음"], 1)
+
+    def test_a_mask_takes_it_out(self):
+        b = self.mk(source="yolo11", conf=0.3)
+        Crop.objects.create(box=b, path="t/n1.jpg", x0=0, y0=0,
+                            x1=640, y1=640, w=640, h=640)
+        Review.objects.create(box=b, cls="fin")
+        Mask.objects.create(box=b, run=self.run, is_current=True,
+                            polygon="20,20 50,20 35,50")
+        self.assertEqual(self.ids(), [])
+
+    def test_a_hand_drawn_polygon_takes_it_out(self):
+        """사람이 그렸으면 마스크가 없어도 말할 수 있다."""
+        b = self.mk(source="yolo11", conf=0.3)
+        Crop.objects.create(box=b, path="t/n2.jpg", x0=0, y0=0,
+                            x1=640, y1=640, w=640, h=640)
+        Review.objects.create(box=b, cls="fin", polygon="20,20 50,20 35,50")
+        self.assertEqual(self.ids(), [])
+        self.assertEqual(rules.progress()["윤곽없음"], 0)
+
+    def test_none_is_not_in_it(self):
+        """`아무것도아님` 은 배경으로 나간다 — 윤곽이 필요 없다."""
+        b = self.mk(source="yolo11", conf=0.3)
+        Crop.objects.create(box=b, path="t/n3.jpg", x0=0, y0=0,
+                            x1=640, y1=640, w=640, h=640)
+        Review.objects.create(box=b, cls="none")
+        self.assertEqual(self.ids(), [])
+        self.assertEqual(rules.progress()["윤곽없음"], 0)
+
+    def test_fins_come_first_then_confidence(self):
+        """도중에 멈춰도 얻는 것이 있게 값이 큰 것부터 낸다."""
+        made = []
+        for i, (cls, conf) in enumerate(
+                [("body", 0.9), ("fin", 0.2), ("fin", 0.8)]):
+            b = self.mk(source="yolo11", conf=conf)
+            Crop.objects.create(box=b, path=f"t/n{i}x.jpg", x0=0, y0=0,
+                                x1=640, y1=640, w=640, h=640)
+            Review.objects.create(box=b, cls=cls)
+            made.append((cls, conf, b.id))
+        self.assertEqual(self.ids(), [made[2][2], made[1][2], made[0][2]])
