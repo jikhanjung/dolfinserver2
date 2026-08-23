@@ -13,8 +13,9 @@ import numpy as np
 
 from django.test import SimpleTestCase, TestCase
 
-from finseg import baseline, geometry, onnxdet, rules
-from finseg.models import Box, Crop, Image, Mask, Review, Run
+from finseg import baseline, geometry, onnxdet, reid, rules
+from finseg.models import (Box, Crop, Identification, Image, Individual,
+                           Mask, Review, Run)
 
 BLOCK = re.compile(r'<div class="rule">(.*?)</div>', re.S)
 TAG = re.compile(r"<[^>]+>")
@@ -681,3 +682,68 @@ class ImportDetectionsTests(TestCase):
         """`fin.db` 만 보면 옛 검출기가 이미 찾은 것이 '새 검출' 로 둔갑한다."""
         out = self.run_it([[400, 400, 500, 500, 0.5]])
         self.assertIn("이미 아는 상자를 못 걸러낸다", out)
+
+
+class ReidTests(TestCase):
+    """**개체 판정은 쌓인다, 덮어쓰지 않는다** — `Review` 와 같은 규칙이다.
+
+    카탈로그가 자라면 판정이 갈라지거나 합쳐진다. 자취가 없으면 언제 생각이
+    바뀌었는지 잴 수 없다. 그리고 **아니라고 한 것도 남긴다** — 어려운
+    음성이고, 다음 바퀴에 같은 짝을 또 보여 주지 않게 한다.
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="t/r.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.a, self.b, self.c = [
+            Box.objects.create(image=img, x1=10 * i, y1=10, x2=60 * (i + 1),
+                               y2=60, source="yolov5") for i in range(3)]
+
+    def post(self, **kw):
+        return self.client.post("/api/reid", data=json.dumps(kw),
+                                content_type="application/json")
+
+    def test_it_names_and_excludes_in_one_go(self):
+        r = self.post(name="JJ01", keep=[self.a.id, self.b.id], drop=[self.c.id])
+        self.assertEqual(r.status_code, 200)
+        ind = Individual.objects.get(name="JJ01")
+        self.assertEqual(
+            set(Identification.objects.filter(individual=ind)
+                .values_list("box_id", flat=True)), {self.a.id, self.b.id})
+        # **아니라고 한 것도 줄이 남는다** — 답을 한 것이지 안 한 것이 아니다
+        no = Identification.objects.get(box=self.c)
+        self.assertIsNone(no.individual)
+
+    def test_a_name_is_required_when_something_is_kept(self):
+        """같다고 해 놓고 이름이 없으면 카탈로그에 못 얹는다."""
+        self.assertEqual(self.post(name="", keep=[self.a.id]).status_code, 400)
+        self.assertFalse(Identification.objects.exists())
+
+    def test_all_no_needs_no_name(self):
+        r = self.post(name="", keep=[], drop=[self.a.id, self.b.id])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(Identification.objects.count(), 2)
+        self.assertFalse(Individual.objects.exists())
+
+    def test_the_latest_wins_and_the_trail_stays(self):
+        self.post(name="JJ01", keep=[self.a.id], drop=[])
+        self.post(name="JJ02", keep=[self.a.id], drop=[])
+        self.assertEqual(Identification.objects.filter(box=self.a).count(), 2)
+        self.assertEqual(reid.effective_id(self.a).individual.name, "JJ02")
+        self.assertEqual(reid.catalog(),
+                         {Individual.objects.get(name="JJ02").id: [self.a.id]})
+
+    def test_a_box_taken_back_leaves_the_catalog(self):
+        """빼면 카탈로그에서 빠져야 한다 — 자취는 남되 값은 최신이 이긴다."""
+        self.post(name="JJ01", keep=[self.a.id], drop=[])
+        self.post(name="", keep=[], drop=[self.a.id])
+        self.assertEqual(reid.catalog(), {})
+        self.assertEqual(reid.decided([self.a.id]), {self.a.id})
+
+    def test_the_screen_says_what_is_missing(self):
+        """묶음이 없으면 만드는 법이 떠야 한다 — 빈 화면은 아무 말도 안 한다."""
+        html = self.client.get("/reid").content.decode()
+        if "묶음이 없다" in html:
+            self.assertIn("reid_cluster", html)
+        else:
+            self.assertIn("GROUPS = ", html)

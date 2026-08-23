@@ -378,3 +378,41 @@ def chip(state, crop, size=CHIP, pad=CHIP_PAD):
     warp = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LINEAR,
                           borderValue=0)
     return np.where(m > 0, warp, 0).astype(np.float32) / 255.0
+
+
+# ---- 개체 판정 ---------------------------------------------------------------
+
+def effective_id(box):
+    """이 상자에 유효한 개체 판정 하나. 없으면 None.
+
+    `rules.effective_review` 와 같은 규칙이다 — **가장 늦은 것.** 여기가
+    멀티유저의 갈림길이고, 사람이 늘면 사람마다 최신을 고른 뒤 합의로 간다.
+    """
+    return box.identifications.order_by("-id").first()
+
+
+def catalog():
+    """개체 → 그 개체로 확정된 상자 번호들. **뺀 것은 안 센다.**"""
+    from collections import defaultdict
+
+    from finseg.models import Identification
+    latest = {}
+    for i in Identification.objects.order_by("id").values_list(
+            "box_id", "individual_id"):
+        latest[i[0]] = i[1]
+    out = defaultdict(list)
+    for box_id, ind in latest.items():
+        if ind is not None:
+            out[ind].append(box_id)
+    return dict(out)
+
+
+def decided(box_ids):
+    """이미 답한 상자 번호들 — 개체를 붙였든 아니라고 했든.
+
+    묶음을 다시 보여 줄 때 **이미 답한 것을 또 묻지 않으려고** 쓴다.
+    아니라고 말한 것도 답이다.
+    """
+    from finseg.models import Identification
+    return set(Identification.objects.filter(box_id__in=box_ids)
+               .values_list("box_id", flat=True))

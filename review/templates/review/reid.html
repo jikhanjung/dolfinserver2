@@ -1,0 +1,148 @@
+{% load static %}<!doctype html>
+<meta charset="utf-8">
+<title>개체 묶음 검토</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
+          --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --warn:#ffc9cd; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6
+         "IBM Plex Sans KR", system-ui, sans-serif; }
+  header { border-bottom:1px solid var(--line); padding:9px 14px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+           position:sticky; top:0; background:var(--bg); z-index:5; }
+  h1 { font-size:15px; margin:0; font-weight:600 }
+  .stat { color:var(--dim); font-size:12.5px }
+  .stat b { color:var(--ink) }
+  kbd { background:#1d2733; border:1px solid var(--line); border-radius:3px;
+        padding:0 5px; font:11px "IBM Plex Mono",monospace; color:var(--ink) }
+  .rule { flex-basis:100%; background:#1b1710; border:1px solid #3a2f14;
+          border-left:3px solid #ffd479; border-radius:6px; padding:6px 11px;
+          font-size:13px; color:#f0dcae }
+  .rule b { color:#ffd479 }
+  .warn { margin:14px; padding:10px 13px; background:#2a1416;
+          border:1px solid #5c2a2f; border-left:3px solid var(--no);
+          border-radius:6px; color:var(--warn); font-size:13px; max-width:74ch }
+  .grp { border-bottom:1px solid var(--line); padding:12px 14px;
+         display:flex; gap:14px; align-items:flex-start }
+  .grp.saved { opacity:.35 }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; flex:1 }
+  .chip { position:relative; width:112px; cursor:pointer;
+          border:2px solid transparent; border-radius:6px; background:#000 }
+  .chip img { width:100%; display:block; border-radius:4px }
+  /* **뺀 것이 한눈에 보여야 한다.** 무엇을 빼고 저장하는지 모르면
+     "같은 개체다" 라는 말의 뜻이 흐려진다 */
+  .chip.out { border-color:var(--no); opacity:.4 }
+  .chip.out::after { content:"뺌"; position:absolute; right:4px; top:4px;
+    background:var(--no); color:#0b0f14; font-size:10px; font-weight:700;
+    padding:0 5px; border-radius:3px }
+  .chip .day { position:absolute; left:4px; bottom:4px; font-size:10px;
+    color:#cfd8e3; background:#000b; padding:0 5px; border-radius:3px }
+  .side { width:190px; flex:none; color:var(--dim); font-size:12.5px }
+  .side b { color:var(--ink) }
+  input[type=text] { font:inherit; font-size:13px; background:var(--panel);
+    color:var(--ink); border:1px solid var(--line); border-radius:5px;
+    padding:5px 9px; width:100%; margin:6px 0 }
+  button { font:inherit; font-size:13px; background:var(--panel);
+    color:var(--ink); border:1px solid var(--line); border-radius:5px;
+    padding:5px 12px; cursor:pointer; margin-right:6px }
+  button.ok { background:#16302b; border-color:var(--ok); color:var(--ok) }
+  button.no { background:#331e1b; border-color:var(--no); color:var(--no) }
+  button:hover { border-color:var(--dim) }
+  datalist { color:#000 }
+</style>
+
+<header>
+  <h1>개체 묶음 검토</h1>
+  <span class="stat">남은 묶음 <b>{{ n_groups }}</b> · 개체 <b>{{ n_named }}</b>
+    · 답한 상자 <b>{{ n_done }}</b></span>
+  <span style="flex:1"></span>
+  <span class="stat">칸을 눌러 <b>빼고</b>, 이름을 적어 저장</span>
+  <div class="rule">
+    묻는 것은 하나다 — <b>이 줄이 같은 개체인가.</b> 아닌 것을 눌러 빼고
+    이름을 붙인다. 하나도 같지 않으면 <b>전부 아님</b>.
+    <b>아니라고 한 것도 저장된다</b> — 그것이 어려운 음성이고, 다음 바퀴에
+    같은 짝을 다시 안 보여 준다.
+  </div>
+</header>
+
+{% if not ready %}
+<div class="warn">
+  <b>묶음이 없다.</b> 먼저 만들 것:
+  <pre>python manage.py reid_cluster --thres 0.06 --out reid/v1</pre>
+  그리고 조각을 PNG 로 내야 화면이 그린다 (<code>reid/v1/chips/</code>).
+</div>
+{% else %}
+<div id="list"></div>
+<script>
+const GROUPS = {{ groups|safe }};
+let INDS = {{ individuals|safe }};
+const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+
+// **묶음이 스스로를 못 잰다는 것이 실측으로 드러났다** — 밝기로 뭉친 정도가
+// 68%였고, 밝기를 지우면 점수가 오히려 내려갔다. 양성쌍이 같은 장면이라
+// 자가 조명 닮음에 상을 주기 때문이다. 그래서 사람의 이름이 필요하다.
+const list = document.getElementById("list");
+GROUPS.forEach((g, gi) => {
+  const el = document.createElement("div");
+  el.className = "grp";
+  el.dataset.i = gi;
+  const days = [...new Set(g.boxes.map(b => b.day))].sort();
+  el.innerHTML =
+    `<div class="side">
+       <b>${g.side === "left" ? "왼쪽이 앞" : "오른쪽이 앞"}</b>
+       · ${g.boxes.length}장<br>
+       <span style="font-size:11.5px">관찰일 ${days.length}일
+         ${days.length > 1 ? "· <b>날을 건너뛴다</b>" : ""}</span>
+       <input type="text" list="inds" placeholder="개체 이름" class="nm">
+       <button class="ok">같은 개체</button>
+       <button class="no">전부 아님</button>
+     </div>
+     <div class="chips">${g.boxes.map(b =>
+       `<div class="chip" data-box="${b.id}">
+          <img src="/reid/chip/${b.id}.png" loading="lazy" alt="">
+          <span class="day">${b.day}</span>
+        </div>`).join("")}</div>`;
+  list.appendChild(el);
+  el.querySelectorAll(".chip").forEach(c =>
+    c.onclick = () => c.classList.toggle("out"));
+  el.querySelector(".ok").onclick = () => save(el, false);
+  el.querySelector(".no").onclick = () => save(el, true);
+});
+
+const dl = document.createElement("datalist");
+dl.id = "inds";
+const fillList = () => dl.innerHTML =
+  INDS.map(i => `<option value="${i.name}">`).join("");
+fillList();
+document.body.appendChild(dl);
+
+async function save(el, allNo) {
+  const chips = [...el.querySelectorAll(".chip")];
+  const name = el.querySelector(".nm").value.trim();
+  let keep = [], drop = [];
+  if (allNo) {
+    drop = chips.map(c => +c.dataset.box);
+  } else {
+    keep = chips.filter(c => !c.classList.contains("out")).map(c => +c.dataset.box);
+    drop = chips.filter(c => c.classList.contains("out")).map(c => +c.dataset.box);
+    if (!keep.length) return alert("남긴 것이 없다 — 전부 아님을 누를 것.");
+    // **한 장만 남기고 이름을 붙이는 것도 뜻이 있다** — 카탈로그에 새 개체가
+    // 하나 생기고, 다음 묶음에서 그 이름으로 이을 수 있다
+    if (!name) return alert("이름이 없다. 새 이름이든 이미 있는 이름이든 적을 것.");
+  }
+  const res = await fetch("/api/reid", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
+    body: JSON.stringify({name, keep, drop, source: "cluster"}),
+  });
+  if (!res.ok) return alert(`저장 실패 — 서버가 ${res.status} 를 냈다`);
+  const r = await res.json();
+  if (r.error) return alert(r.error);
+  el.classList.add("saved");
+  el.querySelectorAll("button").forEach(b => b.disabled = true);
+  if (r.individual && !INDS.some(i => i.name === r.individual)) {
+    INDS.push({name: r.individual}); fillList();
+  }
+}
+</script>
+{% endif %}

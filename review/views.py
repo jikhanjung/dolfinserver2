@@ -20,7 +20,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
-from django.http import Http404, JsonResponse
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
@@ -29,7 +29,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from finseg import baseline, evaluate, geometry, onnxdet, rules
 from finseg.models import (BASE_PARTIAL, CLASS_KEYS, CLASSES, EDGES, FACING,
-                           Box, Crop, Mask, Review, Run)
+                           Box, Crop, Identification, Mask, Review, Run)
 
 
 def _tile(state, crop):
@@ -367,6 +367,101 @@ def save(request):
             reviewer=request.user if request.user.is_authenticated else None)
         n += 1
     return JsonResponse({"saved": n, "progress": dict(rules.progress())})
+
+
+@require_GET
+def reid(request):
+    """**묶음을 사람에게 보이고 최소한의 정답을 받는 자리.**
+
+    군집이 스스로를 못 잰다는 것이 실측으로 드러났다 — 묶음이 밝기로 뭉친
+    정도가 68%였고, 밝기를 지우면 점수가 오히려 내려갔다. 양성쌍이 같은
+    장면이라 **자가 조명 닮음에 상을 주기 때문**이다. 개체와 조명을 가르려면
+    사람이 붙인 이름이 있어야 한다.
+
+    묻는 것은 하나다 — **"이 줄이 같은 개체인가."** 아닌 것을 빼고 이름을
+    붙이면 그것이 첫 정답이 된다.
+
+    **아니라고 한 것도 저장한다.** 그것이 어려운 음성이고, 다음 바퀴에 같은
+    짝을 또 보여 주지 않게 한다 (`Identification.individual = NULL`).
+    """
+    from finseg import reid as reid_mod
+    from finseg.models import Individual
+
+    root = Path(settings.BASE_DIR) / "reid" / "v1"
+    groups_f = root / "groups.json"
+    ready = groups_f.exists() and (root / "chips").is_dir()
+    groups = []
+    if ready:
+        data = json.loads(groups_f.read_text(encoding="utf-8"))
+        raw = [g for g in data.get("groups", []) if len(g.get("boxes", [])) > 1]
+        # **이미 답한 묶음은 뒤로 보낸다.** 다 답한 것은 아예 안 보여 준다 —
+        # 남은 일이 무엇인지 화면이 말해야 한다
+        done_ids = reid_mod.decided([b for g in raw for b in g["boxes"]])
+        boxes = {b.id: b for b in Box.objects.select_related("image")
+                 .filter(id__in=[b for g in raw for b in g["boxes"]])}
+        for g in raw:
+            left = [b for b in g["boxes"] if b not in done_ids]
+            if not left:
+                continue
+            groups.append({
+                "side": g.get("side", ""),
+                "spread": g.get("spread"),
+                "boxes": [{"id": b,
+                           "day": str(boxes[b].image.obsdate) if b in boxes else "",
+                           "done": b in done_ids} for b in g["boxes"]
+                          if b in boxes],
+                "left": len(left),
+            })
+        groups.sort(key=lambda g: -len(g["boxes"]))
+    return render(request, "review/reid.html", {
+        "ready": ready,
+        "groups": json.dumps(groups, ensure_ascii=False),
+        "individuals": json.dumps(
+            [{"id": i.id, "name": i.name,
+              "n": i.identifications.filter(individual=i).count()}
+             for i in Individual.objects.all()], ensure_ascii=False),
+        "n_groups": len(groups),
+        "n_named": Individual.objects.count(),
+        "n_done": Identification.objects.values("box").distinct().count(),
+    })
+
+
+@require_POST
+@transaction.atomic
+def reid_save(request):
+    """개체 판정을 저장한다. **쌓는다, 덮어쓰지 않는다** (`Review` 와 같다)."""
+    from finseg.models import Individual
+
+    body = json.loads(request.body or "{}")
+    name = (body.get("name") or "").strip()
+    keep = [int(b) for b in body.get("keep", [])]
+    drop = [int(b) for b in body.get("drop", [])]
+    if keep and not name:
+        raise_ = {"error": "이름이 없다 — 같다고 한 것에는 이름을 붙여야 한다"}
+        return JsonResponse(raise_, status=400)
+    ind = None
+    if keep:
+        ind, _ = Individual.objects.get_or_create(name=name)
+    user = request.user if request.user.is_authenticated else None
+    src = body.get("source") or "cluster"
+    rows = [Identification(box_id=b, individual=ind, source=src, reviewer=user)
+            for b in keep]
+    # **아니라고 한 것도 남긴다** — 어려운 음성이고, 같은 짝을 또 안 보여 준다
+    rows += [Identification(box_id=b, individual=None, source=src, reviewer=user)
+             for b in drop]
+    Identification.objects.bulk_create(rows)
+    return JsonResponse({"saved": len(rows),
+                         "individual": ind.name if ind else None})
+
+
+@require_GET
+def reid_chip(request, box_id):
+    """조각 한 장. `reid/v1/chips/` 에서 낸다 — 저장소 밖이라 정적 서빙이 없다."""
+    f = (Path(settings.BASE_DIR) / "reid" / "v1" / "chips"
+         / f"{int(box_id):08d}.png")
+    if not f.exists():
+        raise Http404("그 조각이 없다")
+    return FileResponse(open(f, "rb"), content_type="image/png")
 
 
 @require_GET

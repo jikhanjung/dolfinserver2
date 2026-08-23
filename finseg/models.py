@@ -341,3 +341,60 @@ class Review(models.Model):
         ordering = ["-id"]
         indexes = [models.Index(fields=["box", "-id"]),
                    models.Index(fields=["reviewer", "-id"])]
+
+
+class Individual(models.Model):
+    """개체 하나. **이름은 사람이 붙인다.**
+
+    옛 DB 의 `boxname` 과 **섞지 않는다.** 그것은 시민과학자가 붙인 것이고
+    166개 중에 `까치`·`황여새` 같은 새 이름이 섞여 있어 그대로 믿을 수 없다.
+    `Box.source` 로 어느 검출기가 낸 상자인지 갈라 온 것과 같은 이유다 —
+    **누가 말한 것인지 모르면 나중에 그것으로 무엇을 잴 수 없다.**
+
+    좌현·우현을 한 개체 아래 함께 둔다. 같은 동물이니 그것이 옳고, 다만
+    **닮음을 잴 때는 절대 섞지 않는다** (`reid.frame` 의 부호 주석).
+    """
+    name = models.CharField(max_length=50, unique=True)
+    note = models.TextField(blank=True, default="")
+    # 옛 DB 의 이름과 이어졌다면 적어 둔다. 믿어서가 아니라 **되짚으려고** 다
+    src_name = models.CharField(max_length=50, blank=True, default="",
+                                help_text="옛 dolfinrest_dolfinbox.boxname")
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Identification(models.Model):
+    """"이 상자는 이 개체다" — **쌓인다, 덮어쓰지 않는다.**
+
+    `Review` 와 같은 규칙이다. 개체 판정은 되짚어 고치는 일이 잦고(카탈로그가
+    자라면서 갈라지거나 합쳐진다), 그 자취가 없으면 언제 생각이 바뀌었는지
+    잴 수 없다. 유효한 것은 **가장 늦은 것**이다.
+
+    `individual` 이 비면 **"이 묶음에서 뺐다"** 는 뜻이다. 아니라고 말한 것도
+    자료다 — 그것이 어려운 음성이고, 다음 바퀴에서 같은 짝을 또 보여 주지
+    않게 해 준다.
+    """
+    box = models.ForeignKey(Box, on_delete=models.CASCADE,
+                            related_name="identifications")
+    individual = models.ForeignKey(Individual, on_delete=models.CASCADE,
+                                   null=True, blank=True,
+                                   related_name="identifications",
+                                   help_text="NULL 이면 '이 개체가 아니다'")
+    # **무엇을 보고 정했나.** 군집이 보여 준 묶음에서 왔는지, 사람이 직접
+    # 찾은 것인지. 나중에 "그 군집이 얼마나 맞았나" 를 이것으로 잰다
+    source = models.CharField(max_length=20, default="human",
+                              help_text="human · cluster:<run> …")
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL,
+                                 on_delete=models.PROTECT, null=True, blank=True,
+                                 related_name="identifications")
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [models.Index(fields=["box", "-id"]),
+                   models.Index(fields=["individual", "-id"])]
