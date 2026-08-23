@@ -412,3 +412,10 @@ class PolygonEditFlagTests(SimpleTestCase):
     def test_an_untouched_seed_still_does_not_save(self):
         """상자 네모가 사람이 그린 마스크인 척 들어가면 안 된다."""
         self.assertIn("seeded = shape(out)", self.block("seed"))
+
+    def test_facing_can_be_set_on_the_edit_screen(self):
+        """화면은 앞쪽을 그리고 저장도 실어 보내는데 **누를 자리가 없었다** —
+        `HANDOFF` 는 여기서 `f` 가 된다고 적어 두었고 실제로는 안 됐다."""
+        s = self.src()
+        self.assertIn('e.key === "f"', s)
+        self.assertIn("facingMoved = true", s)

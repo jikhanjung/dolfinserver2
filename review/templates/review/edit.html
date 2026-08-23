@@ -69,7 +69,7 @@
     <span id="face"></span></span>
   <span style="flex:1"></span>
   <span class="stat">
-    <kbd>노란 점</kbd>밑동 <kbd>f</kbd>앞쪽 ·
+    <kbd>노란 점</kbd>밑동 <kbd>f</kbd>앞쪽(모름→왼쪽→오른쪽) ·
     <kbd>끌기</kbd>상자로 윤곽 점 고르기 (<kbd>Shift</kbd>더하기) ·
     고른 점은 <kbd>함께</kbd> 움직이고 <kbd>Del</kbd>로 지운다 ·
     <kbd>휠</kbd>확대 · <kbd>Space</kbd>누른 채 움직이면 이동
@@ -458,6 +458,23 @@ addEventListener("keydown", e => {
     pts = pts.filter((_, i) => !sel.has(i));
     sel = new Set();          // 자리가 밀렸으니 번호로 든 선택은 뜻을 잃는다
     warn(""); draw();
+  } else if (e.key === "f") {
+    e.preventDefault();
+    // **앞쪽(머리 쪽)을 여기서도 찍는다.** 화면은 이미 그것을 그리고 있었고
+    // (`face`·`guessed`) 저장도 실어 보내고 있었는데(`facingMoved`) **누를
+    // 자리만 없었다** — 그래서 `HANDOFF` 는 여기서 `f` 가 된다고 적어 두었고
+    // 실제로는 안 됐다. 밑동을 크게 띄워 놓고 정작 어느 쪽이 앞인지는 격자로
+    // 돌아가 눌러야 했다.
+    //
+    // 격자와 같은 규칙으로 돈다(`models.FACING` 순서: 모름 → 왼쪽 → 오른쪽).
+    // 값이 셋이고 기본이 "모름" 이라 목표에 한두 번에 닿으므로 순환이 맞다 —
+    // 가르는 것은 순환이냐가 아니라 **중간값이 판정으로 남느냐**이고, 여기서는
+    // 남지 않는다(저장은 '저장하고 닫기' 한 번뿐이다).
+    if (T.cls !== "fin")
+      return warn("앞쪽은 **등지느러미에만** 뜻이 있다 — 밑동 현과 같다.");
+    const order = FACINGS.map(([k]) => k);
+    T.facing = order[(order.indexOf(T.facing || "") + 1) % order.length];
+    facingMoved = true; warn(""); draw();
   } else if (e.key === "n") { e.preventDefault(); seed(); }
   else if (e.key === "0") fit();
   else if (e.key === "Escape") {
