@@ -73,6 +73,14 @@
           color:var(--dim); text-align:center; font-size:12.5px;
           margin-bottom:7px }
   .drop.over { border-color:var(--no); color:var(--no) }
+  /* **맨 아래 빈 상자.** 단추를 눌러 만들고 다시 끄는 것은 걸음이 둘이다 —
+     끌어 넣는 그 동작 하나로 상자가 생기게 한다. 넣고 나면 아래에 또 하나
+     빈 것이 생기므로 "다음 개체" 가 늘 준비되어 있다 */
+  .box.new { border-style:dashed; background:none }
+  .box.new .hd { color:var(--dim); font-size:12.5px; justify-content:center;
+                 padding:14px 8px }
+  .box.new.over { border-style:solid; border-color:var(--ok);
+                  background:#16302b; color:var(--ok) }
   .warn { margin:14px; padding:10px 13px; background:#2a1416;
           border:1px solid #5c2a2f; border-left:3px solid var(--no);
           border-radius:6px; color:#ffc9cd; font-size:13px; max-width:74ch }
@@ -112,7 +120,6 @@
   <div id="grid"></div>
   <div id="side">
     <div class="top">
-      <button class="pri" id="newbox">새 상자</button>
       <span class="stat" id="selinfo">고른 것 0</span>
     </div>
     <div id="boxes"></div>
@@ -171,7 +178,10 @@ function drawBoxes() {
         <div class="thumbs">${(mine[b.id] || []).map(id =>
           `<img src="/reid/chip/${id}.png" data-id="${id}" loading="lazy"
                 title="눌러서 격자에서 찾기">`).join("")}</div>
-      </div>`).join("");
+      </div>`).join("")
+    + `<div class="box new" data-box="new">
+         <div class="hd">여기로 끌면 <b>새 상자</b></div>
+       </div>`;
   bindBoxes();
 }
 
@@ -223,7 +233,16 @@ function bindBoxes() {
       ev.preventDefault(); el.classList.remove("over");
       let ids = [];
       try { ids = JSON.parse(ev.dataTransfer.getData("text/plain")); } catch (x) {}
-      if (ids.length) await assign(el.id === "unbox" ? null : +el.dataset.box, ids);
+      if (!ids.length) return;
+      if (el.dataset.box === "new") {
+        const r = await post("/api/reid/box", {});
+        if (!r) return;
+        BOXES.push({id: r.id, name: r.name, n: 0});
+        await assign(r.id, ids);
+        document.getElementById("boxes").scrollTop = 1e9;
+        return;
+      }
+      await assign(el.id === "unbox" ? null : +el.dataset.box, ids);
     };
   });
   document.querySelectorAll(".box .nm").forEach(el => {
@@ -270,41 +289,6 @@ async function rename(id, name) {
   b.name = r.name;
   draw();
 }
-
-document.getElementById("newbox").onclick = async () => {
-  const r = await post("/api/reid/box", {});
-  if (!r) return;
-  BOXES.push({id: r.id, name: r.name, n: 0});
-  // **고른 것이 있으면 만들자마자 넣는다** — 만들고 다시 끌게 하면 걸음이
-  // 하나 는다. 같은 개체를 골라 놓고 "새 상자" 를 누르는 것이 가장 잦다
-  if (sel.size) await assign(r.id, [...sel]);
-  else draw();
-  document.getElementById("boxes").scrollTop = 1e9;
-};
-
-// **크기는 손에 맞춰 두고 기억한다** — 화면마다 다르고, 매번 다시 맞추게
-// 하면 그것이 곧 안 쓰게 되는 이유가 된다
-const size = document.getElementById("size");
-size.value = localStorage.getItem("finSize") || 220;
-const setSize = () => {
-  document.documentElement.style.setProperty("--fin", size.value + "px");
-  localStorage.setItem("finSize", size.value);
-};
-size.oninput = setSize;
-setSize();
-
-// 상자 쪽도 같이 — 옆 칸 너비는 썸네일 두 줄이 들어가게 따라 넓힌다
-const tsize = document.getElementById("tsize");
-tsize.value = localStorage.getItem("thumbSize") || 88;
-const setThumb = () => {
-  const t = +tsize.value;
-  document.documentElement.style.setProperty("--thumb", t + "px");
-  document.documentElement.style.setProperty(
-    "--sidew", Math.max(300, t * 4 + 48) + "px");
-  localStorage.setItem("thumbSize", t);
-};
-tsize.oninput = setThumb;
-setThumb();
 
 ["sort", "fside", "hidedone"].forEach(id =>
   document.getElementById(id).onchange = () => { sel.clear(); draw(); });
