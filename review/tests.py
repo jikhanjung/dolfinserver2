@@ -419,3 +419,51 @@ class PolygonEditFlagTests(SimpleTestCase):
         s = self.src()
         self.assertIn('e.key === "f"', s)
         self.assertIn("facingMoved = true", s)
+
+
+class HandDrawnIsAnAnswerTests(TestCase):
+    """**사람이 그린 윤곽이 자료에 닿나.**
+
+    `verdict`("이 마스크가 맞나")는 마스크가 있어야 물을 수 있는 말이라 마스크
+    없는 상자에는 서버가 안 적는다. 그런데 그 상자에 사람이 **직접 윤곽을
+    그리면** 모양은 생겼는데 `verdict` 가 빈 채로 남아 `label_of` 가 `PENDING`
+    을 냈고, `export_yolo` 는 그 상자가 든 크롭을 통째로 뺐다 — 그리는 일
+    자체가 자료에 안 닿았다. `윤곽 없음` 을 다 비우고도 48개가 그랬다.
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="t/hd.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.box = Box.objects.create(image=img, x1=10, y1=10, x2=60, y2=60,
+                                      source="yolo11", conf=0.5)
+        Crop.objects.create(box=self.box, path="t/hd0.jpg", x0=0, y0=0,
+                            x1=640, y1=640, w=640, h=640)
+
+    def test_a_drawn_outline_is_positive_without_a_verdict(self):
+        rv = Review.objects.create(box=self.box, cls="fin", verdict="",
+                                   polygon="20,20 50,20 35,50")
+        self.assertEqual(rules.label_of(rv), rules.POSITIVE)
+
+    def test_nothing_drawn_is_still_pending(self):
+        """빈 `verdict` 자체가 답이 되면 안 된다 — 그것은 안 물은 것이다."""
+        rv = Review.objects.create(box=self.box, cls="fin", verdict="")
+        self.assertEqual(rules.label_of(rv), rules.PENDING)
+
+    def test_drawing_it_through_the_save_path_lands_as_positive(self):
+        """화면이 보내는 그대로 넣어 본다 — 규칙과 저장이 갈라지면 못 잡는다."""
+        res = self.client.post("/api/review", data=json.dumps({"items": [
+            {"box_id": self.box.id, "cls": "fin", "edges": "both",
+             "verdict": "fix", "facing": "",
+             "polygon": [[20, 20], [50, 20], [35, 50]],
+             "polygon_edited": True}]}),
+            content_type="application/json")
+        self.assertEqual(res.status_code, 200)
+        rv = Review.objects.get(box=self.box)
+        self.assertEqual(rv.verdict, "")      # 마스크가 없으니 안 적는다
+        self.assertNotEqual(rv.polygon, "")   # 그린 것은 남는다
+        self.assertEqual(rules.label_of(rv), rules.POSITIVE)
+
+    def test_none_stays_background_even_with_a_polygon(self):
+        rv = Review.objects.create(box=self.box, cls="none",
+                                   polygon="20,20 50,20 35,50")
+        self.assertEqual(rules.label_of(rv), rules.BACKGROUND)
