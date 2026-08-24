@@ -49,8 +49,26 @@ db/fin.db                                  사람의 판정 5,879건 — 다시 
 db/dolfinserver_prod_2026-08-17.sqlite3    옛 운영 DB · 사진 544,585 · 상자 999,528
 ```
 
-`.gitignore` 가 `db/` 를 통째로 무시한다. 백업은 저장소 밖
-`../fin.db.*.bak` (`*.db` 규칙이 `.bak` 을 안 잡는다).
+`.gitignore` 가 `db/` 를 통째로 무시한다.
+
+**백업은 NAS 로 뜬다** — `manage.py backup` (2026-08-24 에 붙였다).
+
+```
+/mnt/p/JikhanJung/dolfinserver2_backup/
+  db/fin.db.<날짜>.bak    날짜별로 쌓는다 (30일 치)
+  weights/<run>/best.pt   이름별로 한 벌 · 내용이 같으면 건너뛴다
+  MANIFEST.<날짜>.json    그날 무엇이 있었나 · sha256
+```
+
+**다시 만들 수 없는 것만 든다** — 크롭·자료 꾸러미·조각은 `fin.db` 와 사진에서
+다시 뽑는다. sqlite **온라인 백업 API**(`Connection.backup`)로 뜨므로 검토
+화면이 열려 있어도 안전하고, 뜬 뒤에 `integrity_check` 로 **읽어 본다** —
+확인 안 한 백업은 백업이 아니다.
+
+옛 운영 DB 는 NAS 가 날마다 01:00 에 따로 뜨고 있다(`dolfinid_backup/`).
+**정작 다시 만들 수 없는 `fin.db` 가 그 레인 밖이었다.**
+
+저장소 밖 로컬 사본도 있다 — `../fin.db.*.bak` (`*.db` 규칙이 `.bak` 을 안 잡는다).
 
 ## 검출기 — 정밀도를 쟀다 (690/690)
 

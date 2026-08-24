@@ -8,6 +8,8 @@
 import io
 import json
 import re
+from datetime import date
+from pathlib import Path
 
 import numpy as np
 
@@ -893,3 +895,77 @@ class MaskClassTests(TestCase):
         st = rules.resolve(self.box)
         self.assertEqual(st["mask"].cls, "")
         self.assertEqual(rules.label_of(st["review"]), rules.PENDING)
+
+
+class BackupTests(TestCase):
+    """**확인 안 한 백업은 백업이 아니다.**
+
+    형제 프로젝트가 프레임 229장을 잃은 것이 그 자리였다. `fin.db` 는 사람의
+    판정이라 다시 만들 수 없고, 그것을 잃으면 오늘까지 한 검토가 통째로
+    사라진다.
+
+    시험은 메모리 DB 로 도므로 `--db` 로 진짜 파일을 대 준다 — 여기서 재는
+    것은 **뜨고 · 읽어 보고 · 곁파일을 안 남기고 · 오래된 것을 지우는** 절차다.
+    """
+
+    def setUp(self):
+        import sqlite3
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.src = self.tmp / "fin.db"
+        c = sqlite3.connect(self.src)
+        c.execute("create table finseg_individual (id integer primary key,"
+                  " name text)")
+        c.executemany("insert into finseg_individual (name) values (?)",
+                      [("JJ01",), ("JJ02",)])
+        c.commit()
+        c.execute("PRAGMA journal_mode=WAL")     # 우리 DB 와 같은 모드로
+        c.close()
+
+    def run_it(self, out, **kw):
+        from django.core.management import call_command
+        buf = io.StringIO()
+        call_command("backup", out=str(out), db=str(self.src),
+                     no_weights=True, stdout=buf, **kw)
+        return buf.getvalue()
+
+    def test_it_writes_a_readable_copy(self):
+        import sqlite3
+        out = self.tmp / "nas"
+        out.mkdir()
+        self.run_it(out)
+        got = list((out / "db").glob("fin.db.*.bak"))
+        self.assertEqual(len(got), 1)
+        # **읽어 본다** — 뜬 줄 알고 지나가는 것이 가장 나쁘다
+        c = sqlite3.connect(f"file:{got[0]}?mode=ro", uri=True)
+        self.assertEqual(c.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(
+            c.execute("select count(*) from finseg_individual").fetchone()[0], 2)
+        c.close()
+
+    def test_no_wal_sidecars_are_left(self):
+        """백업 옆에 `-wal` 이 놓여 있으면 **복원할 때 무엇이 진짜인지
+        헷갈린다** — 하나만 옮기면 조용히 옛 상태가 된다."""
+        out = self.tmp / "nas"
+        out.mkdir()
+        self.run_it(out)
+        left = [p.name for p in (out / "db").iterdir()]
+        self.assertEqual([p for p in left if p.endswith(("-wal", "-shm"))], [])
+
+    def test_it_refuses_when_the_target_is_not_there(self):
+        """**없는 데다 뜨면 뜬 줄 알고 지나간다** — NAS 가 안 붙었을 때다."""
+        from django.core.management.base import CommandError
+        with self.assertRaises(CommandError) as e:
+            self.run_it("/그런/데는/없다/backup")
+        self.assertIn("NAS", str(e.exception))
+
+    def test_old_copies_are_dropped_but_the_newest_stays(self):
+        out = self.tmp / "nas"
+        d = out / "db"
+        d.mkdir(parents=True)
+        for day in ("2020-01-01", "2020-01-02", "2020-01-03"):
+            (d / f"fin.db.{day}.bak").write_bytes(b"x")
+        self.run_it(out, keep=2)
+        left = sorted(p.name for p in d.glob("fin.db.*.bak"))
+        self.assertEqual(len(left), 2)
+        self.assertIn(date.today().isoformat(), left[-1])
