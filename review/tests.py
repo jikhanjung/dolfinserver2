@@ -593,8 +593,16 @@ class DetectPageTests(TestCase):
             self.assertIn('id="drop"', html)
 
     def test_the_rule_numbers_come_from_one_place(self):
-        """화면에 박아 두면 `onnxdet` 을 고쳐도 JS 가 옛 값을 쓴다."""
+        """화면에 박아 두면 `onnxdet` 을 고쳐도 JS 가 옛 값을 쓴다.
+
+        **받아 온 것이 없는 기계에서는 잴 것이 없다** — 그때 뜨는 것은 받는
+        법이지 화면이 아니라서 `PAD`(114)가 나올 자리가 아예 없다. 형제 시험
+        둘과 같은 자리에서 가린다. 그렇다고 이 시험이 헐거워지지는 않는다 —
+        받아 둔 기계(2080ti)에서는 그대로 돈다.
+        """
         html = self.page()
+        if 'id="drop"' not in html:
+            self.skipTest("`/detect` 에 받아 온 것이 없다 — 잴 화면이 없다")
         self.assertIn(str(onnxdet.IMGSZ), html)
         self.assertIn(str(onnxdet.PAD), html)
 
