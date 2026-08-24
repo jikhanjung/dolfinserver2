@@ -863,6 +863,97 @@ class ReidTests(TestCase):
         self.assertEqual(n[hold.id], 0)
 
 
+class ReidEvalTests(TestCase):
+    """**자를 재는 시험이다.** `reid_eval` 이 내는 표가 판단의 근거가 되는데,
+    순위 계산이 조용히 틀리면 그 표는 멀쩡해 보이면서 방법을 잘못 고르게 한다.
+
+    화면이 아니라 **아는 답을 넣고 나오는 숫자**로 잰다.
+    """
+
+    def cmd(self):
+        from finseg.management.commands import reid_eval
+        return reid_eval.Command()
+
+    def test_the_rank_of_the_first_hit_is_one_based(self):
+        """`첫 정답 1위` 는 맨 앞이라는 뜻이다 — 0위가 나오면 표가 한 칸씩
+        낙관 쪽으로 어긋난다."""
+        import numpy as np
+        c = self.cmd()
+        sims = np.array([9.0, 8.0, 7.0])
+        valid = np.array([True, True, True])
+        pos = np.array([True, False, False])
+        top1, first, ap = c._score(sims, valid, pos)
+        self.assertTrue(top1)
+        self.assertEqual(first, 1)
+        self.assertAlmostEqual(ap, 1.0)
+
+    def test_a_hidden_candidate_does_not_take_a_rank(self):
+        """후보에서 뺀 것(같은 날·반대쪽)이 순위를 차지하면 안 된다.
+        **자리만 차지하고 사라지면 정답의 순위가 뒤로 밀린다.**"""
+        import numpy as np
+        c = self.cmd()
+        sims = np.array([9.0, 8.0, 7.0])
+        valid = np.array([False, True, True])      # 맨 앞을 뺀다
+        pos = np.array([False, False, True])
+        top1, first, ap = c._score(sims, valid, pos)
+        self.assertFalse(top1)
+        self.assertEqual(first, 2)                 # 3위가 아니라 2위다
+
+    def test_it_says_nothing_when_the_answer_is_not_a_candidate(self):
+        """정답이 후보에 없으면 **못 잰 것**이지 0점이 아니다."""
+        import numpy as np
+        c = self.cmd()
+        r = c._score(np.array([1.0, 2.0]), np.array([True, True]),
+                     np.array([False, False]))
+        self.assertIsNone(r)
+
+    def test_average_precision_counts_every_hit(self):
+        """정답이 둘이면 mAP 는 둘을 다 본다 — 첫 정답만 보는 자와 다르다."""
+        import numpy as np
+        c = self.cmd()
+        # 순위 1·3 이 정답: (1/1 + 2/3) / 2
+        _, first, ap = c._score(np.array([9.0, 8.0, 7.0]),
+                                np.array([True, True, True]),
+                                np.array([True, False, True]))
+        self.assertEqual(first, 1)
+        self.assertAlmostEqual(ap, (1.0 + 2 / 3) / 2)
+
+
+class ReidCatalogAsOfTests(TestCase):
+    """**옛 정답에 새 자를 댈 수 있어야 한다.** 안 그러면 자가 좋아진 것인지
+    정답이 늘어서인지 못 가른다 — 표가 쌓이는 것이 그러라고 있는 것이다.
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="t/e.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.a, self.b = [
+            Box.objects.create(image=img, x1=10 * i, y1=10, x2=60 * (i + 1),
+                               y2=60, source="yolov5") for i in range(2)]
+        self.ind = Individual.objects.create(name="A")
+
+    def test_it_gives_back_the_catalog_of_that_moment(self):
+        from finseg import reid
+        from finseg.models import Identification
+        first = Identification.objects.create(box=self.a, individual=self.ind)
+        Identification.objects.create(box=self.b, individual=self.ind)
+        self.assertEqual(sorted(reid.catalog()[self.ind.id]),
+                         sorted([self.a.id, self.b.id]))
+        # 첫 판정까지만 — 뒤엣것은 아직 없던 일이다
+        self.assertEqual(reid.catalog(as_of=first.id)[self.ind.id],
+                         [self.a.id])
+
+    def test_taking_a_fin_out_is_also_an_answer_at_that_moment(self):
+        """뺀 것(`individual=NULL`)도 그때의 답이다 — 되살릴 때 함께 산다."""
+        from finseg import reid
+        from finseg.models import Identification
+        Identification.objects.create(box=self.a, individual=self.ind)
+        out = Identification.objects.create(box=self.a, individual=None)
+        self.assertNotIn(self.ind.id, reid.catalog())
+        self.assertEqual(reid.catalog(as_of=out.id - 1)[self.ind.id],
+                         [self.a.id])
+
+
 class MaskClassTests(TestCase):
     """**엔진이 무엇이라 했는지도 담는다.**
 
