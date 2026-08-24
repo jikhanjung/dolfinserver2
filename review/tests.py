@@ -804,3 +804,50 @@ class ReidTests(TestCase):
         self.assertEqual(reid.catalog(), {})           # 개체로 안 센다
         self.assertEqual(reid.effective_id(self.a).individual_id, hold.id)
         self.assertEqual(reid.decided([self.a.id]), {self.a.id})
+
+    def test_moving_out_of_holding_leaves_holding(self):
+        """**보류함에서 상자로 옮기면 보류함에서 빠져야 한다.**
+
+        보류함은 개체가 아니라 자리라 `catalog()` 가 안 세는데, 그것만 덮여
+        있었고 **거기서 나가는 길**은 안 덮여 있었다. 실제로 그 의심이 한 번
+        나왔고 확인하는 데 손이 갔다 — 시험이 있으면 한 줄로 끝난다.
+        """
+        self.client.get("/reid")                 # 보류함이 여기서 생긴다
+        hold = Individual.objects.get(holding=True)
+        ind = self.box().json()
+        self.assign(individual=hold.id, boxes=[self.a.id, self.b.id])
+        self.assign(individual=ind["id"], boxes=[self.a.id])
+
+        # 유효 판정은 새 상자다. 보류함에는 안 남는다
+        self.assertEqual(reid.effective_id(self.a).individual_id, ind["id"])
+        latest = {}
+        for box_id, i in (Identification.objects.order_by("id")
+                          .values_list("box_id", "individual_id")):
+            latest[box_id] = i
+        self.assertEqual([b for b, i in latest.items() if i == hold.id],
+                         [self.b.id])
+        # 자취는 남는다 — 언제 생각이 바뀌었는지 잴 수 있어야 한다
+        self.assertEqual(
+            [x.individual_id for x in
+             Identification.objects.filter(box=self.a).order_by("id")],
+            [hold.id, ind["id"]])
+
+    def test_the_page_shows_the_move(self):
+        """화면이 받는 값도 함께 잰다 — DB 는 맞는데 화면이 안 따라오는 것이
+        이 저장소에서 가장 자주 겪은 모양이다."""
+        self.client.get("/reid")
+        hold = Individual.objects.get(holding=True)
+        ind = self.box().json()
+        self.assign(individual=hold.id, boxes=[self.a.id])
+        self.assign(individual=ind["id"], boxes=[self.a.id])
+        html = self.client.get("/reid").content.decode()
+        m = re.search(r"const ITEMS = (\[.*?\]);", html, re.S)
+        if m:                       # 조각 목록이 있는 기계에서만 잴 수 있다
+            by = {i["id"]: i for i in json.loads(m.group(1))}
+            if self.a.id in by:
+                self.assertEqual(by[self.a.id]["in"], ind["id"])
+        # 상자 목록의 장수도 보류함이 아니라 새 상자에 붙어야 한다
+        b = json.loads(re.search(r"let BOXES = (\[.*?\]);", html, re.S).group(1))
+        n = {x["id"]: x["n"] for x in b}
+        self.assertEqual(n[ind["id"]], 1)
+        self.assertEqual(n[hold.id], 0)
