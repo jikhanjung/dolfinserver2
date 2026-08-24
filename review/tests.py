@@ -981,6 +981,52 @@ class ReidChipRuleTests(TestCase):
         self.assertTrue(reid.usable(state)[0])
 
 
+class ReidChainTests(SimpleTestCase):
+    """**화면이 이 값으로 정렬한다.** 없거나 어긋나면 `닮은 것끼리` 가 `NaN`
+    비교가 되어 **조용히 아무 순서나 낸다** — 200 이 떨어지고 화면도 멀쩡한데
+    정렬만 안 되는, 이 저장소가 가장 자주 겪은 종류다. 실제로 `reid/v2` 를
+    만들 때 이 값을 빠뜨렸고 그대로 며칠 쓸 뻔했다.
+    """
+
+    def test_each_side_is_ranked_from_zero(self):
+        import numpy as np
+        from finseg import reid
+        emb = np.array([[1., 0], [.9, .1], [0, 1.], [.1, .9], [.5, .5]])
+        fac = np.array(["left", "left", "right", "right", "left"])
+        out = reid.sim_chain(emb, fac)
+        for side in ("left", "right"):
+            r = sorted(out[fac == side].tolist())
+            self.assertEqual(r, list(range(len(r))), f"{side} 쪽 등수가 0..n-1 이 아니다")
+
+    def test_the_two_sides_are_never_woven_together(self):
+        """좌·우를 한 줄에 섞으면 **서로 다른 두 면이 이웃**이 된다."""
+        import numpy as np
+        from finseg import reid
+        emb = np.eye(4)
+        fac = np.array(["left", "right", "left", "right"])
+        out = reid.sim_chain(emb, fac)
+        self.assertEqual(sorted(out[fac == "left"].tolist()), [0, 1])
+        self.assertEqual(sorted(out[fac == "right"].tolist()), [0, 1])
+
+    def test_neighbours_in_the_chain_are_more_alike_than_chance(self):
+        """줄이 실제로 닮은 것끼리인가 — 그러라고 만든 값이다."""
+        import numpy as np
+        from finseg import reid
+        rng = np.random.default_rng(3)
+        # 세 무리를 만들어 둔다 — 줄이 무리를 따라 흘러야 한다
+        emb = np.concatenate([rng.normal(c, .05, (12, 8))
+                              for c in (np.r_[1., np.zeros(7)],
+                                        np.r_[0, 1., np.zeros(6)],
+                                        np.r_[0, 0, 1., np.zeros(5)])])
+        emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+        fac = np.array(["left"] * len(emb))
+        order = np.argsort(reid.sim_chain(emb, fac))
+        nb = np.mean([emb[order[i]] @ emb[order[i + 1]] for i in range(len(order) - 1)])
+        rd = np.mean([emb[rng.integers(len(emb))] @ emb[rng.integers(len(emb))]
+                      for _ in range(500)])
+        self.assertGreater(nb, rd + .2, "줄 이웃이 무작위와 다를 바 없다")
+
+
 class ReidProbeSplitTests(SimpleTestCase):
     """**배울 짝에 재는 쪽이 끼면 성적이 거짓말을 한다.**
 

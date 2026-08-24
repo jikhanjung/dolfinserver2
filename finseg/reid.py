@@ -269,6 +269,47 @@ def cluster(dist, thres, linkage="complete"):
     return sorted((groups[i] for i in alive), key=len, reverse=True)
 
 
+def sim_chain(emb, facing):
+    """닮은 것끼리 한 줄로 편 등수 → 각 조각의 `sim`.
+
+    격자를 훑을 때 **이웃이 닮아 있어야 눈이 덜 움직인다.** 묶음으로 보이는
+    것은 그만뒀지만(묶음이 밝기로 뭉쳤고 특이한 개체가 오히려 빠졌다) 순서로
+    돕는 것은 남았다 — 판단은 사람이 하고 모델은 순서만 돕는다.
+
+    **좌·우를 따로 편다.** `normalize` 가 한쪽을 거울처럼 뒤집으므로 한 줄에
+    섞으면 서로 다른 두 면이 이웃이 된다. 화면도 쪽을 먼저 가르고 그 안에서
+    이 등수를 쓴다.
+
+    **가장 외딴 것에서 출발한다** — 아무 데서나 시작하면 돌 때마다 줄이
+    달라지고, 사람이 "아까 그 근처" 를 못 찾는다. 여기서 출발하면 줄이
+    자료로 정해진다.
+    """
+    n = len(emb)
+    out = np.zeros(n, int)
+    X = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-9)
+    for side in np.unique(facing):
+        idx = np.where(facing == side)[0]
+        if len(idx) < 2:
+            for r, i in enumerate(idx):
+                out[i] = r
+            continue
+        Z = X[idx]
+        S = Z @ Z.T
+        np.fill_diagonal(S, -np.inf)
+        cur = int(np.argmin(S.max(1)))          # 가장 외딴 것
+        left = np.ones(len(idx), bool)
+        left[cur] = False
+        order = [cur]
+        for _ in range(len(idx) - 1):
+            s = np.where(left, S[cur], -np.inf)
+            cur = int(np.argmax(s))
+            left[cur] = False
+            order.append(cur)
+        for r, j in enumerate(order):
+            out[idx[j]] = r
+    return out
+
+
 def neighbours(dist, k=10):
     """번호마다 **가장 닮은 k 개**와 그 거리.
 

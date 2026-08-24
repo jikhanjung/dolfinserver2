@@ -184,6 +184,7 @@ class Command(BaseCommand):
             emb = self._embed(np.stack(chips), o["backbone"])
             np.savez_compressed(out / o["emb_name"], box_id=ids, facing=fac, emb=emb)
             w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
+            self._chain(out, ids, fac, emb, rows, w)
 
     def _emb_only(self, o, out, w):
         """조각은 그대로 두고 임베딩만 다시 뽑는다.
@@ -201,6 +202,25 @@ class Command(BaseCommand):
         np.savez_compressed(out / o["emb_name"], box_id=z["box_id"],
                             facing=z["facing"], emb=emb)
         w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
+        self._chain(out, z["box_id"], z["facing"], emb, None, w)
+
+    def _chain(self, out, ids, fac, emb, rows, w):
+        """`items.json` 에 `sim`(닮은 것끼리 편 등수)을 적는다.
+
+        **화면이 이 값으로 정렬한다.** 없으면 `a.sim - b.sim` 이 `NaN` 이 되어
+        `닮은 것끼리` 가 조용히 아무 순서나 낸다 — 200 이 떨어지고 화면도
+        멀쩡한데 정렬만 안 되는, 이 저장소가 가장 자주 겪은 종류다.
+        """
+        order = reid.sim_chain(emb, np.asarray(fac))
+        f = out / "items.json"
+        d = json.loads(f.read_text()) if f.exists() else {"items": rows or []}
+        pos = {int(b): int(r) for b, r in zip(ids, order)}
+        n = 0
+        for it in d["items"]:
+            if it["id"] in pos:
+                it["sim"] = pos[it["id"]]; n += 1
+        f.write_text(json.dumps(d, ensure_ascii=False))
+        w(f"  `sim` 을 {n:,}개에 적었다 (좌·우 각각 · 가장 외딴 것부터)")
 
     def _embed(self, X, backbone="resnet18"):
         """**학습 없는 사전학습 특징.** `resnet18` 은 `reid_train` 의 기준선과
