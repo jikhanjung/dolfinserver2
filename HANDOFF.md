@@ -54,9 +54,10 @@ db/dolfinserver_prod_2026-08-17.sqlite3    옛 운영 DB · 사진 544,585 · �
 **백업은 NAS 로 뜬다** — `manage.py backup` (2026-08-24 에 붙였다).
 
 ```
-/mnt/p/JikhanJung/dolfinserver2_backup/
+/mnt/p/JikhanJung/dolfinserver2_backup/          537MB
   db/fin.db.<날짜>.bak    날짜별로 쌓는다 (30일 치)
   weights/<run>/best.pt   이름별로 한 벌 · 내용이 같으면 건너뛴다
+  derived/crops · reid     `--derived` 를 줄 때만 (다른 기계로 옮기려는 것)
   MANIFEST.<날짜>.json    그날 무엇이 있었나 · sha256
 ```
 
@@ -67,6 +68,33 @@ db/dolfinserver_prod_2026-08-17.sqlite3    옛 운영 DB · 사진 544,585 · �
 
 옛 운영 DB 는 NAS 가 날마다 01:00 에 따로 뜨고 있다(`dolfinid_backup/`).
 **정작 다시 만들 수 없는 `fin.db` 가 그 레인 밖이었다.**
+
+### 다른 기계(`m710q`)에서 일하려면
+
+GPU 가 필요 없는 일 — 검토·개체 분류·문서 — 은 거기서 해도 된다. 다만
+**`fin.db` 는 한 기계에서만 연다.**
+
+```bash
+# 2080ti 에서 — 떠 놓고 손을 뗀다
+python manage.py backup --derived
+
+# m710q 에서
+git pull
+cp /mnt/p/.../dolfinserver2_backup/db/fin.db.<날짜>.bak db/fin.db
+cp -r /mnt/p/.../dolfinserver2_backup/derived/crops .
+cp -r /mnt/p/.../dolfinserver2_backup/derived/reid .
+python manage.py migrate && python manage.py runserver 0.0.0.0:8900
+
+# 일이 끝나면 거기서 다시 떠서 2080ti 로 가져온다
+python manage.py backup --out /mnt/p/.../dolfinserver2_backup
+```
+
+**양쪽에서 동시에 열면 어느 쪽 판정이 이기는지 아무도 모른다.** 합치는 길이
+없다 — `Review`·`Identification` 이 둘 다 쌓이는 표라 번호가 겹친다.
+
+**`m710q` 에서 `git pull` 하면 그쪽의 옛 `crops/`·`db/fin.db` 가 워킹트리에서
+지워진다** (`5d63a5c` 가 추적을 멈춘 커밋이다). 거기 판정 717건이 남아 있다면
+**pull 전에 먼저 떠 둘 것.**
 
 저장소 밖 로컬 사본도 있다 — `../fin.db.*.bak` (`*.db` 규칙이 `.bak` 을 안 잡는다).
 

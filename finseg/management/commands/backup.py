@@ -13,7 +13,20 @@
 | 사진 | NAS 가 원본이다 |
 | 코드 | git 에 있다 |
 
-그래서 **`fin.db` 와 가중치만** 뜬다. 나머지는 뜨는 값보다 자리 값이 크다.
+그래서 기본은 **`fin.db` 와 가중치만**이다. 나머지는 뜨는 값보다 자리 값이 크다.
+
+## `--derived` 는 다른 일이다 — **다른 기계로 옮기려는 것**
+
+크롭과 re-ID 조각은 다시 만들 수 있지만, **다시 만들려면 사진(NAS)과 시간이
+든다.** GPU 없는 기계에서 검토·분류만 하려는데 크롭부터 다시 자르고 있으면
+그 자리에서 반나절이 간다.
+
+그래서 `--derived` 를 주면 그것들도 함께 뜬다. **한 벌만 두고 바뀐 것만
+옮긴다**(크기·mtime 이 같으면 건너뛴다) — 크롭 3,005장을 날마다 다시 쓸 이유가
+없다.
+
+**다만 `fin.db` 는 한 기계에서만 연다.** 옮겨 가서 일했으면 거기서 다시 떠서
+가져와야 하고, 양쪽에서 동시에 열면 어느 쪽 판정이 이기는지 아무도 모른다.
 
 ## `fin.db` 는 날짜별, 가중치는 이름별
 
@@ -65,6 +78,8 @@ class Command(BaseCommand):
         p.add_argument("--keep", type=int, default=30,
                        help="`fin.db` 를 며칠 치 남길지 (0이면 안 지운다)")
         p.add_argument("--no-weights", action="store_true")
+        p.add_argument("--derived", action="store_true",
+                       help="크롭·re-ID 조각도 함께 (다른 기계로 옮길 때)")
         p.add_argument("--dry-run", action="store_true")
 
     def handle(self, **o):
@@ -160,6 +175,29 @@ class Command(BaseCommand):
                     if src_e.exists():
                         shutil.copyfile(src_e, tgt.parent / extra)
 
+        # ---- 파생물 — 다른 기계로 옮길 때만 -----------------------------
+        if o["derived"]:
+            w("")
+            for name, src_d in (("crops", Path("crops")),
+                                ("reid", Path("reid"))):
+                if not src_d.is_dir():
+                    continue
+                n_new = n_same = 0
+                for f in sorted(src_d.rglob("*")):
+                    if not f.is_file():
+                        continue
+                    tgt = out / "derived" / name / f.relative_to(src_d)
+                    # **크기와 mtime 으로 가린다** — 3,005장에 sha256 을 걸면
+                    # 뜨는 것보다 재는 것이 오래 걸린다. 파생물이라 그 정도면 된다
+                    if tgt.exists() and tgt.stat().st_size == f.stat().st_size:
+                        n_same += 1
+                        continue
+                    if not o["dry_run"]:
+                        tgt.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(f, tgt)
+                    n_new += 1
+                w(f"  {name:8s} 새로 뜬 것 {n_new:,} · 같아서 건너뛴 것 {n_same:,}")
+
         if o["dry_run"]:
             w("\n--dry-run 이라 아무것도 쓰지 않았다.")
             return
@@ -172,5 +210,12 @@ class Command(BaseCommand):
             "weights": kept,
         }, ensure_ascii=False, indent=1))
         w(f"\n{out}")
-        w("  **다시 만들 수 없는 것만 든다** — 크롭·자료 꾸러미·조각은 안 뜬다."
-          " `fin.db` 와 사진에서 다시 뽑는다")
+        if o["derived"]:
+            w("  크롭·조각도 함께 떴다 (`--derived`) — **다른 기계로 옮기려는"
+              " 것**이지 백업이 아니다")
+        else:
+            w("  **다시 만들 수 없는 것만 든다** — 크롭·자료 꾸러미·조각은 안"
+              " 뜬다. `fin.db` 와 사진에서 다시 뽑는다")
+        w("  **`fin.db` 는 한 기계에서만 연다.** 옮겨 가서 일했으면 거기서 다시"
+          " 떠서 가져올 것 —")
+        w("  양쪽에서 동시에 열면 어느 쪽 판정이 이기는지 아무도 모른다")
