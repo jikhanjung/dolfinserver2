@@ -103,6 +103,9 @@ class Command(BaseCommand):
         p.add_argument("--photos", default=str(settings.FIN_PHOTOS))
         p.add_argument("--boxes", type=int, default=2000, help="들일 상자 수")
         p.add_argument("--dates", type=int, default=20, help="쓸 관찰일 수")
+        p.add_argument("--only-dates", help="이 관찰일들만 (쉼표로). **`--dates` 의"
+                       " 고른 배치 대신 손으로 고르는 것** — 이미 들인 날을 빼고"
+                       " 새 날만 더할 때 쓴다")
         p.add_argument("--min-area", type=int, default=MIN_AREA)
         p.add_argument("--seed", type=int, default=20260815,
                        help="표본을 다시 뽑을 수 있게 씨앗을 적어 둔다")
@@ -135,11 +138,25 @@ class Command(BaseCommand):
         total = sum(len(v) for v in by_date.values())
         w(f"면적 > {o['min_area']:,} 인 상자 {total:,} 개 / 관찰일 {len(by_date)} 일")
 
-        per_date = max(1, o["boxes"] // o["dates"])
+        want = [d.strip() for d in o["only_dates"].split(",")] if o["only_dates"] else None
+        per_date = max(1, o["boxes"] // (len(want) if want else o["dates"]))
         usable = sorted(d for d, v in by_date.items() if len(v) >= per_date)
         if not usable:
             raise CommandError("쓸 만한 관찰일이 없다 — --boxes 나 --dates 를 줄일 것")
-        picked = spread(usable, o["dates"])
+        if want:
+            # **없는 날을 조용히 건너뛰지 않는다** — 날을 손으로 적는 자리라
+            # 오타 하나면 표본이 통째로 달라지는데 화면은 멀쩡해 보인다
+            missing = [d for d in want if d not in by_date]
+            thin = [d for d in want if d in by_date and d not in usable]
+            if missing:
+                raise CommandError(f"그런 관찰일이 없다: {', '.join(missing)}")
+            if thin:
+                raise CommandError(
+                    f"상자가 날마다 {per_date}개에 못 미치는 날: {', '.join(thin)}\n"
+                    f"  --boxes 를 줄이거나 다른 날을 고를 것")
+            picked = sorted(want)
+        else:
+            picked = spread(usable, o["dates"])
         w(f"관찰일 {len(picked)} 일 선택 ({picked[0]} ~ {picked[-1]}), "
           f"날마다 {per_date} 개")
 
