@@ -1,9 +1,11 @@
 # Handoff — 현재 진행 상황
 
 **2026-08-24.** 3·5단계가 둘 다 한 바퀴 돌았고 **6단계(re-ID)가 한 바퀴 돌았다.**
+**2026-08-25 에 2080ti 로 옮겨 앉았다** — 지금 `fin.db` 를 든 자리는 여기다.
 
-> **다음 사람은 `## 이어받기` 절부터 읽을 것** — 오늘 일은 m710q 에서 했고
-> 2080ti 로 옮겨 앉는 절차가 거기 있다.
+> **다음 사람은 `## 이어받기` 절부터 읽을 것** — 옮겨 앉기는 끝났고, 화면을
+> 띄울 때 `FIN_REID`·`FIN_PHOTOS` 를 줘야 하는 것이 거기 적혀 있다.
+> **다음 큰 걸음은 닫힌 집합 분류기** (`TODOs.md` 첫 항목, 출발선 43%).
 
 - **검출** `detect-v2` 완료 — 공평한 날에서 **재현율로 옛 검출기를 처음 넘었다**
 - **분할** `seg-v3-s` 로 갈아 끼웠다 — 독립 IoU 0.673 → **0.841**,
@@ -524,30 +526,57 @@ FIN_DB=<사본> FIN_CROPS=<사본 크롭> FIN_REID=<시험 격자> \
 아무것도 특징적이지 않다. **자기 자신을 매끄럽게 편 것과 견주는** 쪽으로
 바꿨다(`reid.roughness`).
 
-## 이어받기 — 2080ti 로 옮겨 앉으려면
+## 이어받기 — **2080ti 로 옮겨 앉았다** (2026-08-25)
 
-오늘(2026-08-24) 일은 **m710q** 에서 했다. `fin.db` 는 한 기계에서만 연다.
+8월 24일 일은 **m710q** 에서 했고, 그것을 **2026-08-25 에 2080ti 로 받았다.**
+지금 `fin.db` 를 든 자리는 **2080ti** 다. `fin.db` 는 한 기계에서만 연다.
+
+받은 것 — 상자 **5,882** · 판정 6,014 · 개체 판정 **1,298** · 개체 **46** ·
+마스크 21,079 · 크롭 5,882장 · 조각 `v1` 3,479 + `v2` 4,064.
+`sha256` 이 `MANIFEST.2026-08-24.json` 의 것과 맞고 `integrity_check ok` 다.
+덮어쓰기 전에 이 기계에 있던 것이 **NAS 것의 완전한 부분집합**임을 축마다
+확인했다(개체 판정·판정·상자·개체 모두 이쪽에만 있는 것 0). 그때 것은
+`db/fin.before-restore.2026-08-25.bak` 으로 옆에 두었다.
 
 ```bash
-# m710q 에서 (이미 떠 두었다)
+# 넘길 기계에서
 python manage.py backup --derived
 
-# 2080ti 에서
+# 받을 기계에서
 git pull
-B=/mnt/p/JikhanJung/dolfinserver2_backup          # 거기 NAS 는 이 경로다
-cp $B/db/fin.db.2026-08-24.bak db/fin.db
+B=$(python -c 'from finseg import nas; print(nas.root() / "dolfinserver2_backup")')
+cp $B/db/fin.db.<날짜>.<넘긴 기계>.bak db/fin.db   # 이름에 기계가 들어간다
 sha256sum db/fin.db                                # MANIFEST 와 견준다
-cp -r $B/derived/crops/. crops/                    # 5,882장
-cp -r $B/derived/reid/. reid/                      # v1 1,735 + **v2 4,059**
+rsync -a $B/derived/crops/ crops/                  # 5,882장
+rsync -a $B/derived/reid/  reid/                   # v1 3,479 + **v2 4,064**
 python manage.py migrate
-FIN_REID=reid/v2 python manage.py runserver 0.0.0.0:8900
+FIN_PHOTOS=~/dolfin-photos FIN_REID=reid/v2 python manage.py runserver 0.0.0.0:8900
 ```
 
-**`FIN_REID=reid/v2` 를 빠뜨리지 말 것.** 안 주면 화면이 옛 `reid/v1` 을 보는데,
-개체 판정이 새 조각을 가리키고 있어 **격자만 조용히 빈다.**
+**`cp -r` 말고 `rsync` 를 쓴다.** 조각 `look/` 이 4,059장이라 NAS 에서 몇 분씩
+걸리는데, 중간에 끊기면 `cp` 는 어디까지 왔는지 모른다 — 실제로 한 번 끊겨
+1,333장에서 멈췄다. `rsync` 는 있는 것을 건너뛰고 이어받는다.
+
+**`FIN_REID=reid/v2` 를 빠뜨리지 말 것.** 안 주면 화면이 옛 `reid/v1` 을 보는데
+(`settings` 의 기본값이 `v1` 이다), 개체 판정이 새 조각을 가리키고 있어
+**격자만 조용히 빈다.**
+
+**`FIN_PHOTOS` 도 빠뜨리지 말 것.** 기본값 `/srv/dolfinserver/uploads` 는 이
+기계에 없다. `~/dolfin-photos/nas → /mnt/p/JikhanJung/dolfinimage` 가 걸려
+있으니 뿌리로 `~/dolfin-photos` 를 준다 (DB 는 `nas/2016/03/15/…` 로 들고 있다).
 
 되돌릴 자리도 NAS 에 있다 — `db/fin.before-promote.2026-08-24.bak`(개체판정 574,
-옛 상자를 들이기 전). 오늘 것은 그것의 정확한 상위집합이다.
+옛 상자를 들이기 전). 지금 것은 그것의 정확한 상위집합이다.
+
+**화면까지 봤다** (2026-08-25) — `/`·`/reid`·`/photo`·`/edit`·`/compare`·
+`/detect` 가 200 이고 **이미지 세 갈래**(크롭·원본 사진·조각)가 다 나온다.
+`/reid` 가 590KB 로 온다 — 격자가 찼다는 뜻이다(빈 격자면 훨씬 작다).
+조각은 40장을 골라 sha256 을 견줬고 다른 것 0.
+
+**백업 이름에 기계가 들어간다** (2026-08-25). `fin.db.<날짜>.<기계>.bak` 이고
+`MANIFEST.<날짜>.<기계>.json` 이다 — 전에는 날짜뿐이라 **나중에 뜬 기계가
+먼저 뜬 기계의 것을 갈아 치웠다.** `--keep` 도 제 갈래만 지운다. 기계 이름
+없이 뜬 옛 `fin.db.2026-08-24.bak` 은 어느 기계 것인지 몰라 안 지운다.
 
 **2080ti 에만 있는 것**: `ultralytics`·GPU. m710q 에서는 CPU 로 돌려
 `infer` 13분 / `infer_base` 35분 / DINOv2 임베딩 6분이 걸렸다.
