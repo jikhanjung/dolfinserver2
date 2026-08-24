@@ -407,14 +407,24 @@ def effective_id(box):
     return box.identifications.order_by("-id").first()
 
 
-def catalog():
-    """개체 → 그 개체로 확정된 상자 번호들. **뺀 것은 안 센다.**"""
+def catalog(as_of=None):
+    """개체 → 그 개체로 확정된 상자 번호들. **뺀 것은 안 센다.**
+
+    `as_of` 에 `Identification` 번호를 주면 **그때의 카탈로그**를 돌려준다.
+    표가 쌓이는 것이 그러라고 있는 것이다 (`models.Identification`) — 자가
+    좋아진 것인지 정답이 늘어서인지는 **옛 정답에 새 자를 대 봐야** 갈린다.
+
+    다만 `holding` 은 개체의 **지금** 상태라 되살릴 수 없다. 그때 보류함이던
+    것이 지금 개체면 여기 들어온다 — 부르는 쪽이 그 한정을 함께 말한다.
+    """
     from collections import defaultdict
 
     from finseg.models import Identification
+    qs = Identification.objects.order_by("id")
+    if as_of is not None:
+        qs = qs.filter(id__lte=as_of)
     latest = {}
-    for i in Identification.objects.order_by("id").values_list(
-            "box_id", "individual_id"):
+    for i in qs.values_list("box_id", "individual_id"):
         latest[i[0]] = i[1]
     # **보류함은 개체가 아니다** — 카탈로그에 안 넣는다
     from finseg.models import Individual
