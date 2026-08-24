@@ -164,7 +164,7 @@ class Command(BaseCommand):
         (out / "look").mkdir(exist_ok=True)
         for r, im in zip(rows, looks):
             PImage.fromarray((np.clip(im, 0, 1) * 255).astype(np.uint8)).save(
-                out / "look" / f"{r['id']}.jpg", quality=92)
+                out / "look" / f"{r['id']:08d}.jpg", quality=92)
         w(f"{out}/chips.npz · curves.npz · items.json · look/")
 
         if not o["no_emb"]:

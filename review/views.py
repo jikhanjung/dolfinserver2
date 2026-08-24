@@ -390,7 +390,7 @@ def reid(request):
     """
     from finseg.models import Individual
 
-    root = Path(settings.BASE_DIR) / "reid" / "v1"
+    root = Path(settings.FIN_REID)
     items_f = root / "items.json"
     ready = items_f.exists() and ((root / "look").is_dir()
                                   or (root / "chips").is_dir())
@@ -511,7 +511,7 @@ def reid_chip(request, box_id):
     정렬은 둘이 같다(`reid.frame`). 사람이 "이건 달라" 라고 한 것이 모델에게는
     다른 자리였다면 그 판정을 못 쓴다.
     """
-    root = Path(settings.BASE_DIR) / "reid" / "v1"
+    root = Path(settings.FIN_REID)
     for sub_dir, ext, mime in (("look", "jpg", "image/jpeg"),
                                ("chips", "png", "image/png")):
         f = root / sub_dir / f"{int(box_id):08d}.{ext}"

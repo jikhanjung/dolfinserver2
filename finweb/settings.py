@@ -97,5 +97,8 @@ LOGIN_REDIRECT_URL = "/"
 # 사진은 NAS, 크롭과 학습 자료는 파생물이다. 전부 gitignore 다.
 FIN_PHOTOS = Path(os.environ.get("FIN_PHOTOS", "/srv/dolfinserver/uploads"))
 FIN_CROPS = Path(os.environ.get("FIN_CROPS", BASE_DIR / "crops"))
+# re-ID 조각 꾸러미. **격자를 갈아 끼울 수 있어야 한다** — 옛 상자에서 후보를
+# 더 뽑아 섞어 보는 일이 이 값을 바꿔 가며 도는 일이다 (`reid_chips --out`)
+FIN_REID = Path(os.environ.get("FIN_REID", BASE_DIR / "reid" / "v1"))
 FIN_SRC_DB = Path(os.environ.get(
     "FIN_SRC_DB", BASE_DIR.parent / "dolfinserver" / "db.sqlite3"))
