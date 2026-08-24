@@ -75,6 +75,11 @@ class Command(BaseCommand):
                             "알려진 사람 re-ID 의 표준 기준선이다")
         p.add_argument("--margin", type=float, default=0.3,
                        help="triplet 의 여백. 0 이면 soft-margin(softplus)")
+        p.add_argument("--train-individuals", type=int, default=0,
+                       help="배우는 개체를 이 수만큼으로 **줄인다** (0이면 전부). "
+                            "재는 개체는 그대로 두고 이것만 흔들면 **개체 수가 "
+                            "성적을 얼마나 움직이나**가 곡선으로 나온다 — "
+                            "'자료를 두 배로 늘리면 되나' 는 짐작할 게 아니다")
         p.add_argument("--pk", default="8x4",
                        help="triplet 무리 짜기 — 개체 P × 장수 K")
         p.add_argument("--seed", type=int, default=20260824)
@@ -115,8 +120,19 @@ class Command(BaseCommand):
                                 .values_list("image__obsdate", flat=True)}) >= 2]
             held = set(cross_ok[:o["hold_individuals"]])
             is_test = np.array([int(l) in held for l in lab])
+            # **배우는 개체만 줄인다** — 재는 쪽은 그대로 둬야 곡선의 점들이
+            # 같은 자로 잰 것이 된다. 씨앗을 고정해 다시 뽑을 수 있게 한다
+            train_ids = [i for i in cat if i not in held]
+            if o["train_individuals"] and o["train_individuals"] < len(train_ids):
+                rs = np.random.default_rng(o["seed"])
+                keep = set(rs.choice(train_ids, size=o["train_individuals"],
+                                     replace=False).tolist())
+                drop = np.array([int(l) not in keep and int(l) not in held
+                                 and l >= 0 for l in lab])
+                lab = np.where(drop, -1, lab)
+                train_ids = sorted(keep)
             w(f"개체 {len(cat)} → **재는 개체 {len(held)}** (날을 건너뛴 것 중 큰 것부터)"
-              f" · 배우는 개체 {len(cat) - len(held)}")
+              f" · **배우는 개체 {len(train_ids)}**")
             tr = np.where((lab >= 0) & ~is_test)[0]
             seen_ids = {int(lab[i]) for i in tr}
         else:
