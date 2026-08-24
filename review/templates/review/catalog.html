@@ -1,0 +1,91 @@
+{% load static %}<!doctype html>
+<meta charset="utf-8">
+<title>개체 카탈로그</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
+          --dim:#8b98a5; --ok:#4ade80; --warn:#fbbf24; --sel:#60a5fa;
+          /* **결각은 작은 흠이라 사람이 알아보는 문턱 근처에 있다.** 한 장에
+             다 펴려면 작아야 하는데, 너무 작으면 "몇 장인가" 밖에 안 보인다.
+             손으로 고르게 둔다 (`/reid` 이 같은 이유로 슬라이더를 준다) */
+          --fin:150px; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.6 "IBM Plex Sans KR", system-ui, sans-serif }
+  header { position:sticky; top:0; z-index:5; background:var(--bg);
+           border-bottom:1px solid var(--line); padding:9px 14px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap }
+  h1 { font-size:15px; margin:0; font-weight:600 }
+  a { color:var(--sel) }
+  .stat { color:var(--dim); font-size:12.5px }
+  .stat b { color:var(--ink) }
+  input[type=range] { width:130px; vertical-align:middle }
+  main { padding:12px 14px 60px }
+
+  .ind { border:1px solid var(--line); border-radius:8px; background:var(--panel);
+         margin-bottom:12px; overflow:hidden }
+  .ind > h2 { margin:0; padding:7px 11px; font-size:13.5px; font-weight:600;
+              border-bottom:1px solid var(--line); display:flex; gap:10px;
+              align-items:baseline; flex-wrap:wrap; background:#111820 }
+  .ind .meta { color:var(--dim); font-size:12px; font-weight:400 }
+  /* **날을 건너뛴 개체가 값을 하는 쪽이다** — 한 날짜뿐인 것은 흐리게 둔다 */
+  .ind.one { opacity:.72 }
+  .ind.one h2 .days { color:var(--warn) }
+  .fins { display:flex; flex-wrap:wrap; gap:5px; padding:9px }
+  figure { margin:0; width:var(--fin) }
+  figure img { display:block; width:100%; border-radius:5px;
+               background:#070a0e; border:1px solid var(--line) }
+  figure img:hover { border-color:var(--sel) }
+  figcaption { font:11px "IBM Plex Mono", monospace; color:var(--dim);
+               text-align:center; padding-top:2px }
+  /* 날이 바뀌는 자리에 금을 긋는다 — 같은 날 연속 프레임이 한 덩이로 읽힌다 */
+  figure.newday { border-left:2px solid var(--line); padding-left:5px }
+  figure.rep figcaption { color:var(--ok) }
+  .side-r figcaption:after { content:" ↔" }
+</style>
+
+<header>
+  <h1>개체 카탈로그</h1>
+  <span class="stat">개체 <b>{{ n_ind }}</b> · 지느러미 <b>{{ n_fin }}</b> ·
+    <b>날을 건너뛴 개체 {{ n_cross }}</b></span>
+  <span class="stat">크기
+    <input type="range" id="sz" min="80" max="360" step="10" value="150"></span>
+  <span style="flex:1"></span>
+  <span class="stat"><a href="/reid">분류하러 가기</a> · 조각을 누르면 원본 사진</span>
+</header>
+
+<main>
+{% for r in rows %}
+  <section class="ind {% if r.days < 2 %}one{% endif %}">
+    <h2>{{ r.name }}
+      <span class="meta">{{ r.n }}장 ·
+        <span class="days">날 {{ r.days }}</span>{% if r.span %} · {{ r.span }}{% endif %}</span>
+    </h2>
+    <div class="fins">
+      {% for f in r.fins %}
+        <figure class="{% if f.id == r.rep %}rep{% endif %} {% if f.facing == 'right' %}side-r{% endif %}"
+                data-day="{{ f.day }}">
+          <a href="/photo/{{ f.id }}" title="상자 {{ f.id }} · {{ f.day }}">
+            <img loading="lazy" src="/reid/chip/{{ f.id }}.png" alt="{{ f.id }}"></a>
+          <figcaption>{{ f.day }}</figcaption>
+        </figure>
+      {% endfor %}
+    </div>
+  </section>
+{% empty %}
+  <p class="stat">아직 상자에 든 지느러미가 없다 — <a href="/reid">/reid</a> 에서 넣을 것.</p>
+{% endfor %}
+</main>
+
+<script>
+  // 날이 바뀌는 자리에 금. **같은 날 연속 프레임은 개체의 증거가 약하다**
+  for (const box of document.querySelectorAll('.fins')) {
+    let prev = null;
+    for (const f of box.children) {
+      if (prev !== null && f.dataset.day !== prev) f.classList.add('newday');
+      prev = f.dataset.day;
+    }
+  }
+  const sz = document.getElementById('sz');
+  sz.oninput = () => document.documentElement.style.setProperty(
+      '--fin', sz.value + 'px');
+</script>

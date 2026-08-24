@@ -63,12 +63,25 @@ class Command(BaseCommand):
                             "분류한 조각 1,034장이 격자에서 사라진다")
         p.add_argument("--boxes", nargs="+", type=int, help="이 상자들만")
         p.add_argument("--no-emb", action="store_true",
-                       help="ResNet18 임베딩을 건너뛴다 (torch 가 없을 때)")
+                       help="임베딩을 건너뛴다 (torch 가 없을 때)")
+        p.add_argument("--backbone", choices=("resnet18", "dinov2"),
+                       default="resnet18",
+                       help="**조각은 그대로 두고 자만 바꾼다.** `resnet18` 은 "
+                            "ImageNet 지도학습(512차원), `dinov2` 는 자기지도 "
+                            "ViT-S/14(384차원)")
+        p.add_argument("--emb-only", action="store_true",
+                       help="이미 만든 조각으로 **임베딩만 다시 뽑는다** — 백본을 "
+                            "갈아 볼 때. 조각·곡선·그림은 안 건드린다")
+        p.add_argument("--emb-name", default="emb.npz",
+                       help="임베딩 파일 이름. 백본마다 달리 두면 한 격자에서 "
+                            "여러 자를 견줄 수 있다")
         p.add_argument("--dry-run", action="store_true")
 
     def handle(self, **o):
         w = self.stdout.write
         out = Path(o["out"])
+        if o["emb_only"]:
+            return self._emb_only(o, out, w)
         crops = {c.box_id: c for c in Crop.objects.all()}
         qs = Box.objects.prefetch_related("reviews", "masks").select_related("image")
         if o["boxes"]:
@@ -168,18 +181,45 @@ class Command(BaseCommand):
         w(f"{out}/chips.npz · curves.npz · items.json · look/")
 
         if not o["no_emb"]:
-            emb = self._embed(np.stack(chips))
-            np.savez_compressed(out / "emb.npz", box_id=ids, facing=fac, emb=emb)
-            w(f"{out}/emb.npz  ({emb.shape[1]}차원)")
+            emb = self._embed(np.stack(chips), o["backbone"])
+            np.savez_compressed(out / o["emb_name"], box_id=ids, facing=fac, emb=emb)
+            w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
 
-    def _embed(self, X):
-        """**학습 없는 ImageNet ResNet18.** `reid_train` 의 기준선과 같은 식이어야
-        옛 조각과 새 조각을 한 통에 놓을 수 있다 — 다르면 새것만 딴 데 모인다."""
+    def _emb_only(self, o, out, w):
+        """조각은 그대로 두고 임베딩만 다시 뽑는다.
+
+        **자를 바꿔 보는 일은 조각을 다시 만드는 일이 아니다.** 조각을 다시
+        만들면 그 사이에 마스크가 바뀌었을 수도 있어 **무엇이 성적을 움직였는지
+        못 가른다** — 같은 조각에 다른 자를 대야 백본만의 몫이 나온다.
+        """
+        f = out / "chips.npz"
+        if not f.exists():
+            raise CommandError(f"{f} 가 없다 — 먼저 조각을 만들 것")
+        z = np.load(f)
+        w(f"{f} 조각 {len(z['box_id']):,} · 자 {o['backbone']}")
+        emb = self._embed(z["chip"], o["backbone"])
+        np.savez_compressed(out / o["emb_name"], box_id=z["box_id"],
+                            facing=z["facing"], emb=emb)
+        w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
+
+    def _embed(self, X, backbone="resnet18"):
+        """**학습 없는 사전학습 특징.** `resnet18` 은 `reid_train` 의 기준선과
+        같은 식이어야 옛 조각과 새 조각을 한 통에 놓을 수 있다 — 다르면 새것만
+        딴 데 모인다.
+
+        `dinov2` 는 자기지도로 배운 ViT-S/14 다. 분류가 아니라 **닮음**을 배운
+        특징이라 검색에서 더 낫다고 알려져 있다. 조각이 128px 이라 **224 로
+        키워 넣는다** — 14의 배수라야 패치가 떨어진다.
+        """
         import torch
         import torch.nn.functional as Fn
-        import torchvision as tv
-        m = tv.models.resnet18(weights=tv.models.ResNet18_Weights.IMAGENET1K_V1)
-        m.fc = torch.nn.Identity()
+        if backbone == "dinov2":
+            m = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14",
+                               pretrained=True, verbose=False)
+        else:
+            import torchvision as tv
+            m = tv.models.resnet18(weights=tv.models.ResNet18_Weights.IMAGENET1K_V1)
+            m.fc = torch.nn.Identity()
         m.eval()
         mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)

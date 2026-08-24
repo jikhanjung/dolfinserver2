@@ -425,6 +425,64 @@ def reid(request):
     })
 
 
+@require_GET
+def catalog(request):
+    """**지금까지 붙인 개체를 한 장에 편다.**
+
+    `/reid` 은 일하는 자리라 상자를 하나씩 열어 본다. 그런데 카탈로그가 자라면
+    **전체를 한눈에 보아야 하는 순간**이 온다 — 둘이 사실 같은 개체는 아닌지,
+    한 상자에 두 개체가 섞이지 않았는지는 나란히 놓고 보아야 보인다.
+
+    개체마다 **가진 조각을 전부** 낸다. 대표 한 장만 보이는 `/reid` 의 상자
+    목록과 반대다.
+
+    ## 날짜를 조각마다 적는다
+
+    개체의 증거가 되는 것은 **날을 건너뛴 것**이다. 같은 날 연속 프레임은 짝을
+    수백 개 만들어도 증거로는 약하다. 그래서 날이 바뀌는 자리에 금을 긋고
+    `날 n` 을 함께 낸다 — 한 날짜뿐인 개체는 그것만으로 눈에 띈다.
+
+    **보류함은 개체가 아니다** (`Individual.holding`). `reid.catalog()` 가 안
+    세므로 여기에도 안 나온다.
+    """
+    from finseg import reid
+    from finseg.models import Individual
+
+    cat = reid.catalog()
+    names = dict(Individual.objects.values_list("id", "name"))
+    reps = dict(Individual.objects.values_list("id", "rep_id"))
+    day = dict(Box.objects.filter(id__in=[b for v in cat.values() for b in v])
+               .values_list("id", "image__obsdate"))
+    facing = {}
+    for b in Box.objects.filter(
+            id__in=[b for v in cat.values() for b in v]).prefetch_related(
+            "reviews", "masks"):
+        facing[b.id] = rules.resolve(b).get("facing") or ""
+
+    rows = []
+    for ind, boxes in cat.items():
+        # 날짜순으로 편다 — 같은 날 것이 붙어 있어야 "이 날 이 개체" 가 읽힌다
+        fins = sorted(boxes, key=lambda b: (str(day.get(b) or ""), b))
+        days = sorted({str(day.get(b)) for b in fins if day.get(b)})
+        rows.append({
+            "id": ind, "name": names.get(ind, f"#{ind}"), "rep": reps.get(ind),
+            "n": len(fins), "days": len(days),
+            "span": f"{days[0]} ~ {days[-1]}" if len(days) > 1 else
+                    (days[0] if days else ""),
+            "fins": [{"id": b, "day": str(day.get(b) or ""),
+                      "facing": facing.get(b, "")} for b in fins],
+        })
+    # **날을 건너뛴 개체부터.** 그것이 re-ID 에 값을 하는 쪽이고, 한 날짜뿐인
+    # 개체는 아직 "그 날 그 무리" 이지 개체의 증거가 아니다
+    rows.sort(key=lambda r: (-r["days"], -r["n"]))
+    return render(request, "review/catalog.html", {
+        "rows": rows,
+        "n_ind": len(rows),
+        "n_fin": sum(r["n"] for r in rows),
+        "n_cross": sum(1 for r in rows if r["days"] >= 2),
+    })
+
+
 @require_POST
 @transaction.atomic
 def reid_box(request):
