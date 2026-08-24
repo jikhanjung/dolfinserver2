@@ -56,9 +56,10 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from finseg import runs
+from finseg import nas, runs
 
-OUT = "/mnt/p/JikhanJung/dolfinserver2_backup"
+# **기계마다 NAS 를 보는 길이 다르다** — 뿌리는 `finseg/nas.py` 한 곳이다
+OUT = str(nas.root() / "dolfinserver2_backup")
 
 
 def sha256(path, n=1 << 20):
@@ -92,6 +93,7 @@ class Command(BaseCommand):
         if not out.parent.exists():
             raise CommandError(
                 f"{out.parent} 가 없다 — NAS 가 안 붙어 있는 것 같다.\n"
+                f"  본 자리: {' · '.join(nas.ROOTS)} (`FIN_NAS` 로 대 줄 수 있다)\n"
                 f"  마운트를 먼저 볼 것. **없는 데다 뜨면 뜬 줄 알고 지나간다.**")
 
         db = Path(o["db"] or settings.DATABASES["default"]["NAME"])

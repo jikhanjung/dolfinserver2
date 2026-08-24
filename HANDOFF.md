@@ -54,7 +54,7 @@ db/dolfinserver_prod_2026-08-17.sqlite3    옛 운영 DB · 사진 544,585 · �
 **백업은 NAS 로 뜬다** — `manage.py backup` (2026-08-24 에 붙였다).
 
 ```
-/mnt/p/JikhanJung/dolfinserver2_backup/          537MB
+<NAS>/dolfinserver2_backup/                      537MB
   db/fin.db.<날짜>.bak    날짜별로 쌓는다 (30일 치)
   weights/<run>/best.pt   이름별로 한 벌 · 내용이 같으면 건너뛴다
   derived/crops · reid     `--derived` 를 줄 때만 (다른 기계로 옮기려는 것)
@@ -69,6 +69,12 @@ db/dolfinserver_prod_2026-08-17.sqlite3    옛 운영 DB · 사진 544,585 · �
 옛 운영 DB 는 NAS 가 날마다 01:00 에 따로 뜨고 있다(`dolfinid_backup/`).
 **정작 다시 만들 수 없는 `fin.db` 가 그 레인 밖이었다.**
 
+**`<NAS>` 는 기계마다 다르다.** 같은 NAS 인데 보는 길이 다를 뿐이다 —
+2080ti(WSL)는 `/mnt/p/JikhanJung`, m710q(NFS)는 `/nas/JikhanJung`.
+명령에 박아 두지 않는다. 뿌리는 `finseg/nas.py` 한 곳이고 `backup` 과
+`export_detect` 가 그것을 받아 쓴다(`FIN_NAS` 로 대 줄 수 있다) —
+**박아 두면 다른 기계에서 "NAS 가 안 붙어 있다" 고 잘못 말한다.**
+
 ### 다른 기계(`m710q`)에서 일하려면
 
 GPU 가 필요 없는 일 — 검토·개체 분류·문서 — 은 거기서 해도 된다. 다만
@@ -78,15 +84,18 @@ GPU 가 필요 없는 일 — 검토·개체 분류·문서 — 은 거기서 �
 # 2080ti 에서 — 떠 놓고 손을 뗀다
 python manage.py backup --derived
 
-# m710q 에서
+# m710q 에서 — 거기 NAS 는 `/nas/JikhanJung` 이다
 git pull
-cp /mnt/p/.../dolfinserver2_backup/db/fin.db.<날짜>.bak db/fin.db
-cp -r /mnt/p/.../dolfinserver2_backup/derived/crops .
-cp -r /mnt/p/.../dolfinserver2_backup/derived/reid .
+B=/nas/JikhanJung/dolfinserver2_backup
+mkdir -p db && cp $B/db/fin.db.<날짜>.bak db/fin.db
+sha256sum db/fin.db          # MANIFEST 의 것과 견준다 — 안 견준 복원은 복원이 아니다
+cp -r $B/derived/crops/. crops/
+cp -r $B/derived/reid/.  reid/
+ln -s /nas/JikhanJung/dolfinimage ~/dolfin-photos/nas   # 원본 사진 (`/photo`·`/edit`)
 python manage.py migrate && python manage.py runserver 0.0.0.0:8900
 
 # 일이 끝나면 거기서 다시 떠서 2080ti 로 가져온다
-python manage.py backup --out /mnt/p/.../dolfinserver2_backup
+python manage.py backup --derived      # 뜰 곳은 `finseg/nas.py` 가 안다
 ```
 
 **양쪽에서 동시에 열면 어느 쪽 판정이 이기는지 아무도 모른다.** 합치는 길이
@@ -243,7 +252,8 @@ python manage.py test          # 95개. fin.db 를 안 건드린다
 `seg-v1` → `seg-v2`(둘 다 크롭 2,315) → **`seg-v3`(3,005 · 라벨 3,611)**.
 지금 쓰는 것은 **검출 `runs/detect-v2-det`, 분할 `runs/seg-v3-s`(run 41)** 이다.
 
-`~/dolfin-photos/nas` 가 `/mnt/p/JikhanJung/dolfinimage` 로 가는 심볼릭 링크다.
+`~/dolfin-photos/nas` 가 `<NAS>/dolfinimage` 로 가는 심볼릭 링크다
+(2080ti 는 `/mnt/p/…`, m710q 는 `/nas/…` — 위의 `<NAS>` 와 같은 이야기다).
 DB 가 `nas/2016/…` 로 들고 있어서다 — 코드에서 접두어를 안 벗긴 이유는
 `devlog/…0816_002` 6절.
 

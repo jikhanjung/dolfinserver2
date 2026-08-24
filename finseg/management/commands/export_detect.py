@@ -98,7 +98,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from finseg import runs
+from finseg import nas, runs
 from finseg.models import Review
 
 NAMES = ["fin"]   # 검출기는 한 분류다 — 옛 DB 의 사람 판정이 fin/not_fin 뿐이다
@@ -114,7 +114,7 @@ class Command(BaseCommand):
         p.add_argument("--val-date", default="2016-03-15",
                        help="통째로 뺄 관찰일 — **양쪽 다 안 본 날**이어야 한다")
         p.add_argument("--legacy-labels",
-                       default="/mnt/p/JikhanJung/DolFinID/TrainingData",
+                       default=str(nas.root() / "DolFinID" / "TrainingData"),
                        help="옛 YOLOv5 학습 라벨 뿌리 ('' 면 안 쓴다)")
         p.add_argument("--exclude-date", nargs="*", default=["2016-03-16"],
                        help="사람이 '채우지는' 않은 날 — 기본값의 근거는 위 문서")
