@@ -14,7 +14,7 @@
           /* 상자 안의 것도 **견줄 수 있을 만큼**은 커야 한다. 44px 로는
              "몇 장 들었나" 밖에 안 보이는데, 정작 자주 하는 일은 새로 넣으려는
              것과 이미 든 것을 견주는 것이다 */
-          --thumb:88px; --sidew:400px; }
+          --thumb:88px; --sidew:250px; }
   * { box-sizing:border-box }
   html, body { height:100% }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6
@@ -513,15 +513,16 @@ const setSize = () => {
 size.oninput = () => { setSize(); draw(); };
 setSize();
 
-// 상자 쪽도 같이 — 옆 칸 너비는 썸네일 넉 줄이 들어가게 따라 넓힌다.
-// 크기만 키우고 칸이 좁으면 한 줄에 하나씩 늘어서서 견주기가 더 나빠진다
+// 상자 쪽도 같이. **옆 칸 너비는 대표 한 장에 맞춘다** — 다 늘어놓던 때는
+// 넉 줄 기준으로 잡았는데, 대표만 보이게 된 뒤로 그 계산이 낡아 칸만 넓게
+// 남아 있었다. 넓으면 그만큼 격자가 좁아진다
 const tsize = document.getElementById("tsize");
 tsize.value = localStorage.getItem("thumbSize") || 88;
 const setThumb = () => {
   const t = +tsize.value;
   document.documentElement.style.setProperty("--thumb", t + "px");
   document.documentElement.style.setProperty(
-    "--sidew", Math.max(300, t * 4 + 48) + "px");
+    "--sidew", Math.max(230, Math.round(t * 1.7) + 40) + "px");
   localStorage.setItem("thumbSize", t);
 };
 tsize.oninput = setThumb;
