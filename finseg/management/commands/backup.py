@@ -45,9 +45,23 @@
 
 뜬 뒤에 **`PRAGMA integrity_check` 로 읽어 본다.** 확인 안 한 백업은 백업이
 아니다 — 형제 프로젝트가 프레임 229장을 잃은 것이 그 자리였다.
+
+## 본 자리에 바로 쓰지 않는다 — **옆에 뜨고, 읽어 보고, 갈아 끼운다**
+
+이름이 날짜라서 **같은 날 두 번 뜨면 같은 파일이다.** 본 자리에 바로 쓰면
+아침에 확인해 둔 멀쩡한 백업이 **먼저 없어지고**, `integrity_check` 는 그
+다음에 깨진 것을 잡는다 — 그때는 새것도 못 쓰고 옛것도 없다. 지키려던 것을
+지키는 동작이 없앤다.
+
+그래서 `.part` 로 뜨고 거기서 읽어 본 뒤 `os.replace` 로 갈아 끼운다. 중간에
+무엇이 잘못되든 **어제까지의 백업은 그대로 있다.** `os.replace` 는 같은
+파일계 안에서 원자적이라 반쯤 갈린 상태가 없다.
+
+**백업이 가장 위험한 순간은 백업을 뜨는 순간이다.**
 """
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 from datetime import date
@@ -104,39 +118,66 @@ class Command(BaseCommand):
 
         # ---- fin.db — 날짜별 -------------------------------------------
         dst = out / "db" / f"fin.db.{today}.bak"
+        # **옆에 뜨고, 읽어 본 뒤에 갈아 끼운다.** 이름이 날짜라 같은 날 두 번
+        # 뜨면 같은 파일인데, 본 자리에 바로 쓰면 **아침에 확인해 둔 백업이
+        # 먼저 없어지고** `integrity_check` 는 그 다음에 깨진 것을 잡는다 —
+        # 그때는 새것도 못 쓰고 옛것도 없다
+        tmp = dst.with_name(dst.name + ".part")
         w(f"\n{db} → {dst.name}  ({db.stat().st_size / 1e6:.0f}MB)")
         if not o["dry_run"]:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            src = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-            tgt = sqlite3.connect(dst)
+            # 지난번에 엎어져 남은 찌꺼기를 치운다. **오늘 이름만 보지
+            # 않는다** — 다른 날에 엎어져 남은 `.part` 는 그 이름으로 다시 뜰
+            # 일이 없어 아무도 안 치우고, 아래 프루닝도 `.bak` 로 끝나는 것만
+            # 보느라 지나친다. 백업 옆에 그것이 굴러다니면 **이게 백업인가**
+            # 싶은 그 헷갈림이 그대로 남는다 — 이 명령이 없애려던 바로 그것이다
+            clean = lambda: [q.unlink()
+                             for q in dst.parent.glob("fin.db.*.bak.part*")]
+            clean()
             try:
-                src.backup(tgt)
-                # **곁딸린 `-wal`·`-shm` 을 남기지 않는다.** 우리 DB 가 WAL
-                # 모드라 뜬 것도 그렇게 되는데, 백업 옆에 그 둘이 놓여 있으면
-                # **복원할 때 무엇이 진짜인지 헷갈린다** — 셋을 다 옮겨야 하는
-                # 것처럼 보이고, 하나만 옮기면 조용히 옛 상태가 된다.
-                # `DELETE` 로 바꾸면 내용이 본 파일 하나로 합쳐진다
-                tgt.execute("PRAGMA journal_mode=DELETE")
-            finally:
-                tgt.close()
-                src.close()
-            # **뜬 것을 읽어 본다.** 확인 안 한 백업은 백업이 아니다.
-            # 표 이름을 못 박지 않는다 — 스키마가 바뀌면 백업이 깨지는데,
-            # 그때 멎어야 할 이유가 없다. 있는 것만 센다
-            chk = sqlite3.connect(f"file:{dst}?mode=ro", uri=True)
-            ok = chk.execute("PRAGMA integrity_check").fetchone()[0]
-            have = {r[0] for r in chk.execute(
-                "select name from sqlite_master where type='table'")}
-            count = lambda t: (chk.execute(f"select count(*) from {t}").fetchone()[0]
-                               if t in have else None)
-            n_rev, n_id = count("finseg_review"), count("finseg_identification")
-            chk.close()
-            for side in ("-wal", "-shm"):
-                p_side = dst.with_name(dst.name + side)
-                if p_side.exists():
-                    p_side.unlink()
-            if ok != "ok":
-                raise CommandError(f"뜬 DB 가 깨졌다: {ok}")
+                src = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+                tgt = sqlite3.connect(tmp)
+                try:
+                    src.backup(tgt)
+                    # **곁딸린 `-wal`·`-shm` 을 남기지 않는다.** 우리 DB 가 WAL
+                    # 모드라 뜬 것도 그렇게 되는데, 백업 옆에 그 둘이 놓여
+                    # 있으면 **복원할 때 무엇이 진짜인지 헷갈린다** — 셋을 다
+                    # 옮겨야 하는 것처럼 보이고, 하나만 옮기면 조용히 옛
+                    # 상태가 된다. `DELETE` 로 바꾸면 본 파일 하나로 합쳐진다
+                    tgt.execute("PRAGMA journal_mode=DELETE")
+                finally:
+                    tgt.close()
+                    src.close()
+                # **뜬 것을 읽어 본다.** 확인 안 한 백업은 백업이 아니다.
+                # 표 이름을 못 박지 않는다 — 스키마가 바뀌면 백업이 깨지는데,
+                # 그때 멎어야 할 이유가 없다. 있는 것만 센다
+                chk = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
+                try:
+                    ok = chk.execute("PRAGMA integrity_check").fetchone()[0]
+                    have = {r[0] for r in chk.execute(
+                        "select name from sqlite_master where type='table'")}
+                    count = lambda t: (
+                        chk.execute(f"select count(*) from {t}").fetchone()[0]
+                        if t in have else None)
+                    n_rev = count("finseg_review")
+                    n_id = count("finseg_identification")
+                finally:
+                    chk.close()
+                for side in ("-wal", "-shm"):
+                    p_side = tmp.with_name(tmp.name + side)
+                    if p_side.exists():
+                        p_side.unlink()
+                if ok != "ok":
+                    raise CommandError(
+                        f"뜬 DB 가 깨졌다: {ok}\n"
+                        f"  갈아 끼우지 않았다 — 전에 뜬 것이 그대로 있다.")
+            except BaseException:
+                # 실패했으면 **아무것도 안 남긴다.** 반쯤 뜬 `.part` 가 남아
+                # 있으면 다음 사람이 그것을 백업으로 본다
+                clean()
+                raise
+            # 여기까지 왔으면 읽어 본 것이다. 같은 파일계 안이라 원자적이다
+            os.replace(tmp, dst)
             w("  integrity_check ok"
               + (f" · 판정 {n_rev:,}" if n_rev is not None else "")
               + (f" · 개체 판정 {n_id:,}" if n_id is not None else "")

@@ -1190,6 +1190,40 @@ class MaskClassTests(TestCase):
         self.assertEqual(rules.label_of(st["review"]), rules.PENDING)
 
 
+BACKUP_SQLITE = "finseg.management.commands.backup.sqlite3"
+
+
+class _DiesMidDump:
+    """`backup()` 이 **받는 쪽에 쓰기 시작한 뒤** 죽는 흉내.
+
+    실제로도 그렇게 죽는다 — 페이지를 차례로 옮기는 일이라 중간에 끊기면
+    받는 파일이 **반쯤 쓰인 채** 남는다. 원본이 통째로 깨진 경우와는 다르다:
+    그때는 첫 쪽을 읽다가 죽어서 받는 쪽을 아예 안 건드리고, 그래서 그것으로는
+    이 버그가 안 드러난다.
+    """
+
+    def __init__(self, real):
+        self._r = real
+
+    def __getattr__(self, name):
+        return getattr(self._r, name)
+
+    def connect(self, target, *a, **kw):
+        return _Half(self._r.connect(target, *a, **kw), target, self._r)
+
+
+class _Half:
+    def __init__(self, con, path, real):
+        self._c, self._p, self._r = con, path, real
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def backup(self, tgt, *a, **kw):
+        Path(str(tgt._p)).write_bytes(b"half-written pages")
+        raise self._r.OperationalError("disk I/O error")
+
+
 class BackupTests(TestCase):
     """**확인 안 한 백업은 백업이 아니다.**
 
@@ -1262,3 +1296,99 @@ class BackupTests(TestCase):
         left = sorted(p.name for p in d.glob("fin.db.*.bak"))
         self.assertEqual(len(left), 2)
         self.assertIn(date.today().isoformat(), left[-1])
+
+    # ---- 같은 날 두 번 뜰 때 -------------------------------------------
+    #
+    # 이름이 날짜라 **같은 날 두 번 뜨면 같은 파일이다.** 본 자리에 바로 쓰면
+    # 뜨는 동안 옛 백업이 없는 시간이 생긴다. 여기서 재는 것은 그 창이 없다는
+    # 것 — **백업이 가장 위험한 순간은 백업을 뜨는 순간이다.**
+
+    def test_a_failed_dump_leaves_the_previous_backup_alone(self):
+        """뜨다가 엎어져도 **어제까지의 백업은 그대로 있어야 한다.**
+
+        고치기 전에는 본 자리에 바로 썼다 — 깨진 것을 잡기는 했지만
+        **덮어쓴 다음에** 잡아서, 그때는 새것도 못 쓰고 옛것도 없었다.
+        """
+        import sqlite3
+        from unittest.mock import patch
+        out = self.tmp / "nas"
+        d = out / "db"
+        d.mkdir(parents=True)
+        # **어제 것은 멀쩡한 DB 다.** 쓰레기 파일을 놔두면 옛 코드도 안
+        # 건드려서 — `connect` 는 파일을 자르지 않는다 — 시험이 양쪽에서
+        # 통과한다. 그러면 아무것도 재지 않는 시험이다
+        keep = d / f"fin.db.{date.today().isoformat()}.bak"
+        c = sqlite3.connect(keep)
+        c.execute("create table 어제 (id integer primary key)")
+        c.commit()
+        c.close()
+        OLD = keep.read_bytes()
+
+        with patch(BACKUP_SQLITE, _DiesMidDump(sqlite3)):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.run_it(out)
+
+        # **쓰다가 죽어도 어제 것은 그대로다.** 옛 코드는 받는 자리가 곧
+        # 어제 것이라 여기서 깨졌다
+        self.assertEqual(keep.read_bytes(), OLD)
+        # 반쯤 뜬 것을 남기지 않는다 — 남으면 다음 사람이 백업으로 본다
+        self.assertEqual([p.name for p in d.iterdir() if ".part" in p.name], [])
+
+    def test_a_stale_part_is_not_mistaken_for_a_backup(self):
+        """지난번에 엎어져 남은 `.part` 가 있어도 이번 것이 제대로 선다."""
+        import sqlite3
+        out = self.tmp / "nas"
+        d = out / "db"
+        d.mkdir(parents=True)
+        stale = d / f"fin.db.{date.today().isoformat()}.bak.part"
+        stale.write_bytes(b"half-written junk")
+
+        self.run_it(out)
+
+        self.assertFalse(stale.exists())
+        got = list(d.glob("fin.db.*.bak"))
+        self.assertEqual(len(got), 1)
+        c = sqlite3.connect(f"file:{got[0]}?mode=ro", uri=True)
+        self.assertEqual(c.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        c.close()
+
+    def test_a_part_left_from_another_day_is_swept_too(self):
+        """다른 날에 엎어져 남은 `.part` 도 치운다.
+
+        그 이름으로는 **다시 뜰 일이 없어** 저절로 갈릴 기회가 없고,
+        오래된 것 지우기는 `.bak` 로 끝나는 것만 보느라 지나친다 — 아무도
+        안 치우면 NAS 에 영영 남는다.
+        """
+        out = self.tmp / "nas"
+        d = out / "db"
+        d.mkdir(parents=True)
+        stale = d / "fin.db.2020-01-01.bak.part"
+        stale.write_bytes(b"half-written junk")
+        (d / "fin.db.2020-01-01.bak.part-wal").write_bytes(b"junk")
+
+        self.run_it(out)
+
+        self.assertEqual([p.name for p in d.iterdir() if ".part" in p.name], [])
+        # 멀쩡한 백업은 건드리지 않는다 — 쓸어 낸 것은 찌꺼기뿐이다
+        self.assertEqual(len(list(d.glob("fin.db.*.bak"))), 1)
+
+    def test_dumping_twice_in_a_day_carries_the_newer_rows(self):
+        """갈아 끼우기가 **정말 갈아 끼우는지** 본다 — 옛것을 지키느라
+        새것을 안 쓰면 그것대로 조용히 옛 상태가 된다."""
+        import sqlite3
+        out = self.tmp / "nas"
+        out.mkdir()
+        self.run_it(out)
+
+        c = sqlite3.connect(self.src)
+        c.execute("insert into finseg_individual (name) values ('JJ03')")
+        c.commit()
+        c.close()
+        self.run_it(out)
+
+        got = list((out / "db").glob("fin.db.*.bak"))
+        self.assertEqual(len(got), 1)          # 날짜가 같으니 한 벌이다
+        c = sqlite3.connect(f"file:{got[0]}?mode=ro", uri=True)
+        self.assertEqual(
+            c.execute("select count(*) from finseg_individual").fetchone()[0], 3)
+        c.close()
