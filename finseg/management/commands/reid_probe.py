@@ -68,6 +68,15 @@ class Command(BaseCommand):
         p.add_argument("--epochs", type=int, default=60)
         p.add_argument("--lr", type=float, default=3e-3)
         p.add_argument("--temp", type=float, default=0.07)
+        p.add_argument("--loss", choices=("infonce", "triplet"), default="infonce",
+                       help="`triplet` 은 **batch-hard** 다 — 무리 안에서 가장 먼 "
+                            "양성과 가장 가까운 음성을 골라 쓴다. 무작위 음성을 "
+                            "쓰는 InfoNCE 와 달리 자료가 적을 때 강한 것으로 "
+                            "알려진 사람 re-ID 의 표준 기준선이다")
+        p.add_argument("--margin", type=float, default=0.3,
+                       help="triplet 의 여백. 0 이면 soft-margin(softplus)")
+        p.add_argument("--pk", default="8x4",
+                       help="triplet 무리 짜기 — 개체 P × 장수 K")
         p.add_argument("--seed", type=int, default=20260824)
 
     def handle(self, **o):
@@ -141,23 +150,84 @@ class Command(BaseCommand):
         opt = torch.optim.Adam(W.parameters(), lr=o["lr"])
         P = torch.tensor(np.array(pairs))
         rng = np.random.default_rng(o["seed"])
+
+        # ---- triplet 은 무리를 다르게 짠다 — **(개체, 좌/우)가 한 반이다** ----
+        # 좌현과 우현은 견줄 수 없으므로(거울로 뒤집혀 있다) 한 무리에 안 섞는다.
+        # 양성은 **날을 건너뛴 것**을 먼저 고른다 — 같은 날 짝은 조명이 답을
+        # 알려 준다
+        groups = {}
+        for i in np.where((lab >= 0) & ~is_test)[0]:
+            groups.setdefault((int(lab[i]), str(fac[i])), []).append(i)
+        groups = {k: v for k, v in groups.items()
+                  if len(v) >= 2 and len({day[j] for j in v}) >= 2}
+        if o["loss"] == "triplet":
+            if len(groups) < 4:
+                raise CommandError(
+                    f"triplet 을 짤 반이 {len(groups)}개뿐이다 — (개체, 좌/우)로 "
+                    f"갈라 날을 건너뛴 것만 센 값이다. 개체 분류를 더 할 것.")
+            w(f"triplet 반 {len(groups)}개 ((개체, 좌/우) · 날을 건너뛴 것만)")
+
+        def pk_batch():
+            """P개 반 × K장. **한 무리는 한쪽 면만** — 음성도 같은 면이라야
+            어려운 음성이 뜻을 갖는다."""
+            pp, kk = (int(x) for x in o["pk"].split("x"))
+            side = rng.choice(["left", "right"])
+            ks = [k for k in groups if k[1] == side] or list(groups)
+            take = rng.choice(len(ks), size=min(pp, len(ks)), replace=False)
+            idx, y = [], []
+            for t in take:
+                g = groups[ks[t]]
+                # 날이 고루 섞이게 — 같은 날만 K장 뽑으면 배울 것이 없다
+                by_day = {}
+                for j in g:
+                    by_day.setdefault(day[j], []).append(j)
+                pick = []
+                for d in rng.permutation(list(by_day)):
+                    pick.append(rng.choice(by_day[d]))
+                    if len(pick) >= kk:
+                        break
+                while len(pick) < min(kk, len(g)):
+                    c = rng.choice(g)
+                    if c not in pick:
+                        pick.append(c)
+                idx += list(pick); y += [t] * len(pick)
+            return np.array(idx), np.array(y)
+
         for ep in range(o["epochs"]):
-            idx = rng.permutation(len(P))
             tot = nb = 0
-            for i in range(0, len(idx), 128):
-                bp = P[idx[i:i + 128]]
-                if len(bp) < 4:
-                    continue
-                za = Fn.normalize(W(Xt[bp[:, 0]]), dim=1)
-                zb = Fn.normalize(W(Xt[bp[:, 1]]), dim=1)
-                z = torch.cat([za, zb])
-                sim = z @ z.T / o["temp"]
-                sim.fill_diagonal_(-1e9)
-                m = len(bp)
-                tgt = torch.cat([torch.arange(m, 2 * m), torch.arange(0, m)])
-                loss = Fn.cross_entropy(sim, tgt)
-                opt.zero_grad(); loss.backward(); opt.step()
-                tot += loss.item(); nb += 1
+            if o["loss"] == "triplet":
+                steps = max(1, len(pairs) // 32)
+                for _ in range(steps):
+                    idx, y = pk_batch()
+                    if len(set(y.tolist())) < 2:
+                        continue
+                    z = Fn.normalize(W(Xt[idx]), dim=1)
+                    d = torch.cdist(z, z)
+                    same = torch.from_numpy(y[:, None] == y[None, :])
+                    eye = torch.eye(len(y), dtype=torch.bool)
+                    # **가장 먼 양성 · 가장 가까운 음성** — 이것이 batch-hard 다
+                    dp = torch.where(same & ~eye, d, torch.zeros_like(d)).max(1).values
+                    dn = torch.where(~same, d, torch.full_like(d, 1e9)).min(1).values
+                    loss = (Fn.softplus(dp - dn) if o["margin"] <= 0
+                            else Fn.relu(o["margin"] + dp - dn)).mean()
+                    opt.zero_grad(); loss.backward(); opt.step()
+                    tot += loss.item(); nb += 1
+            else:
+                idx = rng.permutation(len(P))
+                for i in range(0, len(idx), 128):
+                    bp = P[idx[i:i + 128]]
+                    if len(bp) < 4:
+                        continue
+                    za = Fn.normalize(W(Xt[bp[:, 0]]), dim=1)
+                    zb = Fn.normalize(W(Xt[bp[:, 1]]), dim=1)
+                    z = torch.cat([za, zb])
+                    sim = z @ z.T / o["temp"]
+                    sim.fill_diagonal_(-1e9)
+                    m = len(bp)
+                    tgt = torch.cat([torch.arange(m, 2 * m), torch.arange(0, m)])
+                    loss = Fn.cross_entropy(sim, tgt)
+                    opt.zero_grad(); loss.backward(); opt.step()
+                    tot += loss.item(); nb += 1
             if ep % 10 == 9 or ep == 0:
                 w(f"  {ep + 1:3d}에폭  손실 {tot / max(nb, 1):.4f}")
         with torch.no_grad():
@@ -202,7 +272,8 @@ class Command(BaseCommand):
             w(f"{name} — 질의 {len(qs)}")
             w(f"  {'자':<22}{'좁은 후보 1등':>13}{'첫 정답':>8}"
               f"{'격자 전체 1등':>14}{'첫 정답':>8}")
-            for tag, F in (("ImageNet (기준선)", X), ("+ 선형 사영 (배운 것)", Y)):
+            learned = f"+ 선형 사영 ({o['loss']})"
+            for tag, F in (("ImageNet (기준선)", X), (learned, Y)):
                 a = run(F, qs, lab_gal)
                 b = run(F, qs, all_gal)
                 if a is None or b is None:
