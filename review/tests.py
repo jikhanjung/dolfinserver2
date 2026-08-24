@@ -981,6 +981,42 @@ class ReidChipRuleTests(TestCase):
         self.assertTrue(reid.usable(state)[0])
 
 
+class ReidProbeSplitTests(SimpleTestCase):
+    """**배울 짝에 재는 쪽이 끼면 성적이 거짓말을 한다.**
+
+    이 저장소가 이미 한 번 속은 자리다 — 같은 날 짝으로 배우고 같은 날로 재면
+    개체가 아니라 **그날 조명**을 배운 것이 성적으로 나온다. 새는 길이 둘이라
+    둘 다 시험한다.
+    """
+
+    def pairs(self, lab, day, fac, is_test):
+        import numpy as np
+        from finseg.management.commands.reid_probe import train_pairs
+        return train_pairs(np.array(lab), np.array(day), np.array(fac),
+                           np.array(is_test))
+
+    def test_the_held_out_side_is_in_no_pair(self):
+        # 0·1 은 배우는 쪽(개체 7), 2·3 은 재는 쪽(개체 9)
+        got = self.pairs([7, 7, 9, 9], ["d1", "d2", "d1", "d2"],
+                         ["left"] * 4, [False, False, True, True])
+        self.assertEqual(got, [(0, 1)])
+
+    def test_a_same_day_pair_is_not_learned(self):
+        """같은 날 짝은 쉬운 짝이라 배울 것이 없고, **조명에 상을 준다.**"""
+        got = self.pairs([7, 7], ["d1", "d1"], ["left", "left"], [False, False])
+        self.assertEqual(got, [])
+
+    def test_left_and_right_are_never_paired(self):
+        """`reid.normalize` 가 한쪽을 거울처럼 뒤집는다 — 섞으면 서로 다른 두
+        면이 같아 보인다 (`fliplr` 을 금지하는 것과 같은 이유)."""
+        got = self.pairs([7, 7], ["d1", "d2"], ["left", "right"], [False, False])
+        self.assertEqual(got, [])
+
+    def test_unlabelled_chips_are_not_pairs(self):
+        got = self.pairs([-1, -1], ["d1", "d2"], ["left", "left"], [False, False])
+        self.assertEqual(got, [])
+
+
 class ReidCatalogAsOfTests(TestCase):
     """**옛 정답에 새 자를 댈 수 있어야 한다.** 안 그러면 자가 좋아진 것인지
     정답이 늘어서인지 못 가른다 — 표가 쌓이는 것이 그러라고 있는 것이다.

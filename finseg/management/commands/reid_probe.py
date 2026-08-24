@@ -1,0 +1,214 @@
+"""**사람이 붙인 정답으로 배우면 나아지나** — 가장 싼 형태로 먼저 묻는다.
+
+    python manage.py reid_probe --dir reid/v2
+    python manage.py reid_probe --dir reid/v2 --test-days 6 --epochs 60
+
+지금 표에 앉은 `ResNet18 · 조각` 은 **학습 없는 ImageNet 특징**이다. 개체를
+가르라고 배운 적이 없으니 그것이 출발선이고, 이 명령이 묻는 것은 하나다 —
+**우리 정답으로 배우면 그 출발선을 넘나.**
+
+## 왜 선형 사영인가
+
+조각 화소부터 다시 배우는 것(`reid_train`)은 GPU 로 몇 시간이다. 그 전에
+**512차원 특징 위에 선형 사영 하나**를 배워 본다. 몇 초면 끝나고, 여기서
+안 오르면 픽셀부터 배우는 값도 의심해야 한다. **싼 질문을 먼저 한다.**
+
+## 날로 가른다 — 이것이 이 시험의 전부다
+
+같은 날 짝으로 배우고 같은 날 짝으로 재면 **그날 조명을 배운 것**을 성적으로
+읽는다. 이 저장소가 이미 한 번 속은 자리다(`HANDOFF` 의 "자가 조명을 재고
+있었다"). 그래서
+
+- 관찰일을 통째로 갈라 **배운 날과 재는 날이 안 겹친다**
+- 양성쌍도 **날을 건너뛴 것만** 쓴다 — 연속 프레임은 쉬운 짝이라 배울 것이 없다
+- 좌현·우현을 안 섞는다 (`reid.normalize` 가 한쪽을 거울처럼 뒤집는다)
+
+## 닫힌 판과 열린 판을 갈라 낸다
+
+재는 날의 개체가 배운 날에도 나왔으면 **닫힌 판**(그 개체를 이미 봤다),
+안 나왔으면 **열린 판**(처음 보는 개체)이다. 실제로 쓰는 자리는 열린 판인데
+닫힌 판이 훨씬 잘 나오므로, **섞어서 하나로 말하면 낙관 쪽으로 기운다.**
+
+**기준선을 같은 질의에 대고 함께 낸다.** 배운 것과 안 배운 것을 다른 판에서
+재면 무엇이 오른 것인지 알 수 없다.
+"""
+import json
+from pathlib import Path
+
+import numpy as np
+from django.core.management.base import BaseCommand, CommandError
+
+from finseg import reid
+from finseg.models import Box
+
+
+def train_pairs(lab, day, fac, is_test):
+    """배울 양성쌍 — **재는 쪽은 한 짝에도 안 든다.**
+
+    새는 길이 둘이라 둘 다 막는다. (1) 재는 개체·날의 조각이 짝에 끼는 것,
+    (2) 같은 날 짝으로 배우는 것 — 그것은 개체가 아니라 그날 조명을 배운다.
+    """
+    tr = np.where((lab >= 0) & ~is_test)[0]
+    return [(a, b) for i, a in enumerate(tr) for b in tr[i + 1:]
+            if lab[a] == lab[b] and day[a] != day[b] and fac[a] == fac[b]]
+
+
+class Command(BaseCommand):
+    help = "정답 위에 선형 사영을 배워 ImageNet 기준선과 견준다"
+
+    def add_arguments(self, p):
+        p.add_argument("--dir", default="reid/v2")
+        p.add_argument("--test-days", type=int, default=6,
+                       help="재는 데 쓸 관찰일 수 (나머지가 배우는 날)")
+        p.add_argument("--hold-individuals", type=int, default=0,
+                       help="**개체를 통째로 빼서 잰다** — 날로 가르면 개체가 "
+                            "거의 안 빠져 열린 판을 못 잰다 (실측 10개뿐이었다). "
+                            "이것이 실제로 쓰는 자리다: 처음 보는 개체")
+        p.add_argument("--dim", type=int, default=128)
+        p.add_argument("--epochs", type=int, default=60)
+        p.add_argument("--lr", type=float, default=3e-3)
+        p.add_argument("--temp", type=float, default=0.07)
+        p.add_argument("--seed", type=int, default=20260824)
+
+    def handle(self, **o):
+        import torch
+        import torch.nn.functional as Fn
+
+        w = self.stdout.write
+        root = Path(o["dir"])
+        z = np.load(root / "emb.npz")
+        ids, fac = z["box_id"], z["facing"]
+        X = z["emb"] / np.linalg.norm(z["emb"], axis=1, keepdims=True)
+        items = json.loads((root / "items.json").read_text())["items"]
+        day = np.array([it["day"] for it in items])
+        if not (np.array([it["id"] for it in items]) == ids).all():
+            raise CommandError("items.json 과 emb.npz 의 상자 순서가 다르다")
+
+        cat = reid.catalog()
+        of = {b: i for i, v in cat.items() for b in v}
+        lab = np.array([of.get(int(b), -1) for b in ids])
+        if (lab >= 0).sum() < 20:
+            raise CommandError("정답이 너무 적다 — `/reid` 에서 더 넣은 뒤 잴 것")
+
+        # ---- 개체로 가르거나, 날로 가르거나 ---------------------------------
+        if o["hold_individuals"]:
+            # **개체를 뺀다.** 날로 가르면 그 개체가 다른 날에도 나와 모델이
+            # 이미 본 개체가 된다 — 그것은 닫힌 판이고, 카탈로그에 없는 새
+            # 개체를 만나는 실제 자리를 못 잰다.
+            #
+            # 한정: 재는 개체의 **날**은 배우는 데도 나온다. 그날 조명을
+            # 지름길로 쓸 여지가 남지만, 양성쌍이 날을 건너뛴 것뿐이라
+            # 조명만으로는 짝이 안 맞는다
+            by = sorted(cat.items(), key=lambda kv: -len(kv[1]))
+            cross_ok = [i for i, v in by
+                        if len({str(d) for d in
+                                Box.objects.filter(id__in=v)
+                                .values_list("image__obsdate", flat=True)}) >= 2]
+            held = set(cross_ok[:o["hold_individuals"]])
+            is_test = np.array([int(l) in held for l in lab])
+            w(f"개체 {len(cat)} → **재는 개체 {len(held)}** (날을 건너뛴 것 중 큰 것부터)"
+              f" · 배우는 개체 {len(cat) - len(held)}")
+            tr = np.where((lab >= 0) & ~is_test)[0]
+            seen_ids = {int(lab[i]) for i in tr}
+        else:
+            is_test = None
+            seen_ids = None
+
+        # ---- 날로 가른다 ---------------------------------------------------
+        # **정답이 많은 날부터 재는 쪽에 넣는다** — 잴 것이 없는 날을 골라 두면
+        # 시험이 헐거워진다. 고를 때 순서를 씨앗으로 흔들지 않는다(재현되어야 한다)
+        if is_test is None:
+            days = sorted({d for d in day[lab >= 0]})
+            cnt = {d: int(((day == d) & (lab >= 0)).sum()) for d in days}
+            test_days = set(sorted(days, key=lambda d: -cnt[d])[:o["test_days"]])
+            is_test = np.array([d in test_days for d in day])
+            w(f"관찰일 {len(days)} (정답이 있는 날) → 재는 날 {len(test_days)}"
+              f" · 배우는 날 {len(days) - len(test_days)}")
+            w(f"  재는 날: {', '.join(sorted(test_days))}")
+
+        # ---- 배울 짝 — 배우는 쪽 안에서, 날을 건너뛴 것만 --------------------
+        pairs = train_pairs(lab, day, fac, is_test)
+        if len(pairs) < 20:
+            raise CommandError(
+                f"배울 짝이 {len(pairs)}개뿐이다 — 날을 건너뛴 같은 개체가 모자란다.\n"
+                f"  `--test-days` 를 줄이거나 개체 분류를 더 할 것.")
+        w(f"배울 양성쌍 {len(pairs):,} (날을 건너뛴 것만)")
+
+        # ---- 선형 사영 -----------------------------------------------------
+        torch.manual_seed(o["seed"])
+        Xt = torch.from_numpy(X.astype(np.float32))
+        W = torch.nn.Linear(X.shape[1], o["dim"], bias=False)
+        opt = torch.optim.Adam(W.parameters(), lr=o["lr"])
+        P = torch.tensor(np.array(pairs))
+        rng = np.random.default_rng(o["seed"])
+        for ep in range(o["epochs"]):
+            idx = rng.permutation(len(P))
+            tot = nb = 0
+            for i in range(0, len(idx), 128):
+                bp = P[idx[i:i + 128]]
+                if len(bp) < 4:
+                    continue
+                za = Fn.normalize(W(Xt[bp[:, 0]]), dim=1)
+                zb = Fn.normalize(W(Xt[bp[:, 1]]), dim=1)
+                z = torch.cat([za, zb])
+                sim = z @ z.T / o["temp"]
+                sim.fill_diagonal_(-1e9)
+                m = len(bp)
+                tgt = torch.cat([torch.arange(m, 2 * m), torch.arange(0, m)])
+                loss = Fn.cross_entropy(sim, tgt)
+                opt.zero_grad(); loss.backward(); opt.step()
+                tot += loss.item(); nb += 1
+            if ep % 10 == 9 or ep == 0:
+                w(f"  {ep + 1:3d}에폭  손실 {tot / max(nb, 1):.4f}")
+        with torch.no_grad():
+            Y = Fn.normalize(W(Xt), dim=1).numpy()
+
+        # ---- 잰다 — 기준선과 배운 것을 **같은 질의에** --------------------
+        seen = seen_ids if seen_ids is not None else {
+            int(lab[i]) for i in np.where((lab >= 0) & ~is_test)[0]}
+        q = [i for i in np.where((lab >= 0) & is_test)[0]
+             if ((lab == lab[i]) & (day != day[i]) & (fac == fac[i])).sum()]
+        if not q:
+            raise CommandError("재는 날에 잴 수 있는 질의가 없다")
+        closed = [i for i in q if int(lab[i]) in seen]
+        openq = [i for i in q if int(lab[i]) not in seen]
+        w(f"\n질의 {len(q)} — 닫힌 판 {len(closed)} (배운 날에 나온 개체) ·"
+          f" 열린 판 {len(openq)} (처음 보는 개체)")
+
+        def run(F, qs, gallery):
+            t1 = first = 0
+            got = []
+            for i in qs:
+                ok = gallery.copy(); ok[i] = False
+                ok &= (day != day[i]) & (fac == fac[i])
+                if not (ok & (lab == lab[i])).any():
+                    continue
+                s = np.where(ok, F @ F[i], -np.inf)
+                order = np.argsort(-s)
+                order = order[ok[order]]
+                hit = (lab[order] == lab[i])
+                got.append((bool(hit[0]), int(np.argmax(hit)) + 1))
+            if not got:
+                return None
+            return (np.mean([g[0] for g in got]),
+                    np.median([g[1] for g in got]), len(got))
+
+        lab_gal = lab >= 0
+        all_gal = np.ones(len(ids), bool)
+        w("")
+        for name, qs in (("전체", q), ("닫힌 판", closed), ("열린 판", openq)):
+            if not qs:
+                continue
+            w(f"{name} — 질의 {len(qs)}")
+            w(f"  {'자':<22}{'좁은 후보 1등':>13}{'첫 정답':>8}"
+              f"{'격자 전체 1등':>14}{'첫 정답':>8}")
+            for tag, F in (("ImageNet (기준선)", X), ("+ 선형 사영 (배운 것)", Y)):
+                a = run(F, qs, lab_gal)
+                b = run(F, qs, all_gal)
+                if a is None or b is None:
+                    continue
+                w(f"  {tag:<22}{a[0]:>12.1%}{a[1]:>7.0f}위"
+                  f"{b[0]:>13.1%}{b[1]:>7.0f}위")
+            w("")
+        w("**열린 판이 실제로 쓰는 자리다** — 닫힌 판은 그 개체를 이미 본 판이라"
+          " 낙관 쪽으로 기운다.")
