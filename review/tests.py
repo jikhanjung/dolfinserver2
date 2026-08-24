@@ -851,3 +851,45 @@ class ReidTests(TestCase):
         n = {x["id"]: x["n"] for x in b}
         self.assertEqual(n[ind["id"]], 1)
         self.assertEqual(n[hold.id], 0)
+
+
+class MaskClassTests(TestCase):
+    """**엔진이 무엇이라 했는지도 담는다.**
+
+    분할 모델은 `coarse` 세 갈래를 내는데 그동안 폴리곤만 담고 분류를 버렸다.
+    버리면 안 되는 이유는 **자동 경로에서 그것이 유일한 분류**이기 때문이다 —
+    검출기는 클래스가 하나라 주둥이·몸통·사람을 다 "지느러미 같은 것" 으로
+    잡아 온다.
+
+    다만 **사람의 판정을 대신하지 않는다.** `rules.resolve` 는 여전히 `Review`
+    를 본다.
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="t/mc.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        self.box = Box.objects.create(image=img, x1=10, y1=10, x2=60, y2=60,
+                                      source="yolov5")
+        self.run = Run.objects.create(kind="yolo")
+
+    def test_the_engine_class_is_kept(self):
+        m = Mask.objects.create(box=self.box, run=self.run, is_current=True,
+                                polygon="20,20 50,20 35,50", cls="dolphin")
+        self.assertEqual(Mask.objects.get(id=m.id).cls, "dolphin")
+
+    def test_it_does_not_override_the_person(self):
+        """사람이 `fin` 이라 했으면 엔진이 `nonfin` 이라 해도 `fin` 이다."""
+        Mask.objects.create(box=self.box, run=self.run, is_current=True,
+                            polygon="20,20 50,20 35,50", cls="nonfin")
+        Review.objects.create(box=self.box, cls="fin", verdict="ok")
+        st = rules.resolve(self.box)
+        self.assertEqual(st["cls"], "fin")
+        self.assertEqual(rules.label_of(st["review"]), rules.POSITIVE)
+
+    def test_an_old_mask_without_a_class_still_works(self):
+        """옛 마스크에는 이 칸이 없다 — 빈 값이어도 아무것도 안 깨져야 한다."""
+        Mask.objects.create(box=self.box, run=self.run, is_current=True,
+                            polygon="20,20 50,20 35,50")
+        st = rules.resolve(self.box)
+        self.assertEqual(st["mask"].cls, "")
+        self.assertEqual(rules.label_of(st["review"]), rules.PENDING)

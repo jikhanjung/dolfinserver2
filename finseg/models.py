@@ -291,6 +291,20 @@ class Mask(models.Model):
     polygon = models.TextField(help_text='"x,y x,y ..." 원본 화소 좌표. 자르기 전')
     area = models.IntegerField(null=True)
     conf = models.FloatField(null=True)
+    # **엔진이 무엇이라 했나.** 분할 모델은 `coarse` 세 갈래(`fin`·`dolphin`·
+    # `nonfin`)를 내는데 그동안 그 판정을 버리고 폴리곤만 담았다.
+    #
+    # 버리면 안 되는 이유는 **자동 경로에서 그것이 유일한 분류**이기 때문이다.
+    # 검출기는 클래스가 하나라 주둥이·몸통·사람을 다 "지느러미 같은 것" 으로
+    # 잡아 오고, 사람이 안 본 사진에서는 그것을 가릴 다른 수가 없다.
+    #
+    # 실측(사람이 분류한 상자 2,799개): `fin` 98.5% · `nonfin` 97.1% ·
+    # `dolphin` 81.5%. 딴 부위를 지느러미로 잘못 부르는 것이 1.2% 다.
+    #
+    # **사람의 판정을 대신하지 않는다** — `rules.resolve` 는 여전히 `Review`
+    # 를 본다. 이것은 아무도 안 본 상자에서만 쓸 값이다.
+    cls = models.CharField(max_length=10, blank=True, default="",
+                           help_text="엔진이 낸 묶음 분류 (fin·dolphin·nonfin)")
     base_line = models.TextField(blank=True, default="",
                                  help_text='"x,y x,y" 앞·뒤 삽입점')
     base_partial = models.CharField(max_length=10, choices=BASE_PARTIAL,

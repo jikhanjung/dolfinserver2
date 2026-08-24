@@ -13,6 +13,7 @@ YOLO 가 여럿을 내면 **프롬프트 상자와 가장 많이 겹치는 것 �
 가운데에서 가장 가까운 것이 아니라 상자와 겹치는 것이다. 이웃 지느러미가 크롭
 가운데로 밀려 들어온 경우에 그 둘이 갈린다.
 """
+from collections import Counter
 from pathlib import Path
 
 from django.conf import settings
@@ -57,6 +58,7 @@ class Command(BaseCommand):
         run = runs.start("yolo", model=o["weights"], note=o["note"],
                          params={"conf": o["conf"], "imgsz": o["imgsz"]})
         n_ok = n_none = 0
+        said = Counter()
         for i, crop in enumerate(rows, 1):
             box = crop.box
             res = model.predict(str(crops_dir / crop.path), imgsz=o["imgsz"],
@@ -69,6 +71,13 @@ class Command(BaseCommand):
                 [(box.x1, box.y1), (box.x2, box.y2)], crop)
             data = res.masks.data.cpu().numpy() > 0.5
             confs = res.boxes.conf.cpu().numpy()
+            # **엔진이 무엇이라 했는지도 담는다.** 그동안 폴리곤만 담고 분류를
+            # 버렸는데, 자동 경로에서는 그것이 **유일한 분류**다 — 검출기는
+            # 클래스가 하나라 주둥이·몸통·사람을 다 잡아 온다.
+            # 이름은 모델이 든 것을 그대로 쓴다(`data.yaml` 의 `names`)
+            names = getattr(res, "names", None) or {}
+            kls = (res.boxes.cls.cpu().numpy()
+                   if res.boxes.cls is not None else None)
             prompt = np.zeros(data.shape[1:], bool)
             prompt[max(0, int(py1)):int(py2) + 1, max(0, int(px1)):int(px2) + 1] = True
             overlaps = [(m & prompt).sum() for m in data]
@@ -95,14 +104,21 @@ class Command(BaseCommand):
                 Mask.objects.create(
                     box=box, run=run, is_current=not o["compare_only"],
                     polygon=geometry.dumps(geometry.to_orig(poly, crop)),
-                    area=int(area / (s * s)), conf=round(float(confs[k]), 4))
+                    area=int(area / (s * s)), conf=round(float(confs[k]), 4),
+                    cls=str(names.get(int(kls[k]), "")) if kls is not None else "")
             n_ok += 1
+            said[str(names.get(int(kls[k]), "")) if kls is not None else ""] += 1
             if i % 200 == 0:
                 self.stdout.write(f"  {i:,} / {len(rows):,}")
         runs.finish(run)
         self.stdout.write(f"마스크 {n_ok:,} 개"
                           + (f" · 아무것도 못 낸 것 {n_none:,}" if n_none else "")
                           + f"  (run {run.id})")
+        if len(said) > 1 or (said and "" not in said):
+            self.stdout.write("  엔진이 말한 분류: " + " · ".join(
+                f"{k or '(없음)'} {v:,}" for k, v in said.most_common()))
+            self.stdout.write("  ** 이것은 **사람의 판정을 대신하지 않는다** —"
+                              " 아무도 안 본 상자에서만 쓸 값이다")
         if n_none:
             self.stdout.write("  ↑ 이것이 이 엔진의 재현율 손실이다. SAM2 는"
                               " 상자를 받으면 늘 무언가를 냈다 — 비교할 때 함께 적을 것.")
