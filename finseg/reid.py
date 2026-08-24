@@ -310,6 +310,94 @@ def sim_chain(emb, facing):
     return out
 
 
+# ---- 묶어서 묻기 -------------------------------------------------------------
+#
+# **한 장씩 묻지 말고 묶어서 묻는다.** 실측으로 5장을 묶으면 top-1 이 22.7% →
+# 40%, top-5 는 68% → **80%** 가 되고, 무엇보다 **사람의 판단 한 번이 5장을
+# 덮는다.**
+#
+# 묶는 근거는 둘을 곱한다 — 같은 날·같은 쪽에서
+#
+#     프레임 간격 ≤2 만            같은 개체일 확률 75%
+#     조각 거리 ≤0.06 만           77%
+#     **둘 다**                    **97%**
+#
+# 서로 다른 종류의 증거라서 곱하면 는다(하나는 그림, 하나는 촬영 순서).
+# **거리 하나로는 안 된다** — 같은 개체의 거리 중앙값(0.100)과 남 중 가장
+# 닮은 것들(하위 10%가 0.103)이 같은 자리라, 문턱을 넓히면 남이 섞인다.
+# 좁게 잡아 **정밀도만** 가져가고 못 묶인 것은 사람이 보던 대로 본다.
+LINK_DIST = 0.06
+LINK_GAP = 2
+
+
+def group_links(idx, emb, day, facing, frame, d_max=LINK_DIST, gap_max=LINK_GAP):
+    """조각 번호들 → 묶음 목록. **같은 날·같은 쪽·가까운 프레임·닮은 것**만 잇는다.
+
+    이어진 것을 타고 번지게 둔다(연결 요소). 사슬이 길어질 걱정은 문턱이
+    좁아서 작다 — 넓히면 `cluster()` 가 겪은 사슬 문제가 그대로 생긴다.
+
+    **한 사진 안의 둘은 절대 안 잇는다** — 한 마리가 한 사진에 두 번 나올 수
+    없다. 공짜로 얻는 제약이라 안 쓸 이유가 없다 (실제로 이 제약으로 카탈로그에서
+    겹친 상자 2건을 찾았다).
+    """
+    idx = np.asarray(idx)
+    if len(idx) < 2:
+        return [[int(i)] for i in idx]
+    X = emb[idx] / np.maximum(np.linalg.norm(emb[idx], axis=1, keepdims=True), 1e-9)
+    parent = list(range(len(idx)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a in range(len(idx)):
+        for b in range(a + 1, len(idx)):
+            i, j = idx[a], idx[b]
+            if day[i] != day[j] or facing[i] != facing[j]:
+                continue
+            if frame[i] < 0 or frame[j] < 0:
+                continue
+            if frame[i] == frame[j]:      # 같은 사진 — 다른 개체다
+                continue
+            if abs(int(frame[i]) - int(frame[j])) > gap_max:
+                continue
+            if 1.0 - float(X[a] @ X[b]) > d_max:
+                continue
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+    out = {}
+    for a in range(len(idx)):
+        out.setdefault(find(a), []).append(int(idx[a]))
+    return sorted(out.values(), key=lambda g: -len(g))
+
+
+def suggest(group, emb, day, facing, catalog_idx, k=5):
+    """묶음 하나 → 닮은 개체 `k`개 [(개체, 점수)…]. 큰 것부터.
+
+    개체마다 **그 개체가 가진 조각 중 가장 닮은 것**을 보고, 그것을 묶음 회원
+    전체에 대해 평균한다. **묶음의 날은 후보에서 뺀다** — 같은 날 것이 끼면
+    개체가 아니라 그날 조명을 맞히게 된다.
+    """
+    if not len(group):
+        return []
+    X = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-9)
+    d0 = {day[i] for i in group}
+    f0 = facing[group[0]]
+    out = []
+    for ind, members in catalog_idx.items():
+        m = [i for i in members
+             if day[i] not in d0 and facing[i] == f0 and i not in group]
+        if not m:
+            continue
+        m = np.asarray(m)
+        out.append((ind, float(np.mean([(X[m] @ X[i]).max() for i in group]))))
+    out.sort(key=lambda t: -t[1])
+    return out[:k]
+
+
 def neighbours(dist, k=10):
     """번호마다 **가장 닮은 k 개**와 그 거리.
 

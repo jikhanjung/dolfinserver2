@@ -526,6 +526,97 @@ def reid_box(request):
     return JsonResponse({"id": ind.id, "name": ind.name, "made": made})
 
 
+def _reid_pool():
+    """격자의 조각들과 그것을 묶는 데 필요한 축들. **자료를 읽는 자리는 여기 하나**."""
+    import numpy as np
+
+    root = Path(settings.FIN_REID)
+    items = json.loads((root / "items.json").read_text(encoding="utf-8"))["items"]
+    ids = np.array([it["id"] for it in items])
+    day = np.array([it["day"] for it in items])
+    fac = np.array([it["facing"] for it in items])
+    # **어느 임베딩이냐가 묶음의 질을 정한다.** DINOv2 가 거리 ≤0.06 에서
+    # 77% 대 62%(ResNet18)로 앞선다 — 있으면 그것을 쓴다
+    for name in ("emb-dinov2.npz", "emb.npz"):
+        f = root / name
+        if f.exists():
+            z = np.load(f)
+            if (z["box_id"] == ids).all():
+                emb = z["emb"]
+                break
+    else:
+        return None
+    path = dict(Box.objects.filter(id__in=[int(b) for b in ids])
+                .values_list("id", "image__path"))
+    frame = np.array([int(m.group(1))
+                      if (m := re.search(r"(\d+)\.[A-Za-z]+$", path.get(int(b)) or ""))
+                      else -1 for b in ids])
+    return {"ids": ids, "day": day, "fac": fac, "emb": emb, "frame": frame,
+            "pos": {int(b): i for i, b in enumerate(ids)}}
+
+
+@require_GET
+def reid_groups(request):
+    """**아직 안 넣은 조각들을 묶어서 내놓는다** — 한 장씩 묻지 않으려고.
+
+    실측: 5장을 묶으면 top-1 이 22.7% → 40%, top-5 는 68% → **80%** 가 되고
+    사람의 판단 한 번이 5장을 덮는다. 묶는 근거는 `reid.group_links` 한 곳이다.
+    """
+    import numpy as np
+    from finseg import reid as R
+
+    P = _reid_pool()
+    if P is None:
+        return JsonResponse({"error": "임베딩이 없다 — `reid_chips` 를 먼저 돌릴 것"},
+                            status=400)
+    from finseg.models import Individual
+
+    latest = {}
+    for box_id, ind in (Identification.objects.order_by("id")
+                        .values_list("box_id", "individual_id")):
+        latest[box_id] = ind
+    free = np.array([i for i, b in enumerate(P["ids"]) if int(b) not in latest])
+    groups = [g for g in R.group_links(free, P["emb"], P["day"], P["fac"], P["frame"])
+              if len(g) >= int(request.GET.get("min", 2))]
+    cat_idx = {ind: [P["pos"][b] for b in boxes if b in P["pos"]]
+               for ind, boxes in R.catalog().items()}
+    names = dict(Individual.objects.values_list("id", "name"))
+    n = int(request.GET.get("n", 20))
+    out = []
+    for g in groups[:n]:
+        sg = R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx)
+        out.append({
+            "boxes": [int(P["ids"][i]) for i in g],
+            "day": str(P["day"][g[0]]), "facing": str(P["fac"][g[0]]),
+            "suggest": [{"id": ind, "name": names.get(ind, str(ind)),
+                         "score": round(sc, 4)} for ind, sc in sg],
+        })
+    return JsonResponse({"groups": out, "n_free": int(len(free)),
+                         "n_groups": len(groups)})
+
+
+@require_POST
+def reid_suggest(request):
+    """고른 것들을 한 묶음으로 보고 닮은 개체를 낸다 — 사람이 직접 묶었을 때."""
+    from finseg import reid as R
+    from finseg.models import Individual
+
+    P = _reid_pool()
+    if P is None:
+        return JsonResponse({"error": "임베딩이 없다"}, status=400)
+    body = json.loads(request.body or "{}")
+    g = [P["pos"][int(b)] for b in body.get("boxes", []) if int(b) in P["pos"]]
+    if not g:
+        return JsonResponse({"error": "고른 것이 없다"}, status=400)
+    cat_idx = {ind: [P["pos"][b] for b in boxes if b in P["pos"]]
+               for ind, boxes in R.catalog().items()}
+    names = dict(Individual.objects.values_list("id", "name"))
+    sg = R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx,
+                   k=int(body.get("k", 5)))
+    return JsonResponse({"suggest": [{"id": i, "name": names.get(i, str(i)),
+                                      "score": round(s, 4)} for i, s in sg]})
+
+
 @require_POST
 @transaction.atomic
 def reid_assign(request):

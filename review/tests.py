@@ -981,6 +981,56 @@ class ReidChipRuleTests(TestCase):
         self.assertTrue(reid.usable(state)[0])
 
 
+class ReidGroupTests(SimpleTestCase):
+    """**묶는 규칙이 곧 제안의 품질이다.**
+
+    실측으로 같은 날·같은 쪽에서 프레임 간격 ≤2 만 보면 75%, 조각 거리 ≤0.06
+    만 보면 77%인데 **둘 다 보면 97%** 다. 하나라도 빠지면 잘못 묶인 것이
+    한 번의 판단으로 여러 장에 번진다 — 낱장으로 틀리는 것보다 나쁘다.
+    """
+
+    def links(self, **kw):
+        import numpy as np
+        from finseg import reid
+        n = len(kw["day"])
+        return reid.group_links(np.arange(n), np.asarray(kw["emb"], float),
+                                np.array(kw["day"]), np.array(kw["fac"]),
+                                np.array(kw["frame"]))
+
+    def test_close_and_consecutive_are_joined(self):
+        g = self.links(emb=[[1, 0], [.999, .045]], day=["d", "d"],
+                       fac=["left", "left"], frame=[10, 11])
+        self.assertEqual([sorted(x) for x in g], [[0, 1]])
+
+    def test_a_far_frame_is_not_joined_however_alike(self):
+        """**닮았다고 잇지 않는다** — 같은 날 다른 개체가 닮은 일이 흔하다."""
+        g = self.links(emb=[[1, 0], [1, 0]], day=["d", "d"],
+                       fac=["left", "left"], frame=[10, 40])
+        self.assertEqual(sorted(len(x) for x in g), [1, 1])
+
+    def test_two_fins_in_one_photo_are_never_joined(self):
+        """한 마리가 한 사진에 두 번 나올 수 없다 — 공짜로 얻는 제약이다."""
+        g = self.links(emb=[[1, 0], [1, 0]], day=["d", "d"],
+                       fac=["left", "left"], frame=[10, 10])
+        self.assertEqual(sorted(len(x) for x in g), [1, 1])
+
+    def test_sides_and_days_are_never_joined(self):
+        g = self.links(emb=[[1, 0]] * 4, day=["d", "d", "e", "e"],
+                       fac=["left", "right", "left", "left"], frame=[10, 11, 10, 11])
+        self.assertEqual(sorted(len(x) for x in g), [1, 1, 2])
+
+    def test_the_group_day_is_kept_out_of_its_own_suggestion(self):
+        """**묶음의 날이 후보에 있으면 개체가 아니라 그날 조명을 맞힌다.**"""
+        import numpy as np
+        from finseg import reid
+        emb = np.array([[1., 0], [1., 0], [0, 1.]])
+        day = np.array(["d", "d", "e"])
+        fac = np.array(["left"] * 3)
+        # 개체 7 은 같은 날(d)에만 있고, 개체 9 는 다른 날(e)에 있다
+        got = reid.suggest([0], emb, day, fac, {7: [1], 9: [2]})
+        self.assertEqual([g[0] for g in got], [9])
+
+
 class ReidChainTests(SimpleTestCase):
     """**화면이 이 값으로 정렬한다.** 없거나 어긋나면 `닮은 것끼리` 가 `NaN`
     비교가 되어 **조용히 아무 순서나 낸다** — 200 이 떨어지고 화면도 멀쩡한데
