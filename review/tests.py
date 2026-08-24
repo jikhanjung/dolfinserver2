@@ -1287,13 +1287,16 @@ class BackupTests(TestCase):
         self.assertIn("NAS", str(e.exception))
 
     def test_old_copies_are_dropped_but_the_newest_stays(self):
+        # 이름에 기계가 들어가므로 fixture 도 같은 갈래에 둔다 — 기계 이름
+        # 없이 뜬 것은 이제 **일부러 안 지운다**(어느 기계 것인지 모른다).
+        # 그쪽은 `test_a_backup_from_before_the_machine_name_is_left_alone`
         out = self.tmp / "nas"
         d = out / "db"
         d.mkdir(parents=True)
         for day in ("2020-01-01", "2020-01-02", "2020-01-03"):
-            (d / f"fin.db.{day}.bak").write_bytes(b"x")
-        self.run_it(out, keep=2)
-        left = sorted(p.name for p in d.glob("fin.db.*.bak"))
+            (d / f"fin.db.{day}.2080ti.bak").write_bytes(b"x")
+        self.run_it(out, keep=2, host="2080ti")
+        left = sorted(p.name for p in d.glob("fin.db.*.2080ti.bak"))
         self.assertEqual(len(left), 2)
         self.assertIn(date.today().isoformat(), left[-1])
 
@@ -1371,6 +1374,79 @@ class BackupTests(TestCase):
         self.assertEqual([p.name for p in d.iterdir() if ".part" in p.name], [])
         # 멀쩡한 백업은 건드리지 않는다 — 쓸어 낸 것은 찌꺼기뿐이다
         self.assertEqual(len(list(d.glob("fin.db.*.bak"))), 1)
+
+    # ---- 기계가 둘일 때 -------------------------------------------------
+    #
+    # 날짜만으로는 **기계 사이에서도 부딪친다.** 2026-08-24 에 실제로 그랬다 —
+    # m710q 가 저녁에 뜬 것이 2080ti 가 낮에 올려 둔 것을 갈아 치웠다. 그날은
+    # 나중 것이 상위집합이라 잃은 게 없었지만 **그것은 운이었다.**
+
+    def test_two_machines_do_not_overwrite_each_other(self):
+        """다른 기계가 같은 날 떠도 **서로의 것을 안 건드린다.**"""
+        import sqlite3
+        out = self.tmp / "nas"
+        out.mkdir()
+        self.run_it(out, host="m710q")
+        theirs = out / "db" / f"fin.db.{date.today().isoformat()}.m710q.bak"
+        self.assertTrue(theirs.exists())
+        THEIRS = theirs.read_bytes()
+
+        # 두 번째 기계가 판정을 더 얹고 같은 날 뜬다
+        c = sqlite3.connect(self.src)
+        c.execute("insert into finseg_individual (name) values ('JJ03')")
+        c.commit()
+        c.close()
+        self.run_it(out, host="2080ti")
+
+        ours = out / "db" / f"fin.db.{date.today().isoformat()}.2080ti.bak"
+        self.assertTrue(ours.exists())
+        self.assertEqual(theirs.read_bytes(), THEIRS)   # 남의 것은 그대로다
+        c = sqlite3.connect(f"file:{ours}?mode=ro", uri=True)
+        self.assertEqual(
+            c.execute("select count(*) from finseg_individual").fetchone()[0], 3)
+        c.close()
+
+    def test_pruning_only_touches_its_own_lane(self):
+        """`--keep` 이 **남의 갈래를 줄이지 않는다.**
+
+        그 기계는 제가 몇 벌 갖고 있는지 모르는 채 남의 손에 줄어든다.
+        """
+        out = self.tmp / "nas"
+        d = out / "db"
+        d.mkdir(parents=True)
+        for day in ("2020-01-01", "2020-01-02", "2020-01-03"):
+            (d / f"fin.db.{day}.m710q.bak").write_bytes(b"x")
+            (d / f"fin.db.{day}.2080ti.bak").write_bytes(b"x")
+
+        self.run_it(out, keep=2, host="2080ti")
+
+        self.assertEqual(len(list(d.glob("fin.db.*.m710q.bak"))), 3)   # 안 건드렸다
+        self.assertEqual(len(list(d.glob("fin.db.*.2080ti.bak"))), 2)  # 제 것만 줄였다
+
+    def test_a_backup_from_before_the_machine_name_is_left_alone(self):
+        """기계 이름 없이 뜬 옛것은 **어느 기계 것인지 알 수 없어 안 지운다.**"""
+        out = self.tmp / "nas"
+        d = out / "db"
+        d.mkdir(parents=True)
+        old = d / "fin.db.2020-01-01.bak"
+        old.write_bytes(b"x")
+
+        got = self.run_it(out, keep=1, host="2080ti")
+
+        self.assertTrue(old.exists())
+        self.assertIn("기계 이름 없이", got)
+
+    def test_the_manifest_is_split_by_machine_too(self):
+        """MANIFEST 도 날짜뿐이면 같이 부딪친다."""
+        import json
+        out = self.tmp / "nas"
+        out.mkdir()
+        self.run_it(out, host="m710q")
+        self.run_it(out, host="2080ti")
+        got = sorted(p.name for p in out.glob("MANIFEST.*.json"))
+        self.assertEqual(len(got), 2)
+        d = json.loads((out / got[0]).read_text())
+        self.assertIn("host", d)
 
     def test_dumping_twice_in_a_day_carries_the_newer_rows(self):
         """갈아 끼우기가 **정말 갈아 끼우는지** 본다 — 옛것을 지키느라

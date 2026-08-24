@@ -37,6 +37,20 @@
 쌓을 뿐이다. 그래서 run 이름별로 한 벌만 두고, **내용이 같으면 건너뛴다**
 (sha256). 그날 무엇이 있었는지는 `MANIFEST.json` 이 적는다.
 
+## 이름에 **기계**가 들어간다 — 날짜만으로는 기계 사이에서 부딪친다
+
+두 기계가 같은 NAS 로 뜨는데 이름이 날짜뿐이면 **같은 날 자리가 하나뿐**이라
+나중에 뜬 기계가 먼저 뜬 기계의 것을 갈아 치운다. 2026-08-24 에 실제로 그랬다 —
+저녁에 m710q 가 뜬 것이 낮에 2080ti 가 올려 둔 것을 덮었다. 그날은 나중 것이
+상위집합이라 잃은 게 없었지만 **그것은 운이었다.**
+
+그래서 `fin.db.<날짜>.<기계>.bak` 이고 `MANIFEST.<날짜>.<기계>.json` 이다.
+**`--keep` 도 제 갈래만 지운다** — 남의 갈래를 이쪽 셈으로 줄이면 그 기계는
+제가 몇 벌 갖고 있는지 모르는 채 줄어든다.
+
+기계 이름이 붙기 전에 뜬 `fin.db.<날짜>.bak` 은 **어느 기계 것인지 알 수 없어
+안 지운다.** 손으로 치울 것 — 그렇다고 말은 해 준다.
+
 ## 열려 있는 DB 를 그냥 복사하지 않는다
 
 `shutil.copy` 는 쓰는 중인 sqlite 를 반쯤 복사할 수 있고, **그렇게 깨진 것은
@@ -62,7 +76,9 @@
 import hashlib
 import json
 import os
+import re
 import shutil
+import socket
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -74,6 +90,16 @@ from finseg import nas, runs
 
 # **기계마다 NAS 를 보는 길이 다르다** — 뿌리는 `finseg/nas.py` 한 곳이다
 OUT = str(nas.root() / "dolfinserver2_backup")
+
+
+# 기계 이름이 붙기 전의 이름꼴 — `fin.db.<날짜>.bak`
+OLD_NAME = re.compile(r"fin\.db\.\d{4}-\d{2}-\d{2}\.bak")
+
+
+def hostname():
+    """뜬 기계 이름. **파일 이름에 들어가므로 걸러 쓴다.**"""
+    h = socket.gethostname().split(".")[0]
+    return re.sub(r"[^A-Za-z0-9_-]", "-", h) or "unknown"
 
 
 def sha256(path, n=1 << 20):
@@ -95,12 +121,19 @@ class Command(BaseCommand):
         p.add_argument("--no-weights", action="store_true")
         p.add_argument("--derived", action="store_true",
                        help="크롭·re-ID 조각도 함께 (다른 기계로 옮길 때)")
+        p.add_argument("--host", default=None,
+                       help="뜬 기계 이름 (기본은 이 기계). 이름에 들어간다")
         p.add_argument("--dry-run", action="store_true")
 
     def handle(self, **o):
         w = self.stdout.write
         out = Path(o["out"])
         today = date.today().isoformat()
+        # **날짜만으로는 기계 사이에서 부딪친다.** 두 기계가 같은 NAS 로 뜨면
+        # 같은 날 이름이 하나뿐이라 나중 것이 먼저 것을 갈아 치운다 — 2026-08-24
+        # 에 실제로 그랬다. 그날은 나중 것이 상위집합이라 잃은 게 없었지만
+        # **그것은 운이었다.** 기계마다 제 갈래를 갖는다
+        host = o["host"] or hostname()
         # **뜰 곳을 먼저 본다.** DB 를 다 읽고 나서 "거기 없다" 를 만나면
         # 그 시간이 헛것이 되고, 무엇보다 **없는 데다 뜨면 뜬 줄 알고 지나간다**
         w(f"뜰 곳 {out}")
@@ -117,7 +150,7 @@ class Command(BaseCommand):
                 f"  메모리 DB 로 도는 중이면 `--db` 로 파일을 대 줄 것.")
 
         # ---- fin.db — 날짜별 -------------------------------------------
-        dst = out / "db" / f"fin.db.{today}.bak"
+        dst = out / "db" / f"fin.db.{today}.{host}.bak"
         # **옆에 뜨고, 읽어 본 뒤에 갈아 끼운다.** 이름이 날짜라 같은 날 두 번
         # 뜨면 같은 파일인데, 본 자리에 바로 쓰면 **아침에 확인해 둔 백업이
         # 먼저 없어지고** `integrity_check` 는 그 다음에 깨진 것을 잡는다 —
@@ -183,8 +216,18 @@ class Command(BaseCommand):
               + (f" · 개체 판정 {n_id:,}" if n_id is not None else "")
               + f" · 표 {len(have)} 개")
 
-        # 오래된 것 지우기
-        olds = sorted((out / "db").glob("fin.db.*.bak")) if (out / "db").exists() else []
+        # 오래된 것 지우기. **제 갈래만 본다** — 다른 기계가 뜬 것을 이쪽
+        # `--keep` 으로 지우면, 그 기계는 제가 몇 벌 갖고 있는지 모르는 채
+        # 남의 손에 줄어든다. 이름에 날짜가 앞서니 정렬은 그대로 날짜순이다
+        d = out / "db"
+        olds = sorted(d.glob(f"fin.db.*.{host}.bak")) if d.exists() else []
+        # 기계 이름이 붙기 전에 뜬 것은 어느 기계 것인지 알 수 없어 안 지운다.
+        # **다른 기계의 갈래와 헷갈리면 안 된다** — 옛 이름꼴만 잡는다
+        legacy = sorted(q for q in d.glob("fin.db.*.bak")
+                        if OLD_NAME.fullmatch(q.name)) if d.exists() else []
+        if legacy:
+            w(f"  기계 이름 없이 뜬 옛것 {len(legacy)} 개는 그대로 둔다"
+              f" — 어느 기계 것인지 알 수 없다 (손으로 지울 것)")
         if o["keep"] and len(olds) > o["keep"]:
             drop = olds[:len(olds) - o["keep"]]
             w(f"  {o['keep']}일 치만 남긴다 — {len(drop)} 개를 지운다")
@@ -245,8 +288,9 @@ class Command(BaseCommand):
             w("\n--dry-run 이라 아무것도 쓰지 않았다.")
             return
 
-        (out / f"MANIFEST.{today}.json").write_text(json.dumps({
-            "date": today, "git_sha": runs.git_sha(),
+        # MANIFEST 도 날짜뿐이면 같이 부딪친다 — 갈래를 함께 나눈다
+        (out / f"MANIFEST.{today}.{host}.json").write_text(json.dumps({
+            "date": today, "host": host, "git_sha": runs.git_sha(),
             "db": {"file": dst.name, "size": dst.stat().st_size,
                    "sha256": sha256(dst),
                    "reviews": n_rev, "identifications": n_id},
