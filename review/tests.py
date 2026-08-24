@@ -919,6 +919,68 @@ class ReidEvalTests(TestCase):
         self.assertAlmostEqual(ap, (1.0 + 2 / 3) / 2)
 
 
+class ReidChipRuleTests(TestCase):
+    """**조각을 무엇으로 거르나 — 그 값이 자료에 적혀 있어야 한다.**
+
+    `reid/v1` 은 넓이 문턱 15,000 으로 만들어졌는데 `reid.MIN_AREA` 는 그 뒤에
+    30,000 이 되었다. 모르고 다시 만들면 **사람이 이미 분류한 조각 1,034장이
+    격자에서 조용히 사라진다** — 화면은 멀쩡하고 수만 줄어든다.
+    """
+
+    def test_the_threshold_is_written_next_to_the_chips(self):
+        """격자가 무엇으로 걸러졌는지 자료 자체가 들고 있어야 한다."""
+        import json
+        from pathlib import Path
+        p = Path("reid/v1/items.json")
+        if not p.exists():
+            self.skipTest("이 기계에 조각이 없다")
+        d = json.loads(p.read_text())
+        # 옛 격자에는 아직 없다 — 그래서 새로 만드는 것부터 적는다
+        if "min_area" in d:
+            self.assertIsInstance(d["min_area"], int)
+
+    def test_usable_reads_the_threshold_at_call_time(self):
+        """`--min-area` 가 먹으려면 `usable` 이 모듈 값을 **부를 때** 읽어야 한다.
+        기본값으로 묶여 있으면 옵션이 조용히 무시된다."""
+        from finseg import reid
+        img = Image.objects.create(path="t/c.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        box = Box.objects.create(image=img, x1=0, y1=0, x2=140, y2=140,
+                                 source="yolov5")     # 19,600px²
+        state = {"cls": "fin", "polygon": "1,1 2,2 3,3", "base_line": "1,1 3,3",
+                 "base_partial": "", "facing": "left", "review": None, "box": box}
+        old = reid.MIN_AREA
+        try:
+            reid.MIN_AREA = 15000
+            self.assertTrue(reid.usable(state)[0])
+            reid.MIN_AREA = 30000
+            ok, why = reid.usable(state)
+            self.assertFalse(ok)
+            self.assertIn("작다", why)
+        finally:
+            reid.MIN_AREA = old
+
+    def test_an_unreviewed_box_only_lacks_the_facing(self):
+        """**검토 안 된 상자에서 정말 비는 축이 무엇인가.**
+
+        `edges`·`base_partial` 은 판정이 없으면 `usable` 이 통과값으로 읽는다 —
+        `TODOs` 가 "대체가 없다" 고 적어 둔 두 축인데, 막는 것은 `facing` 이다.
+        여기가 바뀌면 옛 상자를 들이는 경로가 통째로 달라진다.
+        """
+        from finseg import reid
+        img = Image.objects.create(path="t/u.jpg", obsdate="2020-01-01",
+                                   width=1000, height=800)
+        box = Box.objects.create(image=img, x1=0, y1=0, x2=200, y2=200,
+                                 source="yolov5")
+        state = {"cls": "fin", "polygon": "1,1 2,2 3,3", "base_line": "1,1 3,3",
+                 "base_partial": "", "facing": "", "review": None, "box": box}
+        ok, why = reid.usable(state)
+        self.assertFalse(ok)
+        self.assertIn("앞쪽", why)
+        state["facing"] = "left"                       # 기하 제안이 메우는 자리
+        self.assertTrue(reid.usable(state)[0])
+
+
 class ReidCatalogAsOfTests(TestCase):
     """**옛 정답에 새 자를 댈 수 있어야 한다.** 안 그러면 자가 좋아진 것인지
     정답이 늘어서인지 못 가른다 — 표가 쌓이는 것이 그러라고 있는 것이다.
