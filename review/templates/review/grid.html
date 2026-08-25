@@ -149,6 +149,7 @@
 </style>
 
 {% include "review/_nav.html" with here="review" %}
+{% include "review/_baseart.html" %}
 <header>
   <h1>finseg 검토</h1>
   <span class="stat" id="stat">…</span>
@@ -514,35 +515,24 @@ function draw(d, t) {
   // **화면이 어느 쪽을 앞으로 아는지 보여 주지 않으면 사람이 확인할 길이 없다**
   // 사람이 말한 것이 있으면 그것, 없으면 **기하 제안**(흐리게). 제안은 저장되지
   // 않는다 — `f` 를 눌러야 판정이 된다. 애매하면 서버가 아예 제안을 안 낸다
-  const face = d.dataset.facing || t.facing_hint || "";
-  const guessed = !d.dataset.facing && !!t.facing_hint;
-  const left = t.base[0][0] <= t.base[1][0] ? 0 : 1;
-  const front = face === "left" ? left : face === "right" ? 1 - left : -1;
-  // 앞쪽 화살표는 **뒤에서 앞으로** 가는 방향으로 돌린다
-  const deg = front >= 0
-    ? Math.atan2(t.base[front][1] - t.base[1 - front][1],
-                 t.base[front][0] - t.base[1 - front][0]) * 180 / Math.PI : 0;
+  // **그리는 규칙은 `_baseart.html` 한 곳이다** — 편집 창도 같은 것을 부른다
+  const art = baseArt(t.base, d.dataset.facing, t.facing_hint, d.dataset.partial);
   svg.querySelectorAll("g.h").forEach(h => {
     const i = +h.dataset.i;
     h.style.display = isFin ? "" : "none";
-    h.classList.toggle("front", i === front);
-    h.classList.toggle("guess", i === front && guessed);
+    h.classList.toggle("front", i === art.front);
+    h.classList.toggle("guess", i === art.front && art.guessed);
+    if (i === art.front) h.querySelector("path.arrow").setAttribute("d", art.path(1));
     h.setAttribute("transform", `translate(${t.base[i][0]},${t.base[i][1]})`
-                   + (i === front ? ` rotate(${deg.toFixed(1)})` : ""));
+                   + (i === art.front ? ` rotate(${art.deg.toFixed(1)})` : ""));
   });
-  // **짐작인 쪽 절반만 점선.** `unknown` 은 어느 쪽인지 모른다는 뜻이라 양쪽 다
-  const part = d.dataset.partial || "";
   const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   svg.querySelectorAll("line.half").forEach(el => {
     const i = +el.dataset.i;
     el.style.display = isFin ? "" : "none";
     el.setAttribute("x1", mid[0]); el.setAttribute("y1", mid[1]);
     el.setAttribute("x2", t.base[i][0]); el.setAttribute("y2", t.base[i][1]);
-    const isFront = front >= 0 && i === front;
-    el.classList.toggle("guess",
-      part === "both" || part === "unknown"
-      || (part === "front" && isFront)
-      || (part === "rear" && front >= 0 && !isFront));
+    el.classList.toggle("guess", art.dashed(i));
   });
   d.querySelector(".lab").textContent =
     d.dataset.cls === "fin" ? "" : CLS_KO[d.dataset.cls];

@@ -1,6 +1,7 @@
 {% load static %}<!doctype html>
 <meta charset="utf-8">
 <title>윤곽 고치기 — 상자 {{ box.id }}</title>
+{% include "review/_baseart.html" %}
 <style>
   :root { --bg:#0d1116; --fg:#e8edf3; --dim:#8b97a6; --line:#242c36;
           --fin:#3fb27f; --base:#ffe23c; --fix:#ffb300; --none:#e05561; }
@@ -230,15 +231,11 @@ function draw() {
   }).join("");
   // 앞(머리 쪽)으로 고른 점은 색이 다르다 — 격자와 같은 규칙이다
   // 격자와 같은 규칙 — 사람이 말한 것이 없으면 기하 제안을 흐리게 보여 준다
-  const face = T.facing || T.facing_hint || "";
-  const guessed = !T.facing && !!T.facing_hint;
-  const lf = T.base[0][0] <= T.base[1][0] ? 0 : 1;
-  const front = face === "left" ? lf : face === "right" ? 1 - lf : -1;
+  // **그리는 규칙은 `_baseart.html` 한 곳이다** — 격자도 같은 것을 부른다
+  const art = baseArt(T.base, T.facing, T.facing_hint, T.base_partial);
+  const front = art.front, guessed = art.guessed;
   // 앞쪽이 정해졌으면 그 방향으로 화살표를 돌린다. 뒤에서 앞으로 가는 방향이다
-  const deg = front >= 0
-    ? Math.atan2(T.base[front][1] - T.base[1 - front][1],
-                 T.base[front][0] - T.base[1 - front][0]) * 180 / Math.PI : 0;
-  const arrow = `M ${-4 * s} ${-7 * s} L ${11 * s} 0 L ${-4 * s} ${7 * s} Z`;
+  const deg = art.deg, arrow = art.path(s * 0.6);
   document.getElementById("basepts").innerHTML = T.cls !== "fin" ? "" :
     T.base.map((p, i) =>
       `<g class="bp${i === front ? " front" : ""}${
@@ -253,19 +250,14 @@ function draw() {
   // 들고 있다 — `unknown` 은 어느 쪽인지 모른다는 뜻이라 양쪽 다 점선이다
   {
     const h = window._half || {};
-    const guessSide = {front: "front", rear: "rear", both: "two",
-                       unknown: "two"}[h.part] || "";
-    const isFront = i => front >= 0 && i === front;
+
     for (const [id, i] of [["halfA", 0], ["halfB", 1]]) {
       const el = document.getElementById(id);
       el.style.display = h.show ? "" : "none";
       if (!h.show) continue;
       el.setAttribute("x1", h.mid[0]); el.setAttribute("y1", h.mid[1]);
       el.setAttribute("x2", T.base[i][0]); el.setAttribute("y2", T.base[i][1]);
-      const g = guessSide === "two"
-             || (guessSide === "front" && isFront(i))
-             || (guessSide === "rear" && front >= 0 && !isFront(i));
-      el.classList.toggle("guess", !!g);
+      el.classList.toggle("guess", art.dashed(i));
     }
   }
   const fko = Object.fromEntries(FACINGS);

@@ -1,0 +1,33 @@
+{% comment %}
+**밑동 두 점을 어떻게 그릴지 정하는 곳 — 여기 하나뿐이다.**
+
+격자와 편집 창이 같은 것을 각자 계산하고 있었다. 그래서 한쪽만 고쳐진 적이
+있고(화살표를 두 점에 다 그린 것), 앞으로도 그럴 자리였다. `geometry` 의
+좌표 사상이나 `rules` 의 판정을 한 곳에 둔 것과 같은 이유다.
+
+무엇을 정하나 — **앞은 화살표, 뒤는 동그라미. 짐작인 쪽 절반만 점선.**
+{% endcomment %}
+<script>
+function baseArt(base, facing, hint, partial) {
+  const face = facing || hint || "";
+  // 저장된 두 점은 **왼쪽·오른쪽일 뿐**이다. 어느 쪽이 앞인지는 판정이 정한다
+  const left = base[0][0] <= base[1][0] ? 0 : 1;
+  const front = face === "left" ? left : face === "right" ? 1 - left : -1;
+  // 화살표는 **뒤에서 앞으로** 가는 방향, 곧 밑동 현의 방향이다
+  const deg = front >= 0
+    ? Math.atan2(base[front][1] - base[1 - front][1],
+                 base[front][0] - base[1 - front][0]) * 180 / Math.PI
+    : 0;
+  const g = partial || "";
+  return {
+    front, deg,
+    guessed: !facing && !!hint,        // 사람이 안 정하고 기하가 제안한 것
+    // `unknown` 은 어느 쪽인지 모른다는 뜻이라 양쪽 다 점선이다
+    dashed: i => g === "both" || g === "unknown"
+              || (g === "front" && front >= 0 && i === front)
+              || (g === "rear" && front >= 0 && i !== front),
+    // 화살표 모양. `s` 는 화면 배율(격자는 1, 편집 창은 확대에 따라 다르다)
+    path: s => `M ${-7 * s} ${-13 * s} L ${20 * s} 0 L ${-7 * s} ${13 * s} Z`,
+  };
+}
+</script>
