@@ -76,6 +76,9 @@
   body.onlybox > header, body.onlybox > .topnav,
   body.onlybox #side > .top { display:none !important }
   body.onlybox #side { width:100% !important; border-left:0 }
+  /* **상자를 창으로 뺐으면 여기서는 감춘다.** 두 곳에 같은 목록이 떠 있으면
+     어느 쪽에 끌어 넣었는지 헷갈리고, 무엇보다 격자가 그만큼 좁아진다 */
+  body.popped #side { display:none }
   body.onlybox #main { border-top:0 }
 
   /* **`빼기`·`새 상자` 는 한 칸을 나눠 쓴다.** 늘 보이기만 하면 되는 것이라
@@ -868,9 +871,28 @@ if ({{ only_boxes|yesno:"true,false" }}) {
   document.body.classList.add("onlybox");
   document.title = "개체 상자";
 }
+// **상자 창이 떠 있는 동안 이쪽 목록은 감춘다.** 창이 닫히면 되돌린다 —
+// 주소로 직접 열거나 창을 그냥 닫는 경우까지 맞추려면 서로 알려야 한다
+function setPopped(on) { document.body.classList.toggle("popped", !!on); }
 const pop = document.getElementById("popbox");
-if (pop) pop.onclick = () => window.open("/reid?only=boxes", "reidboxes",
-                                         "width=560,height=900");
+if (pop) pop.onclick = () => {
+  const w = window.open("/reid?only=boxes", "reidboxes", "width=560,height=900");
+  if (w) setPopped(true);
+};
+if ({{ only_boxes|yesno:"true,false" }}) {
+  tell({t: "boxwin", open: true});
+  addEventListener("beforeunload", () => tell({t: "boxwin", open: false}));
+  // 격자 창이 나중에 새로고침되면 이쪽 상태를 모른다 — 물으면 답한다
+  if (BC) BC.addEventListener("message", e => {
+    if ((e.data || {}).t === "boxwin?") tell({t: "boxwin", open: true});
+  });
+} else if (BC) {
+  BC.addEventListener("message", e => {
+    const m = e.data || {};
+    if (m.t === "boxwin") setPopped(m.open);
+  });
+  tell({t: "boxwin?"});      // 이미 떠 있나
+}
 
 draw();
 </script>
