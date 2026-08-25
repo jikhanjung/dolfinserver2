@@ -65,10 +65,12 @@
                    vector-effect:non-scaling-stroke; pointer-events:none; }
   g.h:active circle.dot { fill:#fff; }
   /* 앞(머리 쪽)으로 고른 점 */
-  /* **앞쪽은 점이 아니라 화살표다** — 가리키는 방향이 곧 뜻이다 (`/edit` 과 같다) */
-  g.h.front circle.dot { display:none }
-  g.h path.arrow { fill:#ff6fae; stroke:#fff; stroke-width:2;
-                   stroke-linejoin:round; vector-effect:non-scaling-stroke }
+  /* **앞은 화살표, 뒤는 동그라미.** 가리키는 방향이 곧 뜻이라 색을 기억할
+     필요가 없다. 두 점이 서로 다른 모양이라야 한눈에 갈린다 (`/edit` 과 같다) */
+  g.h path.arrow { display:none }                    /* 기본은 안 보인다 */
+  g.h.front circle.dot { display:none }              /* 앞쪽은 점 대신 */
+  g.h.front path.arrow { display:block; fill:#ff6fae; stroke:#fff; stroke-width:2;
+                         stroke-linejoin:round; vector-effect:non-scaling-stroke }
   /* 기하 제안은 흐리다 — 사람이 찍은 것과 눈으로 갈려야 한다 */
   g.h.front.guess path.arrow { opacity:.5 }
   .lab { position:absolute; left:5px; top:5px; padding:1px 7px; border-radius:5px;
