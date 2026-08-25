@@ -29,7 +29,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from finseg import baseline, evaluate, geometry, onnxdet, rules
 from finseg.models import (BASE_PARTIAL, CLASS_KEYS, CLASSES, EDGES, FACING,
-                           Box, Crop, Identification, Mask, Review, Run)
+                           Box, Crop, Identification, Image, Mask, Review, Run)
 
 
 def _tile(state, crop):
@@ -852,6 +852,85 @@ def edit(request, box_id):
         "geom": json.dumps(geom),
         "facings": json.dumps(FACING, ensure_ascii=False),
         "classes": json.dumps(CLASSES, ensure_ascii=False),
+    })
+
+
+@require_GET
+def home(request):
+    """**작업대** — 이 저장소가 무엇을 만들고 있는지 한 장에.
+
+    화면을 그때그때 필요에 따라 만들다 보니 서로 오갈 길이 없었다. 그런데 이
+    저장소가 하는 일은 하나다 — **사진 한 장에서 개체 이름까지 가는 사슬**을
+    위해 가중치 네 벌(검출·분할·밑동·개체)을 함께 굴리는 것. 그 사슬을 차림표가
+    스스로 말해야 새로 오는 사람도, 두 주 뒤의 나도 어디부터 손댈지 안다.
+
+    **각 칸에서 노란 수가 사람이 할 일이다.** 자동으로 도는 것과 사람이 해야
+    하는 것을 눈으로 갈라 놓지 않으면, 다 된 것처럼 보이는 화면 뒤에 남은 일이
+    쌓인다 (`새 검출` 대기열을 만들 때 겪은 것이다).
+    """
+    from finseg import rules
+    from finseg.models import Individual
+
+    c = rules.progress()
+    runs = {r.kind: r for r in Run.objects.order_by("-id")}
+    def latest(kind, like):
+        r = Run.objects.filter(kind=kind, model__contains=like).order_by("-id").first()
+        return Path(r.model).parts[-3] if r and "/" in (r.model or "") else None
+
+    n_ident = Identification.objects.count()
+    cat_n = Individual.objects.filter(holding=False).count()
+    pool, filed, unjudged = 0, 0, 0
+    root = Path(settings.FIN_REID)
+    if (root / "items.json").exists():
+        items = json.loads((root / "items.json").read_text())["items"]
+        pool = len(items)
+        latest_id = {}
+        for b, i in (Identification.objects.order_by("id")
+                     .values_list("box_id", "individual_id")):
+            latest_id[b] = i
+        filed = sum(1 for it in items if latest_id.get(it["id"]))
+        unjudged = pool - sum(1 for it in items if it["id"] in latest_id)
+
+    stages = [
+        {"name": "검출 — 사진에서 지느러미를 찾는다",
+         "weights": latest("yolo", "detect") or "detect-v2",
+         "why": "옛 YOLOv5 를 대신할 우리 검출기. 재현율의 천장을 여는 자리다.",
+         "nums": [("상자", f"{c['상자']:,}", False),
+                  ("새 검출", f"{c.get('새검출', 0):,}", False),
+                  ("아직 안 본 새 검출", f"{c.get('새검출대기', 0):,}",
+                   c.get("새검출대기", 0) > 0)],
+         "acts": [("새 검출 보기", "/review?queue=new", c.get("새검출대기", 0) > 0),
+                  ("브라우저에서 돌려 보기", "/detect", False)]},
+        {"name": "분할 — 지느러미 윤곽을 딴다",
+         "weights": "seg-v3-s",
+         "why": "윤곽이 곧 개체의 단서다. 사람은 기본값을 두고 예외만 누른다.",
+         "nums": [("검토함", f"{c.get('검토함', 0):,} / {c['상자']:,}", False),
+                  ("교정 대기", f"{c.get('교정대기', 0):,}", c.get("교정대기", 0) > 0),
+                  ("윤곽 없음", f"{c.get('윤곽없음', 0):,}", c.get("윤곽없음", 0) > 0)],
+         "acts": [("검토하기", "/review", c.get("교정대기", 0) > 0),
+                  ("엔진 비교", "/compare", False)]},
+        {"name": "밑동 — 두 삽입점을 찍는다",
+         "weights": "pose-v1",
+         "why": "회전·크기를 지우는 기준선. 이것이 흔들리면 개체가 아니라 각도를 잰다.",
+         "nums": [("사람이 그린 밑동", f"{c.get('밑동사람', 0):,}", False)],
+         "acts": [("윤곽·밑동 고치기", "/review", False)]},
+        {"name": "개체 (re-ID) — 카탈로그의 몇 번인지 답한다",
+         "weights": "cls-dinov2" if (root / "cls-dinov2.npz").exists() else "",
+         "why": "지금 여기를 판다. 얼린 DINOv2 위의 분류기 — 아는 개체 top-1 44.5%.",
+         "nums": [("개체", f"{cat_n}", False),
+                  ("격자", f"{pool:,}", False),
+                  ("상자에 든 것", f"{filed:,}", False),
+                  ("아직 안 만진 것", f"{unjudged:,}", unjudged > 0)],
+         "acts": [("분류하기", "/reid", unjudged > 0),
+                  ("카탈로그 보기", "/catalog", False)]},
+    ]
+    return render(request, "review/home.html", {
+        "stages": stages,
+        "n_image": f"{Image.objects.count():,}",
+        "n_box": f"{Box.objects.count():,}",
+        "n_day": Image.objects.values("obsdate").distinct().count(),
+        "n_review": f"{Review.objects.count():,}",
+        "n_ident": f"{n_ident:,}",
     })
 
 

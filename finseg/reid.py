@@ -310,6 +310,106 @@ def sim_chain(emb, facing):
     return out
 
 
+# ---- 뒷날이 얼마나 복잡한가 -------------------------------------------------
+#
+# **`roughness` 가 사람 눈과 안 맞는다.** 상자에 넣은 조각과 안 만진 조각의
+# 결각 분포가 사실상 같았고(0.0450 대 0.0443), 결각 사분위별 top-1 차이도
+# 8pp뿐이었다(24.2% → 32.5%). 사람은 "매끈한 게 많아서 구분이 안 된다" 고
+# 하는데 그 자는 그것을 못 잡는다.
+#
+# 문헌은 **곡률**로 수렴한다. 여기 셋을 함께 낸다 — **어느 것이 맞는지는
+# 재서 정한다** (`reid_notch` 가 개체 맞히기 성적과의 상관을 낸다).
+#
+# 1. **적분 곡률**(CurvRank) — 각 점에 반지름 r 원을 씌워 곡선 한쪽에 들어온
+#    면적의 비. 0.5 면 직선이다. **여러 r 로 재면 작은 결각과 큰 굴곡이 다른
+#    척도에서 잡힌다.** 자세·시점에 강해 큰돌고래 top-1 95%를 낸 자다
+# 2. **결각 개수** — 곡률의 극값을 척도별로 세어, 큰 척도까지 살아남는 것만
+#    센다. 사람이 "결각" 이라 부르는 것이 그것이다
+# 3. **호 길이 / 현 길이** — 가장 단순한 자. 매끈함의 대용으로는 꽤 세다
+
+
+def _resample(curve, n):
+    """호 길이로 고르게 다시 뽑는다."""
+    q = np.asarray(curve, float)
+    if len(q) < 3:
+        return np.empty((0, 2))
+    seg = np.hypot(*np.diff(q, axis=0).T)
+    t = np.concatenate([[0.0], np.cumsum(seg)])
+    if t[-1] < 1e-9:
+        return np.empty((0, 2))
+    want = np.linspace(0, t[-1], n)
+    return np.stack([np.interp(want, t, q[:, 0]),
+                     np.interp(want, t, q[:, 1])], 1)
+
+
+def integral_curvature(curve, r, n=256):
+    """적분 곡률 — 점마다 반지름 `r` 안에서 곡선이 얼마나 휘었나. 0.5 가 직선.
+
+    원 안에 든 곡선 조각과 그 **현** 사이의 면적을 원 넓이로 나눈 것에 0.5 를
+    더한 값이다. 파인 자리는 0.5 아래, 볼록한 자리는 위로 간다.
+
+    `r` 은 **현 길이 기준**이다(정규화된 곡선이라 현이 1). 작은 `r` 은 톱니를
+    보고 큰 `r` 은 전체 굴곡을 본다 — **그래서 여러 척도로 재야 한다.**
+    """
+    q = _resample(curve, n)
+    if not len(q):
+        return np.empty(0)
+    out = np.full(len(q), 0.5)
+    for i in range(len(q)):
+        d = np.hypot(*(q - q[i]).T)
+        inside = np.where(d <= r)[0]
+        if len(inside) < 3:
+            continue
+        # 이어진 구간만 — 곡선이 되돌아와 원에 다시 들어오는 것은 안 센다
+        lo = i
+        while lo - 1 in inside and lo - 1 >= 0:
+            lo -= 1
+        hi = i
+        while hi + 1 in inside and hi + 1 < len(q):
+            hi += 1
+        seg = q[lo:hi + 1]
+        if len(seg) < 3:
+            continue
+        # 현과 곡선 사이의 부호 있는 면적 (신발끈 공식)
+        a, b = seg[0], seg[-1]
+        poly = np.vstack([seg, a])
+        area = 0.5 * np.sum(poly[:-1, 0] * poly[1:, 1] - poly[1:, 0] * poly[:-1, 1])
+        out[i] = 0.5 + float(area) / (np.pi * r * r)
+    return out
+
+
+def edge_complexity(curve, radii=(0.04, 0.08, 0.16), n=256):
+    """뒷날 하나 → 복잡도 자 여럿. 못 재면 None.
+
+    **하나로 안 줄인다.** 어느 자가 사람 눈에 가까운지 모르는 채로 하나를
+    고르면, 그 자가 틀렸을 때 알아챌 방법이 없다 — `roughness` 가 그랬다.
+    """
+    q = _resample(curve, n)
+    if not len(q):
+        return None
+    chord = float(np.hypot(*(q[-1] - q[0])))
+    arc = float(np.sum(np.hypot(*np.diff(q, axis=0).T)))
+    out = {"tort": arc / chord if chord > 1e-9 else 0.0}
+    for r in radii:
+        ic = integral_curvature(q, r, n)
+        key = f"ic{int(r*100):02d}"
+        out[key] = float(ic.std())            # 척도별 흔들림
+        # **파인 쪽만** 따로 — 결각은 한쪽으로만 파인다
+        out[key + "_dip"] = float(np.mean(np.maximum(0.5 - ic, 0)))
+    # 결각 개수 — 가장 작은 척도에서 눈에 띄게 파인 골을 센다
+    ic = integral_curvature(q, radii[0], n)
+    dip = 0.5 - ic
+    thr = max(0.02, float(dip.std()) * 1.5)
+    on, cnt = False, 0
+    for v in dip:
+        if v > thr and not on:
+            cnt += 1; on = True
+        elif v <= thr * 0.5:
+            on = False
+    out["notches"] = cnt
+    return out
+
+
 # ---- 묶어서 묻기 -------------------------------------------------------------
 #
 # **한 장씩 묻지 말고 묶어서 묻는다.** 실측으로 5장을 묶으면 top-1 이 22.7% →

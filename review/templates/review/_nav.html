@@ -1,0 +1,26 @@
+{% comment %}
+**어느 화면에서나 같은 자리에 같은 차림표.** 화면마다 따로 만들다 보니 서로
+오갈 길이 없어, 주소를 외워 치고 다녔다. 이 저장소가 무엇을 만드는지 —
+검출·분할·밑동·개체 넷을 한 벌로 — 를 차림표가 스스로 말해야 한다.
+{% endcomment %}
+<nav class="topnav">
+  <a href="/" class="brand">돌고래</a>
+  <a href="/review" {% if here == "review" %}class="on"{% endif %}>검토</a>
+  <a href="/reid" {% if here == "reid" %}class="on"{% endif %}>개체 분류</a>
+  <a href="/catalog" {% if here == "catalog" %}class="on"{% endif %}>카탈로그</a>
+  <span class="sp"></span>
+  <a href="/compare" {% if here == "compare" %}class="on"{% endif %}>엔진 비교</a>
+  <a href="/detect" {% if here == "detect" %}class="on"{% endif %}>검출 시연</a>
+</nav>
+<style>
+  .topnav { display:flex; gap:2px; align-items:center; padding:5px 12px;
+            background:#0d131a; border-bottom:1px solid var(--line, #26303c);
+            font:13px "IBM Plex Sans KR", system-ui, sans-serif; flex:none }
+  .topnav a { color:var(--dim, #8b98a5); text-decoration:none; padding:4px 11px;
+              border-radius:6px }
+  .topnav a:hover { background:#182029; color:var(--ink, #e6edf3) }
+  .topnav a.on { background:#1b2734; color:var(--ink, #e6edf3); font-weight:600 }
+  .topnav .brand { color:var(--ink, #e6edf3); font-weight:600; margin-right:8px;
+                   padding-left:0 }
+  .topnav .sp { flex:1 }
+</style>
