@@ -176,7 +176,10 @@
   /* **붙박이 셋을 목록 위에 띄운다.** 격자 위에 한 줄로 자리를 잡고 있으면
      폭이 넓어도 첫 줄에 개체 상자가 한 칸도 안 들어간다 — 정작 자주 보는 것이
      밀려난다. 목록은 폭을 온전히 쓰고, 셋은 아래에 떠서 늘 손 닿는 데 있다 */
-  #pinned { position:absolute; left:8px; right:8px; bottom:8px; z-index:6;
+  /* **넓어져도 상자 두 개 너비를 안 넘는다.** 하는 일은 끌어 놓는 것 하나라
+     넓힐수록 목록만 더 가린다. `right` 를 떼고 폭을 상자 두 칸으로 못 박는다 */
+  #pinned { position:absolute; left:8px; bottom:8px; z-index:6;
+            width:min(calc(100% - 16px), calc(var(--thumb) * 2 + 246px));
             display:grid; gap:6px; grid-template-columns:1fr 1fr;
             padding:6px; border-radius:8px;
             background:#0d131acc; backdrop-filter:blur(6px);
