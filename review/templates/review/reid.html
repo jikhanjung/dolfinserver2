@@ -82,6 +82,9 @@
      개체 상자만큼 자리를 차지할 이유가 없다 — 위아래로 쌓아 둘이 합쳐 상자
      하나만큼이다. 보류함은 대표 조각을 보여야 하는 진짜 상자라 그대로 둔다 */
   .pair { display:flex; flex-direction:column; gap:6px; min-width:0 }
+  #pinned .box { margin:0 }
+  #pinned .thumbs { margin:0 5px 5px }
+  #pinned .thumbs img.rep { max-height:calc(var(--thumb) * .8); width:auto }
   .pair .box.special { flex:1; display:flex; flex-direction:column }
   .pair .thumbs.slot { flex:1; min-height:0 }
   .box.special .hd { padding:3px 8px }
@@ -90,6 +93,7 @@
   #grid { flex:1; overflow-y:auto; padding:10px; display:flex;
           flex-wrap:wrap; gap:6px; align-content:flex-start }
   #side { width:var(--sidew); flex:none; border-left:1px solid var(--line);
+          position:relative;
           display:flex; flex-direction:column; min-height:0 }
   #side .top { padding:8px 10px; border-bottom:1px solid var(--line);
                display:flex; gap:7px; align-items:center }
@@ -169,12 +173,19 @@
   .box.hold { border-color:#7a5a1e; background:#1b1710 }
   .box.hold .nm { color:#ffd479 }
   .box.hold.over { border-color:#ffd479; background:#2a2314 }
-  /* 붙박이 셋도 상자 목록과 **같은 격자**에 선다 — 폭이 맞아야 한 종류로 읽힌다 */
-  #pinned { flex:none; padding:8px 8px 0; display:grid; gap:7px;
-            grid-template-columns:repeat(auto-fill,
-                                  minmax(calc(var(--thumb) + 120px), 1fr));
-            align-content:start }
+  /* **붙박이 셋을 목록 위에 띄운다.** 격자 위에 한 줄로 자리를 잡고 있으면
+     폭이 넓어도 첫 줄에 개체 상자가 한 칸도 안 들어간다 — 정작 자주 보는 것이
+     밀려난다. 목록은 폭을 온전히 쓰고, 셋은 아래에 떠서 늘 손 닿는 데 있다 */
+  #pinned { position:absolute; left:8px; right:8px; bottom:8px; z-index:6;
+            display:grid; gap:6px; grid-template-columns:1fr 1fr;
+            padding:6px; border-radius:8px;
+            background:#0d131acc; backdrop-filter:blur(6px);
+            border:1px solid var(--line); box-shadow:0 6px 20px #0008 }
   #holdbox { display:contents }
+  /* 떠 있는 것에 가려 마지막 줄이 안 보이면 안 된다 */
+  #boxes { padding-bottom:calc(var(--thumb) + 74px) }
+  /* 끌고 있는 동안에는 또렷하게 — 놓을 자리를 찾는 순간이라 */
+  body.dragging #pinned { background:#0d131af2; border-color:var(--dim) }
   .box.special .thumbs.slot { display:flex; align-items:center;
     justify-content:center; text-align:center; color:var(--dim);
     font-size:11.5px; line-height:1.3;
@@ -536,10 +547,13 @@ document.getElementById("grid").ondragstart = e => {
   // 누를 때 이미 골랐으므로 여기서는 확인만 한다
   if (!sel.has(id)) { sel.clear(); sel.add(id); paint(); }
   dragging = true;
+  document.body.classList.add("dragging");
   e.dataTransfer.setData("text/plain", JSON.stringify([...sel]));
   e.dataTransfer.effectAllowed = "move";
 };
-document.getElementById("grid").ondragend = () => { dragging = false; };
+document.getElementById("grid").ondragend = () => {
+  dragging = false; document.body.classList.remove("dragging");
+};
 
 function dropTarget(el) {
   el.ondragover = ev => { ev.preventDefault(); el.classList.add("over"); };
