@@ -26,6 +26,10 @@
   image { image-rendering:auto; }
   polygon.mask { fill:rgba(63,178,127,.18); stroke:#4dffb0; stroke-width:2;
                  vector-effect:non-scaling-stroke; }
+  /* **현을 반으로 갈라 그린다.** 삽입점 하나가 짐작이면 그쪽 절반만 점선이라,
+     어느 끝이 미더운지 눈으로 바로 읽힌다 — 전부 점선이면 그 구별이 사라진다 */
+  line.half { stroke:var(--base); stroke-width:2; }
+  line.half.guess { stroke-dasharray:6 5; opacity:.75 }
   line.base { stroke:var(--base); stroke-width:2; stroke-dasharray:7 5;
               vector-effect:non-scaling-stroke; opacity:.8; }
   /* **보이는 점은 집지 않는다.** `.vtx` 가 `.hit` 위에 덮여 있는데 핸들러는
@@ -50,8 +54,12 @@
   g.bp circle.hit { fill:transparent; pointer-events:all; }
   g.bp circle.dot { fill:var(--base); stroke:#3a2f14; stroke-width:1.5;
                     vector-effect:non-scaling-stroke; pointer-events:none; }
-  g.bp.front circle.dot { fill:#ff6fae; stroke:#fff; }   /* 앞(머리 쪽) */
-  g.bp.front.guess circle.dot { opacity:.45; stroke-dasharray:3 2; }  /* 기하 제안 */
+  /* **앞쪽은 점이 아니라 화살표다.** 점 색깔로만 말하면 "저 색이 앞이었나" 를
+     매번 다시 떠올려야 하는데, 화살표는 가리키는 방향이 곧 뜻이다 */
+  g.bp.front circle.dot { display:none }
+  g.bp path.arrow { fill:#ff6fae; stroke:#fff; stroke-width:1.2;
+                    stroke-linejoin:round }
+  g.bp.guess path.arrow { opacity:.5 }    /* 기하 제안 */
   /* **내보낼 때 이 밖은 잘린다** (`export_yolo.clip_to_crop`). 원본을 깔면
      크롭 밖까지 보이므로, 어디까지가 자료가 되는지 화면이 말해 줘야 한다 */
   rect.cropbox { fill:none; stroke:#6b7a8d; stroke-width:1;
@@ -94,6 +102,8 @@
     <image id="img" x="0" y="0"></image>
     <rect class="cropbox" id="cropbox"></rect>
     <line class="base" id="base"></line>
+    <line class="half" id="halfA"></line>
+    <line class="half" id="halfB"></line>
     <polygon class="mask" id="poly"></polygon>
     <g id="mids"></g>
     <g id="basepts"></g>
@@ -198,9 +208,14 @@ function draw() {
   const bl = document.getElementById("base");
   // 밑동 현은 **여기서도 고친다.** 확대가 되고 원본이 깔려 있어 격자보다 정확히
   // 찍을 수 있다. 이 선 아래는 내보낼 때 잘리므로 윤곽만큼 중요하다
-  bl.style.display = T.cls === "fin" ? "" : "none";
-  bl.setAttribute("x1", a[0]); bl.setAttribute("y1", a[1]);
-  bl.setAttribute("x2", b[0]); bl.setAttribute("y2", b[1]);
+  // **한 줄로 긋지 않고 반쪽 둘로 긋는다** — 짐작인 쪽만 점선으로 두려고.
+  // 옛 `line.base` 는 안 쓰지만 남겨 둔다 (다른 화면이 같은 이름을 쓴다)
+  bl.style.display = "none";
+  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const show = T.cls === "fin";
+  const part = T.base_partial || "";
+  // 어느 끝이 앞인지는 아래에서 정한다 — 여기서는 자리만 잡아 둔다
+  window._half = {a, b, mid, part, show};
 
   const s = u();
   document.getElementById("vtxs").innerHTML = pts.map((p, i) =>
@@ -219,13 +234,40 @@ function draw() {
   const guessed = !T.facing && !!T.facing_hint;
   const lf = T.base[0][0] <= T.base[1][0] ? 0 : 1;
   const front = face === "left" ? lf : face === "right" ? 1 - lf : -1;
+  // 앞쪽이 정해졌으면 그 방향으로 화살표를 돌린다. 뒤에서 앞으로 가는 방향이다
+  const deg = front >= 0
+    ? Math.atan2(T.base[front][1] - T.base[1 - front][1],
+                 T.base[front][0] - T.base[1 - front][0]) * 180 / Math.PI : 0;
+  const arrow = `M ${-4 * s} ${-7 * s} L ${11 * s} 0 L ${-4 * s} ${7 * s} Z`;
   document.getElementById("basepts").innerHTML = T.cls !== "fin" ? "" :
     T.base.map((p, i) =>
       `<g class="bp${i === front ? " front" : ""}${
            i === front && guessed ? " guess" : ""}" data-i="${i}"
-          transform="translate(${p[0]},${p[1]})">
+          transform="translate(${p[0]},${p[1]})${
+            i === front ? ` rotate(${deg.toFixed(1)})` : ""}">
          <circle class="hit" r="${15 * s}"></circle>
-         <circle class="dot" r="${6.5 * s}"></circle></g>`).join("");
+         ${i === front ? `<path class="arrow" d="${arrow}"></path>`
+                       : `<circle class="dot" r="${6.5 * s}"></circle>`}</g>`).join("");
+
+  // **짐작인 쪽 절반만 점선.** `base_partial` 은 앞/뒤 어느 삽입점이 짐작인지를
+  // 들고 있다 — `unknown` 은 어느 쪽인지 모른다는 뜻이라 양쪽 다 점선이다
+  {
+    const h = window._half || {};
+    const guessSide = {front: "front", rear: "rear", both: "two",
+                       unknown: "two"}[h.part] || "";
+    const isFront = i => front >= 0 && i === front;
+    for (const [id, i] of [["halfA", 0], ["halfB", 1]]) {
+      const el = document.getElementById(id);
+      el.style.display = h.show ? "" : "none";
+      if (!h.show) continue;
+      el.setAttribute("x1", h.mid[0]); el.setAttribute("y1", h.mid[1]);
+      el.setAttribute("x2", T.base[i][0]); el.setAttribute("y2", T.base[i][1]);
+      const g = guessSide === "two"
+             || (guessSide === "front" && isFront(i))
+             || (guessSide === "rear" && front >= 0 && !isFront(i));
+      el.classList.toggle("guess", !!g);
+    }
+  }
   const fko = Object.fromEntries(FACINGS);
   document.getElementById("face").textContent = T.cls !== "fin" ? ""
     : T.facing ? ` · 앞쪽 ${fko[T.facing]}`
