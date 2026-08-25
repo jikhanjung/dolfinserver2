@@ -50,6 +50,19 @@
   .sug .bar i { display:block; height:100%; background:var(--sel) }
   .sug .sc { color:var(--dim); font:11px "IBM Plex Mono",monospace }
   .sug.top .bar i { background:var(--ok) }
+  /* **검토 화면과 같은 모양**을 쓴다 (`grid.html`) — 두 화면을 오가며 일하는데
+     차림표가 서로 다르게 생기면 손이 멎는다 */
+  #menu { position:fixed; z-index:50; min-width:220px; padding:4px;
+          background:#1a212b; border:1px solid #33404f; border-radius:8px;
+          box-shadow:0 10px 28px #000a; }
+  #menu button { display:flex; width:100%; gap:10px; align-items:center;
+                 justify-content:space-between; background:none; border:0;
+                 border-radius:5px; padding:5px 9px; text-align:left;
+                 font-size:13px; color:var(--ink); cursor:pointer }
+  #menu button:hover { background:#2b3646 }
+  #menu kbd { color:var(--dim); background:none; border:0; padding:0 }
+  #menu hr { border:0; border-top:1px solid var(--line); margin:4px 6px }
+  #menu .head { color:var(--dim); font-size:11.5px; padding:3px 9px }
   #main { flex:1; display:flex; min-height:0 }
   #grid { flex:1; overflow-y:auto; padding:10px; display:flex;
           flex-wrap:wrap; gap:6px; align-content:flex-start }
@@ -203,6 +216,7 @@
   <span><b id="fname"></b> 만 보는 중 · <span id="fcount"></span></span>
   <button id="unfocus">전체로 돌아가기 (Esc)</button>
 </div>
+<div id="menu" hidden></div>
 <div id="main">
   <div id="grid"></div>
   <div id="side">
@@ -402,8 +416,51 @@ document.getElementById("grid").oncontextmenu = e => {
   const f = e.target.closest(".fin");
   if (!f) return;
   e.preventDefault();
-  open(`/photo/${f.dataset.id}`, "finphoto");
+  showMenu(Number(f.dataset.id), e.clientX, e.clientY);
 };
+
+// ---- 우클릭 차림표 ----------------------------------------------------------
+// **누른 것이 고른 것 안에 있으면 고른 것 전부에, 아니면 그 한 장에** 적용한다.
+// 이것을 안 가르면 여럿 골라 놓고 우클릭했을 때 한 장만 바뀌어, 사람은 다 된
+// 줄 알고 지나간다.
+function menuTargets(id) {
+  return sel.has(id) && sel.size > 1 ? [...sel] : [id];
+}
+
+function showMenu(id, x, y) {
+  const m = document.getElementById("menu");
+  const ids = menuTargets(id);
+  const many = ids.length > 1 ? ` (${ids.length}장)` : "";
+  const it = byId[id] || {};
+  const rows = [
+    [`원본 사진`, () => open(`/photo/${id}`, "finphoto"), "우클릭"],
+    [`윤곽 고치기`, () => open(`/edit/${id}`, "finedit"), ""],
+    null,
+    [`<span class="head">지느러미가 아니다${many}</span>`, null, ""],
+  ];
+  for (const [cls, key] of Object.entries(NOTFIN).map(([k, c]) => [c, k])
+                                 .sort((a, b) => a[1].localeCompare(b[1]))) {
+    rows.push([NOTFIN_NAME[cls], () => notFin(cls, ids), key]);
+  }
+  if (it.in) {
+    rows.push(null, [`상자에서 뺀다${many}`, () => assign(null, ids), ""]);
+  }
+  m.innerHTML = rows.map((r, n) => r === null ? "<hr>"
+    : r[1] === null ? r[0]
+    : `<button data-n="${n}">${r[0]}<kbd>${r[2]}</kbd></button>`).join("");
+  m.querySelectorAll("button").forEach(b => {
+    b.onclick = () => { hideMenu(); rows[Number(b.dataset.n)][1](); };
+  });
+  m.hidden = false;
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 6) + "px";
+  m.style.top = Math.min(y, innerHeight - r.height - 6) + "px";
+}
+
+function hideMenu() { document.getElementById("menu").hidden = true; }
+addEventListener("mousedown", e => {
+  if (!e.target.closest("#menu")) hideMenu();
+});
 
 // ---- 끌기 -----------------------------------------------------------------
 // 고른 것이 여럿이면 **함께 간다**
@@ -666,22 +723,27 @@ addEventListener("keydown", e => {
   // **키는 검토 화면과 같다** (`models.CLASS_KEYS`) — 손에 익은 것을 따른다
   if (!e.ctrlKey && !e.metaKey && !e.altKey && NOTFIN[e.key] && sel.size) {
     e.preventDefault();
-    notFin(NOTFIN[e.key]);
+    notFin(NOTFIN[e.key], [...sel]);
   }
 });
 
 const NOTFIN = {{ notfin_keys|safe }};
 
-async function notFin(cls) {
-  const ids = [...sel];
+async function notFin(cls, ids) {
+  ids = ids || [...sel];
   if (!confirm(`고른 ${ids.length}장을 「${NOTFIN_NAME[cls]}」 로 판정한다.\n`
              + `격자에서 빠지고 검토 화면에 그 분류로 남는다.`)) return;
   const r = await post("/api/reid/cls", {boxes: ids, cls});
   if (!r) return;
-  // **화면에서도 곧바로 뺀다** — 다음 격자를 다시 만들 때까지 기다리지 않는다
-  ITEMS = ITEMS.filter(i => !sel.has(i.id));
+  // **화면에서도 곧바로 뺀다** — 다음 격자를 다시 만들 때까지 기다리지 않는다.
+  // `ITEMS` 는 `const` 라 **제자리에서 덜어낸다** — 다시 대입하면 거기서
+  // 예외가 나고, 그 위의 저장은 이미 끝난 뒤라 **판정은 남는데 화면만 안 바뀐다**
+  const gone = new Set(ids);
+  for (let n = ITEMS.length - 1; n >= 0; n--) {
+    if (gone.has(ITEMS[n].id)) ITEMS.splice(n, 1);
+  }
   ids.forEach(id => delete byId[id]);
-  GROUPS = GROUPS.map(g => ({...g, boxes: g.boxes.filter(b => !sel.has(b))}))
+  GROUPS = GROUPS.map(g => ({...g, boxes: g.boxes.filter(b => !gone.has(b))}))
                  .filter(g => g.boxes.length);
   sel.clear();
   draw();
