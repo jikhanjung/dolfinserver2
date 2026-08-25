@@ -52,6 +52,13 @@
   .sug.top .bar i { background:var(--ok) }
   /* **검토 화면과 같은 모양**을 쓴다 (`grid.html`) — 두 화면을 오가며 일하는데
      차림표가 서로 다르게 생기면 손이 멎는다 */
+  /* **판정한 것을 지우지 않고 표를 단다.** 사라지면 방금 무엇을 했는지 확인할
+     길이 없고, 잘못 눌렀을 때 되돌릴 자리도 없다 — 검토 화면이 타일에 분류를
+     적어 두는 것과 같은 이유다 */
+  .fin .nf { position:absolute; left:4px; top:4px; z-index:3;
+             background:#3a1418; border:1px solid var(--no); color:var(--no);
+             border-radius:4px; padding:1px 6px; font-size:12px; font-weight:600 }
+  .fin.notfin img { opacity:.42 }
   #menu { position:fixed; z-index:50; min-width:220px; padding:4px;
           background:#1a212b; border:1px solid #33404f; border-radius:8px;
           box-shadow:0 10px 28px #000a; }
@@ -281,7 +288,8 @@ function view() {
   // **한 상자만 볼 때는 다른 거르기를 다 무시한다** — 그 상자를 통째로
   // 훑어보려는 것이라 좌·우나 "넣은 것 숨기기" 가 끼면 뜻이 어긋난다
   if (focusOn !== null) return ITEMS.filter(i => i.in === focusOn);
-  const v = ITEMS.filter(i => (!side || i.facing === side) && !(hide && i.in));
+  const v = ITEMS.filter(i => (!side || i.facing === side)
+                           && !(hide && (i.in || i.notfin)));
   // **`sim` 은 좌·우 각각에서 매긴 등수다.** 그대로 정렬하면 왼쪽 0등과
   // 오른쪽 0등이 나란히 서서 두 무리가 지퍼처럼 섞인다 — 닮은 것끼리 붙여
   // 놓으려는 뜻이 통째로 깨진다. 쪽을 먼저 가르고 그 안에서 등수로 센다
@@ -319,6 +327,7 @@ function draw() {
                        (fin - 10) / Math.max(2, name.length) / 0.62));
   document.getElementById("grid").innerHTML = view().map(i =>
     `<div class="fin${sel.has(i.id) ? " sel" : ""}${i.in ? " done" : ""}${
+            i.notfin ? " notfin" : ""}${
             repOf(i.in) === i.id ? " isrep" : ""}"
           draggable="true" data-id="${i.id}"
           data-box-name="${i.in ? (nm[i.in] || "") : ""}"
@@ -329,6 +338,8 @@ function draw() {
                title="이 사진을 상자의 대표로">${
                  repOf(i.in) === i.id ? "★" : "☆"}</button>
        <span class="r">${i.rough}</span>
+       ${i.notfin ? `<span class="nf">${NOTFIN_NAME[i.notfin] || i.notfin}</span>`
+                  : ""}
      </div>`).join("");
   document.getElementById("nleft").textContent = ITEMS.filter(i => !i.in).length;
   document.getElementById("selinfo").textContent = `고른 것 ${sel.size}`;
@@ -731,18 +742,19 @@ const NOTFIN = {{ notfin_keys|safe }};
 
 async function notFin(cls, ids) {
   ids = ids || [...sel];
-  if (!confirm(`고른 ${ids.length}장을 「${NOTFIN_NAME[cls]}」 로 판정한다.\n`
-             + `격자에서 빠지고 검토 화면에 그 분류로 남는다.`)) return;
+  // **묻지 않는다.** 표가 남고 다시 누르면 바뀌니 되돌릴 수 있고, 한 장씩
+  // 확인 창을 넘기는 것이 훑는 일에서 가장 손을 늦춘다
   const r = await post("/api/reid/cls", {boxes: ids, cls});
   if (!r) return;
   // **화면에서도 곧바로 뺀다** — 다음 격자를 다시 만들 때까지 기다리지 않는다.
   // `ITEMS` 는 `const` 라 **제자리에서 덜어낸다** — 다시 대입하면 거기서
   // 예외가 나고, 그 위의 저장은 이미 끝난 뒤라 **판정은 남는데 화면만 안 바뀐다**
+  // **격자에서 지우지 않는다** — 방금 무엇을 했는지 보이고, 잘못 눌렀으면
+  // 다시 다른 분류를 누를 수 있어야 한다. 다음에 조각을 다시 만들 때
+  // `reid.usable` 이 걸러내므로 자료 쪽은 알아서 빠진다
   const gone = new Set(ids);
-  for (let n = ITEMS.length - 1; n >= 0; n--) {
-    if (gone.has(ITEMS[n].id)) ITEMS.splice(n, 1);
-  }
-  ids.forEach(id => delete byId[id]);
+  ids.forEach(id => { if (byId[id]) byId[id].notfin = cls; });
+  // 묶음 제안에서는 뺀다 — 지느러미가 아닌 것을 개체 후보로 낼 이유가 없다
   GROUPS = GROUPS.map(g => ({...g, boxes: g.boxes.filter(b => !gone.has(b))}))
                  .filter(g => g.boxes.length);
   sel.clear();

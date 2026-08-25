@@ -402,8 +402,19 @@ def reid(request):
         for box_id, ind in (Identification.objects.order_by("id")
                             .values_list("box_id", "individual_id")):
             latest[box_id] = ind
+        # **이미 "지느러미가 아니다" 라고 한 것은 표를 달고 보인다.** 격자에서
+        # 지워 버리면 방금 무엇을 했는지 확인할 길이 없고, 새로고침하면 그
+        # 판정이 화면에서 사라져 같은 것을 또 누르게 된다
+        judged = {}
+        for box_id, cls in (Review.objects.filter(box_id__in=[i["id"] for i in items])
+                            .exclude(cls="").order_by("id")
+                            .values_list("box_id", "cls")):
+            judged[box_id] = cls
         for it in items:
             it["in"] = latest.get(it["id"])
+            c = judged.get(it["id"])
+            if c and c != "fin":
+                it["notfin"] = c
         # **만든 순서로 낸다.** 기본은 이름순인데(`Individual.Meta`) 그러면
         # `상자 10` 이 `상자 2` 앞에 오고, 무엇보다 **이름을 고치는 순간 그
         # 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 눈으로 다시
