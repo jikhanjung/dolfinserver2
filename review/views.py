@@ -889,7 +889,7 @@ def home(request):
 
     n_ident = Identification.objects.count()
     cat_n = Individual.objects.filter(holding=False).count()
-    pool, filed, unjudged = 0, 0, 0
+    pool, filed, held, unjudged = 0, 0, 0, 0
     root = Path(settings.FIN_REID)
     if (root / "items.json").exists():
         items = json.loads((root / "items.json").read_text())["items"]
@@ -898,7 +898,13 @@ def home(request):
         for b, i in (Identification.objects.order_by("id")
                      .values_list("box_id", "individual_id")):
             latest_id[b] = i
-        filed = sum(1 for it in items if latest_id.get(it["id"]))
+        # **보류함은 개체가 아니라 자리다** (`Individual.holding`) — `catalog()` 가
+        # 안 세는 것을 여기서 세면 "분류가 852장 됐다" 고 말하게 된다.
+        # 실제로 그렇게 말하고 있었고, 그중 312장은 아직 답을 못 정한 것이다
+        hold = set(Individual.objects.filter(holding=True).values_list("id", flat=True))
+        filed = sum(1 for it in items
+                    if latest_id.get(it["id"]) and latest_id[it["id"]] not in hold)
+        held = sum(1 for it in items if latest_id.get(it["id"]) in hold)
         # **"지느러미가 아니다" 도 답이다.** 그것은 `Review` 로만 남고
         # `Identification` 을 안 만드는데, 그 둘을 안 세면 이미 답한 조각이
         # 영영 "남은 일" 로 남는다 — 이 화면이 막으려는 바로 그 함정의 반대다
@@ -939,6 +945,7 @@ def home(request):
          "nums": [("개체", f"{cat_n}", False),
                   ("격자", f"{pool:,}", False),
                   ("상자에 든 것", f"{filed:,}", False),
+                  ("보류함", f"{held:,}", held > 0),
                   ("아직 안 만진 것", f"{unjudged:,}", unjudged > 0)],
          "acts": [("분류하기", "/reid", unjudged > 0),
                   ("카탈로그 보기", "/catalog", False)]},
