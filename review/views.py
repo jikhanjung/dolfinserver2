@@ -432,7 +432,11 @@ def reid(request):
     # 다른 키를 누르게 하면 손이 헷갈리고, 그 순간 잘못된 분류가 남는다.
     # 여기서는 `fin` 만 뺀다 — 격자에 있다는 것 자체가 "지느러미로 봤다" 이므로
     notfin = {k: c for c, k in CLASS_KEYS.items() if c != "fin"}
+    # **상자만 따로 창으로 뽑는다.** 격자와 상자 목록을 두 화면에 나눠 놓으면
+    # 끌어 넣는 거리가 짧아지고 목록을 굴릴 일이 없다. 같은 템플릿을 쓰되
+    # 격자를 감춘다 — 끌기·놓기·저장 코드를 그대로 물려받으려는 것이다
     return render(request, "review/reid.html", {
+        "only_boxes": request.GET.get("only") == "boxes",
         "ready": ready,
         "notfin_keys": json.dumps(notfin, ensure_ascii=False),
         "notfin_names": json.dumps(dict(CLASSES), ensure_ascii=False),
