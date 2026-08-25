@@ -417,8 +417,14 @@ def reid(request):
                   "hold": i.holding,
                   "n": sum(1 for v in latest.values() if v == i.id)}
                  for i in Individual.objects.order_by("id")]
+    # **키는 검토 화면과 같은 것을 쓴다** (`models.CLASS_KEYS`) — 두 화면에서
+    # 다른 키를 누르게 하면 손이 헷갈리고, 그 순간 잘못된 분류가 남는다.
+    # 여기서는 `fin` 만 뺀다 — 격자에 있다는 것 자체가 "지느러미로 봤다" 이므로
+    notfin = {k: c for c, k in CLASS_KEYS.items() if c != "fin"}
     return render(request, "review/reid.html", {
         "ready": ready,
+        "notfin_keys": json.dumps(notfin, ensure_ascii=False),
+        "notfin_names": json.dumps(dict(CLASSES), ensure_ascii=False),
         "items": json.dumps(items, ensure_ascii=False),
         "boxes": json.dumps(boxes, ensure_ascii=False),
         "n_items": len(items),
@@ -662,6 +668,40 @@ def reid_suggest(request):
     return JsonResponse({"prob": is_cls,
                          "suggest": [{"id": i, "name": names.get(i, str(i)),
                                       "score": round(s, 4)} for i, s, _ in sg]})
+
+
+@require_POST
+@transaction.atomic
+def reid_cls_set(request):
+    """**격자에서 바로 "이건 지느러미가 아니다" 라고 말한다.**
+
+    옛 상자를 2,877개 길어 오면서 몸통·꼬리 같은 것이 섞여 들어왔다. 분할
+    엔진이 걸러 주기는 하는데 어휘가 셋뿐이라(`fin`·`dolphin`·`nonfin`) 놓치는
+    것이 있고, 그것이 격자에 앉아 있으면 **사람이 볼 때마다 같은 판단을 다시
+    한다.**
+
+    판정은 `Review` 로 남는다 — 검토 화면이 쓰는 바로 그 표다. 그래야
+    `rules.resolve` 가 그 분류를 내고 `reid.usable` 이 다음 격자에서 걸러낸다.
+    **여기서 따로 표를 만들지 않는다** — 두 곳에 두면 화면이 거른 것과 자료로
+    나가는 것이 갈린다.
+
+    `verdict` 는 안 적는다. 그것은 "이 마스크가 맞나" 를 묻는 말이라 분류와
+    다른 축이고, 여기서는 묻지 않았다.
+    """
+    body = json.loads(request.body or "{}")
+    cls = body.get("cls", "")
+    if cls not in dict(CLASSES):
+        return JsonResponse({"error": f"그런 분류가 없다: {cls}"}, status=400)
+    box_ids = [int(b) for b in body.get("boxes", [])]
+    if not box_ids:
+        return JsonResponse({"error": "고른 것이 없다"}, status=400)
+    user = request.user if request.user.is_authenticated else None
+    masks = {m.box_id: m for m in Mask.objects.filter(box_id__in=box_ids,
+                                                      is_current=True)}
+    Review.objects.bulk_create([
+        Review(box_id=b, mask=masks.get(b), cls=cls, reviewer=user)
+        for b in box_ids])
+    return JsonResponse({"saved": len(box_ids), "cls": cls})
 
 
 @require_POST
