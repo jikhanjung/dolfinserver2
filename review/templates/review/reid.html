@@ -85,6 +85,13 @@
      개체 상자만큼 자리를 차지할 이유가 없다 — 위아래로 쌓아 둘이 합쳐 상자
      하나만큼이다. 보류함은 대표 조각을 보여야 하는 진짜 상자라 그대로 둔다 */
   .pair { display:flex; flex-direction:column; gap:6px; min-width:0 }
+  #pinned[data-cols="1"] { grid-template-columns:1fr }
+  #pinned[data-cols="2"] { grid-template-columns:1fr 1fr }
+  /* 셋이 나란히 — `display:contents` 로 짝을 풀어 각자 한 칸을 차지한다 */
+  #pinned[data-cols="3"] { grid-template-columns:repeat(3, 1fr) }
+  #pinned[data-cols="3"] .pair { display:contents }
+  #pinned[data-cols="3"] .box.special .thumbs.slot {
+    min-height:calc(var(--thumb) * .62) }
   #pinned .box { margin:0 }
   #pinned .thumbs { margin:0 5px 5px }
   #pinned .thumbs img.rep { max-height:calc(var(--thumb) * .8); width:auto }
@@ -179,10 +186,15 @@
   /* **붙박이 셋을 목록 위에 띄운다.** 격자 위에 한 줄로 자리를 잡고 있으면
      폭이 넓어도 첫 줄에 개체 상자가 한 칸도 안 들어간다 — 정작 자주 보는 것이
      밀려난다. 목록은 폭을 온전히 쓰고, 셋은 아래에 떠서 늘 손 닿는 데 있다 */
-  /* **넓어져도 상자 두 개 너비를 안 넘는다.** 하는 일은 끌어 놓는 것 하나라
-     넓힐수록 목록만 더 가린다. `right` 를 떼고 폭을 상자 두 칸으로 못 박는다 */
+  /* **폭에 따라 셋이 앉는 자리가 달라진다.** 몇 칸이 들어오는지는 자바스크립트가
+     재서 `data-cols` 로 적어 준다 — 칸 너비가 크기 슬라이더를 따라 변해서
+     `@container` 의 고정 문턱으로는 못 맞춘다.
+
+       한 칸  : 위에 빼기·새 상자(각각 반 높이), 아래에 보류함
+       두 칸  : 왼쪽에 빼기·새 상자, 오른쪽에 보류함
+       세 칸~ : 셋이 나란히, 각각 상자 하나 크기. 더 넓어져도 그대로 */
   #pinned { position:absolute; left:8px; bottom:8px; z-index:6;
-            width:min(calc(100% - 16px), calc(var(--thumb) * 2 + 246px));
+            width:min(calc(100% - 16px), calc(var(--thumb) * 3 + 372px));
             display:grid; gap:6px; grid-template-columns:1fr 1fr;
             padding:6px; border-radius:8px;
             background:#0d131acc; backdrop-filter:blur(6px);
@@ -814,8 +826,26 @@ const setThumb = () => {
     "--sidew", Math.max(460, Math.round(t * 3.4) + 80) + "px");
   localStorage.setItem("thumbSize", t);
 };
-tsize.oninput = setThumb;
+tsize.oninput = () => { setThumb(); fitPinned(); };
 setThumb();
+
+// **몇 칸이 들어오나를 재서 적는다.** 칸 너비가 크기 슬라이더를 따라 변하므로
+// CSS 의 고정 문턱(`@container (min-width: …)`)으로는 못 맞춘다
+function fitPinned() {
+  const side = document.getElementById("side");
+  const pin = document.getElementById("pinned");
+  if (!side || !pin) return;
+  const col = parseInt(getComputedStyle(document.documentElement)
+                       .getPropertyValue("--thumb")) + 120;
+  const usable = side.clientWidth - 16;
+  pin.dataset.cols = String(Math.max(1, Math.min(3,
+    Math.floor((usable + 7) / (col + 7)))));
+}
+if ("ResizeObserver" in window) {
+  new ResizeObserver(fitPinned).observe(document.getElementById("side"));
+}
+addEventListener("resize", fitPinned);
+fitPinned();
 
 document.getElementById("unfocus").onclick = () => {
   focusOn = null; sel.clear(); draw();
