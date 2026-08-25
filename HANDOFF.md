@@ -536,7 +536,8 @@ FIN_DB=<사본> FIN_CROPS=<사본 크롭> FIN_REID=<시험 격자> \
 `sha256` 이 `MANIFEST.2026-08-24.json` 의 것과 맞고 `integrity_check ok` 다.
 덮어쓰기 전에 이 기계에 있던 것이 **NAS 것의 완전한 부분집합**임을 축마다
 확인했다(개체 판정·판정·상자·개체 모두 이쪽에만 있는 것 0). 그때 것은
-`db/fin.before-restore.2026-08-25.bak` 으로 옆에 두었다.
+`db/fin.before-restore.2026-08-25.bak` 으로 옆에 있다 — 복원이 확인됐으니
+지워도 된다.
 
 ```bash
 # 넘길 기계에서
@@ -580,6 +581,91 @@ FIN_PHOTOS=~/dolfin-photos FIN_REID=reid/v2 python manage.py runserver 0.0.0.0:8
 
 **2080ti 에만 있는 것**: `ultralytics`·GPU. m710q 에서는 CPU 로 돌려
 `infer` 13분 / `infer_base` 35분 / DINOv2 임베딩 6분이 걸렸다.
+
+## 지금 자리에 무엇이 있나 — 2026-08-25 · **2080ti**
+
+옮겨 앉은 직후에 세어 둔다. **다음에 이어받는 사람이 견줄 기준선이다** —
+숫자가 안 맞으면 복원이 덜 된 것이고, `reid` 는 덜 와도 오류가 아니라
+**빈 격자**로 나타난다.
+
+### `db/fin.db` — 다시 만들 수 없는 것
+
+크기 35,565,568 · 마지막 수정 **2026-08-25 08:08**(복원한 때) ·
+`integrity_check ok` · `journal_mode=wal` ·
+sha256 `391808e3…dfc0ddb96d` = `MANIFEST.2026-08-24.json` 의 것
+
+| 표 | 건수 | | 표 | 건수 |
+|---|---:|---|---|---:|
+| `image` | 4,181 | | `mask` | 21,079 |
+| `box` | 5,882 | | `review` | **6,014** |
+| `crop` | 5,882 | | `identification` | **1,298** |
+| `run` | 53 | | `individual` | **46** |
+
+**사람이 손댄 마지막 때** — 이 셋만 다시 만들 수 없다.
+
+| | 처음 | 마지막 | 마지막 id |
+|---|---|---|---:|
+| `review` | 2026-08-15 15:48 | **2026-08-23 02:55** | 6,051 |
+| `identification` | 2026-08-23 22:11 | **2026-08-24 14:53** | 1,298 |
+| `individual` | 2026-08-23 22:11 | 2026-08-24 13:21 | 47 |
+
+`review` 의 마지막 id(6,051)가 건수(6,014)보다 큰 것은 **지운 자리가 있어서**다.
+`individual` 도 같다(47 대 46).
+
+상자 출처 — `yolov5` 5,192 · `yolo11` **690**(우리 검출기가 새로 찾은 것).
+지금 쓰는 마스크 — `seg-v3-s` **5,671** · `sam2.1` 47 · `seg-v2-s` 23 · `seg-v1-s` 4.
+관찰일 **40일** (2016-03-15 ~ 2019-11-05).
+
+### `derived/` — 다시 만들 수 있지만, 다시 만들려면 사진과 시간이 든다
+
+| | 파일 | 크기 | 마지막 수정 |
+|---|---:|---:|---|
+| `crops/` | 5,882 | 392MB | 2026-08-25 08:03 (복원) |
+| `reid/v1/` | 3,479 | 54MB | 2026-08-24 11:21 |
+| `reid/v2/` | 4,064 | 114MB | 2026-08-24 23:56 |
+
+- `v1` — `chips/`1,735 · `look/`1,735 · `chips.npz` · `chips_norm.npz` ·
+  `curves.npz` · `emb.npz` · `sigs.npz` · `groups.json` · `items.json` ·
+  `notches.json` · `rough.json`
+- `v2` — `look/`4,059 · `chips.npz`(17.0MB) · `curves.npz` · `emb.npz`(7.4MB) ·
+  **`emb-dinov2.npz`**(5.8MB) · `items.json`.
+  **`v2` 에는 `sigs.npz`·`chips_norm.npz`·`rough.json`·`groups.json`·
+  `notches.json` 이 없다.** 대부분 옛 스크립트가 남긴 것이라 안 읽히지만
+  **하나가 걸린다** — `reid_train` 의 `--sigs` 기본값이
+  `reid/v1/sigs.npz` 로 박혀 있다. `v2` 로 일하면서 그냥 돌리면
+  **옛 갈래의 서명을 읽고도 아무 말이 없다.** `groups.json` 은
+  `reid_cluster` 가 쓰는 쪽이라 `v2` 에 없는 것은 아직 안 돌렸다는 뜻이다
+- `v2/items.json` 머리 — `n 4059 · min_area 15000 · auto_facing · auto_cls`.
+  **`min_area` 가 15,000 이고 `reid.MIN_AREA` 는 30,000 이다** (`TODOs.md` 의
+  넓이 문턱 항목)
+
+### 가중치 — `runs/` 10 개 · 271MB
+
+`detect-v2-det`(19MB · 08-24 04:47) · `seg-v3-s`(21MB · 08-24 09:00) ·
+`seg-v3-seg`(45MB) · `pose-v1`(42MB) · `seg-v1-s`·`seg-v1-m`·`seg-v2-s` ·
+`detect-merged-det` · `detect-human-mosaic0/1`
+
+### 로컬 `db/` — 저장소 밖(`.gitignore`)
+
+| | 크기 | 무엇 |
+|---|---:|---|
+| `fin.db` | 36MB | **지금 것** |
+| `fin.before-restore.2026-08-25.bak` | 36MB | 복원 전 이 기계 상태(개체 판정 448). **최종본의 부분집합** — 지워도 된다 |
+| `dolfinserver_prod_2026-08-17.sqlite3` | 972MB | **옛 운영 DB. 지우지 말 것** — `import_detections --src-db` 의 기본값이고 표본을 넓히는 유일한 공급원이다 (사진 544,585 · 상자 999,528) |
+
+`.bak` 옆에 `-wal`·`-shm` 이 보이면 읽기로 열었던 자국이다. 옮길 때는
+**본 파일 하나만** 옮긴다 (`backup` 이 뜰 때 `journal_mode=DELETE` 로 합친다).
+
+### NAS `dolfinserver2_backup/`
+
+- `db/fin.db.2026-08-24.bak` — **지금 로컬 것의 출처**. 기계 이름이 없다
+  (붙이기 전에 뜬 것이라 `--keep` 이 일부러 안 건드린다)
+- `db/fin.before-promote.2026-08-24.bak` — **되돌릴 자리** (개체 판정 574,
+  옛 상자를 들이기 전). 되돌릴 자리는 **원래 지금 것의 부분집합이다** —
+  부분집합이라는 것이 지울 이유가 아니다
+- `db/fin-test.2026-08-24.bak` — 승격 실험 사본. 승격이 끝났으니 지울 것
+- `MANIFEST.2026-08-24.json` · `derived/`(크롭 5,882 · `v1` 3,479 · `v2` 4,064)
+- **이 기계 갈래(`…JikhanDesktop.bak`)는 아직 없다** — 옮겨 앉고 아직 안 떴다
 
 ## 검토 화면 (`review/`)
 
