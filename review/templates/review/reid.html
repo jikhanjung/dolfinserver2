@@ -156,7 +156,22 @@
   .box.hold { border-color:#7a5a1e; background:#1b1710 }
   .box.hold .nm { color:#ffd479 }
   .box.hold.over { border-color:#ffd479; background:#2a2314 }
-  #holdbox { padding:0 8px; margin-bottom:2px }
+  /* 붙박이 셋도 상자 목록과 **같은 격자**에 선다 — 폭이 맞아야 한 종류로 읽힌다 */
+  #pinned { flex:none; padding:8px 8px 0; display:grid; gap:7px;
+            grid-template-columns:repeat(auto-fill,
+                                  minmax(calc(var(--thumb) + 120px), 1fr));
+            align-content:start }
+  #holdbox { display:contents }
+  .box.special .thumbs.slot { display:flex; align-items:center;
+    justify-content:center; text-align:center; color:var(--dim);
+    font-size:12px; line-height:1.35; min-height:calc(var(--thumb) * .75);
+    border:2px dashed var(--line); border-radius:5px; margin:0 6px 6px }
+  .box.special .nm { color:var(--dim); font-weight:600 }
+  .box.special.over { border-color:var(--no) }
+  .box.special.over .thumbs.slot { border-color:var(--no); color:var(--no) }
+  .box.special.new.over { border-color:var(--ok) }
+  .box.special.new.over .thumbs.slot { border-style:solid; border-color:var(--ok);
+                                       color:var(--ok) }
   .box.focus .look { background:#1b2b40; border-color:var(--sel);
                      color:var(--sel) }
   /* **한 상자만 보고 있다는 것을 화면이 크게 말해야 한다.** 안 그러면 격자가
@@ -260,14 +275,22 @@
         <button id="gnewbox" class="pri">이 묶음으로 <b>새 개체</b></button>
       </div>
     </div>
-    <!-- **둘은 늘 보인다.** 상자가 늘면 목록이 길어져 맨 위와 맨 아래가
-         스크롤 밖으로 나가는데, 정작 그 둘이 가장 자주 쓰는 자리다 -->
-    <div class="drop pin" id="unbox">여기로 끌면 <b>상자에서 뺀다</b></div>
-    <!-- **보류함도 늘 보인다.** 훑다가 "얜 뭔지 모르겠다" 는 것이 가장 잦고,
-         그때 목록을 굴려 찾아야 하면 그냥 안 넣고 지나간다 -->
-    <div id="holdbox"></div>
+    <!-- **셋은 늘 보인다.** 상자가 늘면 목록이 길어져 맨 위와 맨 아래가
+         스크롤 밖으로 나가는데, 정작 이 셋이 가장 자주 쓰는 자리다.
+         **모양도 상자와 같게 둔다** — 하는 일이 같은데(끌어 넣는 곳) 생김새가
+         다르면 눈이 그것을 다른 종류로 읽는다 -->
+    <div id="pinned">
+      <div class="box special" id="unbox">
+        <div class="hd"><span class="nm">상자에서 빼기</span></div>
+        <div class="thumbs slot">여기로 끌면 <b>뺀다</b></div>
+      </div>
+      <div id="holdbox"></div>
+      <div class="box special new" id="newbox">
+        <div class="hd"><span class="nm">새 상자</span></div>
+        <div class="thumbs slot">여기로 끌면 <b>새로 만든다</b></div>
+      </div>
+    </div>
     <div id="boxes"></div>
-    <div class="drop pin new" id="newbox">여기로 끌면 <b>새 상자</b></div>
   </div>
 </div>
 
@@ -514,6 +537,7 @@ function dropTarget(el) {
       const r = await post("/api/reid/box", {});
       if (!r) return;
       BOXES.push({id: r.id, name: r.name, n: 0, rep: null});
+      tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, n: 0}});
       await assign(r.id, ids);
       document.getElementById("boxes").scrollTop = 1e9;
       return;
