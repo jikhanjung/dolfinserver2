@@ -872,10 +872,20 @@ def home(request):
     from finseg.models import Individual
 
     c = rules.progress()
-    runs = {r.kind: r for r in Run.objects.order_by("-id")}
-    def latest(kind, like):
-        r = Run.objects.filter(kind=kind, model__contains=like).order_by("-id").first()
-        return Path(r.model).parts[-3] if r and "/" in (r.model or "") else None
+    def latest(kind, like=""):
+        """가장 최근 run 의 **가중치 이름**(`runs/<이름>/weights/best.pt` 의 가운데).
+
+        **`kind` 를 틀리면 조용히 하드코딩된 이름이 나간다.** 검출은
+        `infer_boxes` 가 `kind="detect"` 로 적고 분할·밑동은 `kind="yolo"` 다.
+        그리고 `facebook/sam2.1-…` 처럼 두 토막짜리 모델 이름도 있어 자리를
+        세어 꺼내면 터진다 — 꼴이 맞을 때만 꺼낸다.
+        """
+        qs = Run.objects.filter(kind=kind)
+        if like:
+            qs = qs.filter(model__contains=like)
+        r = qs.order_by("-id").first()
+        parts = Path(r.model).parts if r and r.model else ()
+        return parts[-3] if len(parts) >= 3 else None
 
     n_ident = Identification.objects.count()
     cat_n = Individual.objects.filter(holding=False).count()
@@ -889,11 +899,18 @@ def home(request):
                      .values_list("box_id", "individual_id")):
             latest_id[b] = i
         filed = sum(1 for it in items if latest_id.get(it["id"]))
-        unjudged = pool - sum(1 for it in items if it["id"] in latest_id)
+        # **"지느러미가 아니다" 도 답이다.** 그것은 `Review` 로만 남고
+        # `Identification` 을 안 만드는데, 그 둘을 안 세면 이미 답한 조각이
+        # 영영 "남은 일" 로 남는다 — 이 화면이 막으려는 바로 그 함정의 반대다
+        done_cls = set(Review.objects.filter(
+            box_id__in=[i["id"] for i in items]).exclude(cls="")
+            .exclude(cls="fin").values_list("box_id", flat=True))
+        unjudged = sum(1 for it in items
+                       if it["id"] not in latest_id and it["id"] not in done_cls)
 
     stages = [
         {"name": "검출 — 사진에서 지느러미를 찾는다",
-         "weights": latest("yolo", "detect") or "detect-v2",
+         "weights": latest("detect") or latest("yolo", "detect") or "—",
          "why": "옛 YOLOv5 를 대신할 우리 검출기. 재현율의 천장을 여는 자리다.",
          "nums": [("상자", f"{c['상자']:,}", False),
                   ("새 검출", f"{c.get('새검출', 0):,}", False),
@@ -902,7 +919,7 @@ def home(request):
          "acts": [("새 검출 보기", "/review?queue=new", c.get("새검출대기", 0) > 0),
                   ("브라우저에서 돌려 보기", "/detect", False)]},
         {"name": "분할 — 지느러미 윤곽을 딴다",
-         "weights": "seg-v3-s",
+         "weights": latest("yolo", "seg") or "—",
          "why": "윤곽이 곧 개체의 단서다. 사람은 기본값을 두고 예외만 누른다.",
          "nums": [("검토함", f"{c.get('검토함', 0):,} / {c['상자']:,}", False),
                   ("교정 대기", f"{c.get('교정대기', 0):,}", c.get("교정대기", 0) > 0),
@@ -910,9 +927,11 @@ def home(request):
          "acts": [("검토하기", "/review", c.get("교정대기", 0) > 0),
                   ("엔진 비교", "/compare", False)]},
         {"name": "밑동 — 두 삽입점을 찍는다",
-         "weights": "pose-v1",
+         "weights": latest("yolo", "pose") or latest("base") or "—",
          "why": "회전·크기를 지우는 기준선. 이것이 흔들리면 개체가 아니라 각도를 잰다.",
-         "nums": [("사람이 그린 밑동", f"{c.get('밑동사람', 0):,}", False)],
+         "nums": [("사람이 그린 밑동",
+                   f"{Review.objects.exclude(base_line='').values('box').distinct().count():,}",
+                   False)],
          "acts": [("윤곽·밑동 고치기", "/review", False)]},
         {"name": "개체 (re-ID) — 카탈로그의 몇 번인지 답한다",
          "weights": "cls-dinov2" if (root / "cls-dinov2.npz").exists() else "",
@@ -928,7 +947,11 @@ def home(request):
         "stages": stages,
         "n_image": f"{Image.objects.count():,}",
         "n_box": f"{Box.objects.count():,}",
-        "n_day": Image.objects.values("obsdate").distinct().count(),
+        # **`distinct()` 에 정렬이 끼어든다.** `Image.Meta.ordering` 이
+        # `path` 를 SELECT 에 넣어 사진마다 한 줄이 된다 — 관찰일이
+        # 아니라 사진 수가 나온다. `order_by()` 로 그 정렬을 지운다
+        "n_day": Image.objects.order_by().values("obsdate")
+                 .distinct().count(),
         "n_review": f"{Review.objects.count():,}",
         "n_ident": f"{n_ident:,}",
     })

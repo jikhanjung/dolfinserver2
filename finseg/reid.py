@@ -357,15 +357,16 @@ def integral_curvature(curve, r, n=256):
     out = np.full(len(q), 0.5)
     for i in range(len(q)):
         d = np.hypot(*(q - q[i]).T)
-        inside = np.where(d <= r)[0]
-        if len(inside) < 3:
+        near = d <= r
+        if near.sum() < 3:
             continue
-        # 이어진 구간만 — 곡선이 되돌아와 원에 다시 들어오는 것은 안 센다
+        # 이어진 구간만 — 곡선이 되돌아와 원에 다시 들어오는 것은 안 센다.
+        # **`in inside` 로 찾으면 점마다 배열을 훑어 O(n²) 가 된다**
         lo = i
-        while lo - 1 in inside and lo - 1 >= 0:
+        while lo > 0 and near[lo - 1]:
             lo -= 1
         hi = i
-        while hi + 1 in inside and hi + 1 < len(q):
+        while hi + 1 < len(q) and near[hi + 1]:
             hi += 1
         seg = q[lo:hi + 1]
         if len(seg) < 3:
@@ -390,15 +391,17 @@ def edge_complexity(curve, radii=(0.04, 0.08, 0.16), n=256):
     chord = float(np.hypot(*(q[-1] - q[0])))
     arc = float(np.sum(np.hypot(*np.diff(q, axis=0).T)))
     out = {"tort": arc / chord if chord > 1e-9 else 0.0}
+    first = None
     for r in radii:
         ic = integral_curvature(q, r, n)
+        if first is None:
+            first = ic                 # 아래 결각 세기에서 다시 안 잰다
         key = f"ic{int(r*100):02d}"
         out[key] = float(ic.std())            # 척도별 흔들림
         # **파인 쪽만** 따로 — 결각은 한쪽으로만 파인다
         out[key + "_dip"] = float(np.mean(np.maximum(0.5 - ic, 0)))
     # 결각 개수 — 가장 작은 척도에서 눈에 띄게 파인 골을 센다
-    ic = integral_curvature(q, radii[0], n)
-    dip = 0.5 - ic
+    dip = 0.5 - first
     thr = max(0.02, float(dip.std()) * 1.5)
     on, cnt = False, 0
     for v in dip:

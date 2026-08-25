@@ -29,7 +29,11 @@
                  vector-effect:non-scaling-stroke; }
   /* **현을 반으로 갈라 그린다.** 삽입점 하나가 짐작이면 그쪽 절반만 점선이라,
      어느 끝이 미더운지 눈으로 바로 읽힌다 — 전부 점선이면 그 구별이 사라진다 */
-  line.half { stroke:var(--base); stroke-width:2; }
+  /* **굵기와 점선은 확대에 딸려 가면 안 된다.** 넓게 보면 점선이 2px 아래로
+     줄어 실선과 구별이 안 되고, 크게 확대하면 현이 16px 짜리 띠가 되어 정작
+     찍으려는 밑동을 덮는다 — 이 파일의 다른 획들이 전부 그렇게 되어 있다 */
+  line.half { stroke:var(--base); stroke-width:2;
+              vector-effect:non-scaling-stroke; }
   line.half.guess { stroke-dasharray:6 5; opacity:.75 }
   line.base { stroke:var(--base); stroke-width:2; stroke-dasharray:7 5;
               vector-effect:non-scaling-stroke; opacity:.8; }
@@ -59,7 +63,7 @@
      매번 다시 떠올려야 하는데, 화살표는 가리키는 방향이 곧 뜻이다 */
   g.bp.front circle.dot { display:none }
   g.bp path.arrow { fill:#ff6fae; stroke:#fff; stroke-width:1.2;
-                    stroke-linejoin:round }
+                    stroke-linejoin:round; vector-effect:non-scaling-stroke }
   g.bp.guess path.arrow { opacity:.5 }    /* 기하 제안 */
   /* **내보낼 때 이 밖은 잘린다** (`export_yolo.clip_to_crop`). 원본을 깔면
      크롭 밖까지 보이므로, 어디까지가 자료가 되는지 화면이 말해 줘야 한다 */

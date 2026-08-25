@@ -22,10 +22,13 @@ function baseArt(base, facing, hint, partial) {
   return {
     front, deg,
     guessed: !facing && !!hint,        // 사람이 안 정하고 기하가 제안한 것
-    // `unknown` 은 어느 쪽인지 모른다는 뜻이라 양쪽 다 점선이다
-    dashed: i => g === "both" || g === "unknown"
-              || (g === "front" && front >= 0 && i === front)
-              || (g === "rear" && front >= 0 && i !== front),
+    // `unknown` 은 어느 쪽인지 모른다는 뜻이라 양쪽 다 점선이다.
+    // **앞쪽을 모를 때도 양쪽 다** — 어느 절반인지 못 가리는 것이지 짐작이
+    // 아닌 것이 아니다. 여기서 조용히 실선으로 두면 격자가 전에 하던 경고
+    // (`base_partial` 이 있으면 현을 통째로 붉은 점선)가 통째로 사라진다
+    dashed: i => !!g && (g === "both" || g === "unknown" || front < 0
+                      || (g === "front" && i === front)
+                      || (g === "rear" && i !== front)),
     // 화살표 모양. `s` 는 화면 배율(격자는 1, 편집 창은 확대에 따라 다르다)
     path: s => `M ${-7 * s} ${-13 * s} L ${20 * s} 0 L ${-7 * s} ${13 * s} Z`,
   };

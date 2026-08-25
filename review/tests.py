@@ -27,7 +27,7 @@ class RuleShownTests(SimpleTestCase):
 
     def block(self):
         """규칙 칸의 HTML. **거기 있어야 한다** — 주석이나 스크립트가 아니라."""
-        m = BLOCK.search(self.client.get("/").content.decode())
+        m = BLOCK.search(self.client.get("/review").content.decode())
         self.assertIsNotNone(m, "화면에 규칙 칸(.rule)이 없다")
         return m.group(1)
 

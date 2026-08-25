@@ -31,6 +31,7 @@ import numpy as np
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import reid
+from finseg.management.commands.reid_cls import Command as Cls
 
 MEASURES = ["tort", "ic04", "ic04_dip", "ic08", "ic08_dip", "ic16", "ic16_dip",
             "notches", "rough"]
@@ -43,7 +44,8 @@ class Command(BaseCommand):
         p.add_argument("--dir", default="reid/v2")
         p.add_argument("--emb", default="emb-dinov2.npz")
         p.add_argument("--test-days", type=int, default=8)
-        p.add_argument("--epochs", type=int, default=2000)
+        p.add_argument("--epochs", type=int, default=400,
+                       help="**`reid_cls` 와 같은 값이라야 한다** — 성적이 그 명령과 다르면 자를 견줄 근거가 없다")
         p.add_argument("--write", action="store_true",
                        help="`items.json` 에 자들을 적는다 — 화면 정렬에 쓰려면")
         p.add_argument("--seed", type=int, default=20260825)
@@ -80,7 +82,12 @@ class Command(BaseCommand):
             w(f"  못 잰 것 {bad:,}")
 
         # ---- 성적 — `reid_cls` 와 같은 규약 -------------------------------
-        emb = np.load(root / o["emb"])["emb"]
+        z2 = np.load(root / o["emb"])
+        # **순서를 본다.** 다른 조각 갈래에서 만든 임베딩을 물리면 라벨이 통째로
+        # 어긋난 채 그럴듯한 표가 나온다 — `reid_cls`·`reid_eval` 이 같은 것을 본다
+        if not (z2["box_id"] == ids).all():
+            raise CommandError(f"{o['emb']} 의 상자 순서가 items.json 과 다르다")
+        emb = z2["emb"]
         X = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-9)
         cat = reid.catalog()
         of = {b: i for i, v in cat.items() for b in v}
@@ -91,7 +98,6 @@ class Command(BaseCommand):
         test_days = set(sorted(days, key=lambda d: -cnt[d])[:o["test_days"]])
         is_test = np.array([d in test_days for d in day])
 
-        torch.manual_seed(o["seed"])
         ok = np.zeros(len(ids), bool)
         used = np.zeros(len(ids), bool)
         for side in ("left", "right"):
@@ -103,14 +109,13 @@ class Command(BaseCommand):
             if len(tr) < 10 or not len(te) or len(classes) < 2:
                 continue
             k = {c: i for i, c in enumerate(classes)}
-            net = torch.nn.Linear(X.shape[1], len(classes))
-            opt = torch.optim.AdamW(net.parameters(), lr=0.02, weight_decay=1e-3)
-            xt = torch.from_numpy(X[tr].astype(np.float32))
-            yt = torch.tensor([k[int(v)] for v in lab[tr]])
-            for _ in range(o["epochs"]):
-                opt.zero_grad(); Fn.cross_entropy(net(xt), yt).backward(); opt.step()
-            with torch.no_grad():
-                pred = net(torch.from_numpy(X[te].astype(np.float32))).argmax(1).numpy()
+            # **`reid_cls` 를 다시 쓰지 않고 부른다.** 여기서 따로 짜면 에폭이나
+            # 씨앗이 조금씩 어긋나고(실제로 2000 대 400이었다), 그러면 이 표의
+            # 성적이 `reid_cls` 가 내는 성적과 다른 것이 되어 **자를 견줄 근거가
+            # 사라진다.** 게다가 `ok[]` 가 아래 상관을 전부 먹인다
+            W, B = Cls()._fit(X[tr], [k[int(v)] for v in lab[tr]], len(classes),
+                              o["epochs"], 0.02, 1e-3, o["seed"])
+            pred = (X[te] @ W.T + B).argmax(1)
             ok[te] = pred == np.array([k[int(v)] for v in lab[te]])
             used[te] = True
         n = int(used.sum())
