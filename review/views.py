@@ -551,8 +551,45 @@ def _reid_pool():
     frame = np.array([int(m.group(1))
                       if (m := re.search(r"(\d+)\.[A-Za-z]+$", path.get(int(b)) or ""))
                       else -1 for b in ids])
+    # **배운 분류기가 있으면 그것을 쓴다.** 같은 갈래에서 재 보니 kNN 25.5% 대
+    # 분류기 44.5% 로 거의 두 배다. 없으면 kNN 으로 떨어진다 — 화면이 멈추지는
+    # 않되, 무엇으로 낸 것인지는 응답이 말한다
+    cls = None
+    f = root / "cls-dinov2.npz"
+    if f.exists():
+        z = np.load(f)
+        cls = {side: (z[f"{side}_W"], z[f"{side}_b"], z[f"{side}_cls"])
+               for side in ("left", "right") if f"{side}_W" in z}
+        cls["_n_labeled"] = int(z["n_labeled"][0]) if "n_labeled" in z else 0
     return {"ids": ids, "day": day, "fac": fac, "emb": emb, "frame": frame,
-            "pos": {int(b): i for i, b in enumerate(ids)}}
+            "cls": cls, "pos": {int(b): i for i, b in enumerate(ids)}}
+
+
+def _score(P, g, cat_idx, k=5):
+    """묶음 하나 → [(개체, 점수, 확률인가)…]. 분류기가 있으면 그것을 쓴다.
+
+    **확률과 닮음은 다른 값이다.** 분류기는 클래스 위의 확률을 내므로 그대로
+    읽으면 되고(합이 1), 코사인 닮음은 다 0.9대라 절대값이 뜻이 없어 순위로만
+    읽어야 한다. 화면이 둘을 구별해 보여야 사람이 잘못 믿지 않는다.
+    """
+    import numpy as np
+    from finseg import reid as R
+
+    cls = P.get("cls")
+    side = str(P["fac"][g[0]])
+    if cls and side in cls:
+        W, b, classes = cls[side]
+        X = P["emb"] / np.maximum(np.linalg.norm(P["emb"], axis=1, keepdims=True), 1e-9)
+        # **묶음은 로짓을 평균한다** — 표를 모으는 것이 낱장보다 낫다
+        logit = (X[g] @ W.T + b).mean(0)
+        e = np.exp(logit - logit.max())
+        prob = e / e.sum()
+        order = np.argsort(-prob)[:k]
+        # 카탈로그에서 사라진 개체(뺐거나 합친 것)는 내지 않는다
+        return [(int(classes[i]), float(prob[i]), True)
+                for i in order if int(classes[i]) in cat_idx], True
+    return [(ind, sc, False)
+            for ind, sc in R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx, k)], False
 
 
 @require_GET
@@ -583,16 +620,26 @@ def reid_groups(request):
     names = dict(Individual.objects.values_list("id", "name"))
     n = int(request.GET.get("n", 20))
     out = []
+    is_cls = False
     for g in groups[:n]:
-        sg = R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx)
+        sg, is_cls = _score(P, g, cat_idx)
         out.append({
             "boxes": [int(P["ids"][i]) for i in g],
             "day": str(P["day"][g[0]]), "facing": str(P["fac"][g[0]]),
             "suggest": [{"id": ind, "name": names.get(ind, str(ind)),
-                         "score": round(sc, 4)} for ind, sc in sg],
+                         "score": round(sc, 4)} for ind, sc, _ in sg],
         })
+    # **무엇으로 낸 점수인지 화면이 알아야 한다** — 확률과 닮음은 읽는 법이 다르다
+    unknown = 0
+    if P.get("cls"):
+        known = set()
+        for side in ("left", "right"):
+            if side in P["cls"]:
+                known |= set(int(x) for x in P["cls"][side][2])
+        unknown = len([i for i in cat_idx if i not in known])
     return JsonResponse({"groups": out, "n_free": int(len(free)),
-                         "n_groups": len(groups)})
+                         "n_groups": len(groups), "prob": bool(is_cls),
+                         "unknown": unknown})
 
 
 @require_POST
@@ -611,10 +658,10 @@ def reid_suggest(request):
     cat_idx = {ind: [P["pos"][b] for b in boxes if b in P["pos"]]
                for ind, boxes in R.catalog().items()}
     names = dict(Individual.objects.values_list("id", "name"))
-    sg = R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx,
-                   k=int(body.get("k", 5)))
-    return JsonResponse({"suggest": [{"id": i, "name": names.get(i, str(i)),
-                                      "score": round(s, 4)} for i, s in sg]})
+    sg, is_cls = _score(P, g, cat_idx, k=int(body.get("k", 5)))
+    return JsonResponse({"prob": is_cls,
+                         "suggest": [{"id": i, "name": names.get(i, str(i)),
+                                      "score": round(s, 4)} for i, s, _ in sg]})
 
 
 @require_POST

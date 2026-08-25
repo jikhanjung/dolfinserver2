@@ -522,13 +522,14 @@ async function post(url, body) {
 // ---- 묶음 제안 -------------------------------------------------------------
 // **묶는 것은 자동, 판단은 사람.** 묶음을 내놓고 top-5 를 보이되 누르는 것은
 // 사람이다. 3%쯤은 잘못 묶이므로(실측 97%) **격자에서 눈으로 확인**하고 누른다.
-let GROUPS = [], gAt = 0;
+let GROUPS = [], gAt = 0, gProb = false, gUnknown = 0;
 
 async function loadGroups() {
   const r = await fetch("/api/reid/groups?n=60&min=2");
   const d = await r.json();
   if (!r.ok) { alert(d.error || "묶음을 못 만들었다"); return false; }
   GROUPS = d.groups; gAt = 0;
+  gProb = !!d.prob; gUnknown = d.unknown || 0;
   if (!GROUPS.length) { alert("묶을 것이 없다 — 안 넣은 조각 " + d.n_free); return false; }
   return true;
 }
@@ -541,16 +542,22 @@ function showGroup() {
   document.getElementById("gwhen").textContent =
       g.day + " · " + (g.facing === "left" ? "좌현" : "우현");
   document.getElementById("gsize").textContent = g.boxes.length + "장";
-  document.getElementById("gleft").textContent =
-      "남은 묶음 " + (GROUPS.length - gAt - 1);
+  // **무엇으로 낸 점수인지 말한다.** 확률(분류기)과 닮음(kNN)은 읽는 법이 다르다 —
+  // 확률은 합이 1이라 그대로 믿고 읽지만, 코사인은 다 0.9대라 순위로만 읽어야 한다
+  document.getElementById("gleft").innerHTML =
+      "남은 묶음 " + (GROUPS.length - gAt - 1)
+      + (gProb ? ' · <b>분류기 확률</b>' : ' · 닮음(순위로만 읽을 것)')
+      + (gUnknown ? ` · <span style="color:var(--no)">분류기가 모르는 개체 ${gUnknown}</span>` : "");
   const hi = g.suggest.length ? g.suggest[0].score : 1;
   const lo = g.suggest.length ? g.suggest[g.suggest.length - 1].score : 0;
   document.getElementById("gsug").innerHTML = g.suggest.map((s, i) => `
     <button class="sug ${i === 0 ? "top" : ""}" data-ind="${s.id}">
       <span>${s.name}</span>
       <span class="bar"><i style="width:${
-          hi > lo ? Math.round((s.score - lo) / (hi - lo) * 100) : 100}%"></i></span>
-      <span class="sc">${s.score.toFixed(3)}</span>
+          gProb ? Math.round(s.score * 100)
+                : (hi > lo ? Math.round((s.score - lo) / (hi - lo) * 100) : 100)}%"></i></span>
+      <span class="sc">${gProb ? (s.score * 100).toFixed(1) + "%"
+                               : s.score.toFixed(3)}</span>
     </button>`).join("") ||
     '<span class="stat">닮은 개체가 없다 — 새 개체로 만들 것</span>';
   // **묶음을 격자에서 골라 보여 준다** — 눈으로 확인하고 누르라는 뜻이다

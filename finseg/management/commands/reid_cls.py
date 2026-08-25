@@ -55,10 +55,31 @@ class Command(BaseCommand):
         p.add_argument("--wd", type=float, default=1e-3,
                        help="가중치 감쇠 — 개체당 조각이 적어 과적합이 쉽다")
         p.add_argument("--seed", type=int, default=20260825)
+        p.add_argument("--fit-all", metavar="파일",
+                       help="**재지 않고 배워서 저장한다** — 화면이 쓸 것이라 "
+                            "날을 가르지 않고 아는 것을 전부 쓴다. 성적을 볼 때는 "
+                            "이것을 쓰면 안 된다 (배운 것으로 배운 것을 잰다)")
         p.add_argument("--group", action="store_true",
                        help="**묶어서 묻는다** — 같은 날·같은 쪽의 한 개체 조각을 "
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
                             "그것이고(`묶음 제안`), 판단 한 번이 여러 장을 덮는다")
+
+    def _fit(self, X, y, n_cls, epochs, lr, wd, seed):
+        """선형 한 층. **numpy 로 쓸 수 있게 가중치만 돌려준다** — 화면이 추론할
+        때 torch 를 들이지 않아도 되게."""
+        import torch
+        import torch.nn.functional as Fn
+        torch.manual_seed(seed)
+        net = torch.nn.Linear(X.shape[1], n_cls)
+        opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=wd)
+        xt = torch.from_numpy(X.astype(np.float32))
+        yt = torch.tensor(y)
+        for _ in range(epochs):
+            opt.zero_grad()
+            Fn.cross_entropy(net(xt), yt).backward()
+            opt.step()
+        return (net.weight.detach().numpy().astype(np.float32),
+                net.bias.detach().numpy().astype(np.float32))
 
     def handle(self, **o):
         import torch
@@ -93,6 +114,9 @@ class Command(BaseCommand):
         w(f"관찰일 {len(days)} → 재는 날 {len(test_days)} · 배우는 날 "
           f"{len(days)-len(test_days)}")
 
+        if o["fit_all"]:
+            return self._save(o, X, ids, fac, lab, cat, w)
+
         # **누수를 값으로 막는다.** 날로 가른다고 적어 두는 것과 실제로 안 겹치는
         # 것은 다르다 — 이 저장소가 "화면은 됐다는데 값이 안 닿는다" 로 겪은 종류다
         if set(day[is_test]) & set(day[~is_test]):
@@ -113,18 +137,9 @@ class Command(BaseCommand):
                   f"· 개체 {len(classes)})")
                 continue
             k = {c: i for i, c in enumerate(classes)}
-            xt = torch.from_numpy(X[tr].astype(np.float32))
-            yt = torch.tensor([k[int(v)] for v in lab[tr]])
-            net = torch.nn.Linear(X.shape[1], len(classes))
-            opt = torch.optim.AdamW(net.parameters(), lr=o["lr"],
-                                    weight_decay=o["wd"])
-            for _ in range(o["epochs"]):
-                opt.zero_grad()
-                loss = Fn.cross_entropy(net(xt), yt)
-                loss.backward()
-                opt.step()
-            with torch.no_grad():
-                logit = net(torch.from_numpy(X[te].astype(np.float32))).numpy()
+            W, B = self._fit(X[tr], [k[int(v)] for v in lab[tr]], len(classes),
+                             o["epochs"], o["lr"], o["wd"], o["seed"])
+            logit = X[te] @ W.T + B
 
             # 기준선 — **배우는 날의 조각만** 후보로 둔다. 분류기가 본 것과
             # 같은 자료라야 공평하다
@@ -166,3 +181,34 @@ class Command(BaseCommand):
         if tot["cls1"] <= tot["knn1"]:
             w("\n** 기준선을 못 넘었다 — 배운 것이 없다. 개체당 조각이 모자라거나"
               " 규제가 세거나 날 갈래가 너무 좁다.")
+
+    def _save(self, o, X, ids, fac, lab, cat, w):
+        """**화면이 쓸 분류기를 저장한다.** 날을 안 가르고 아는 것을 전부 쓴다 —
+        성적을 재는 일과 실제로 쓰는 일은 다르다.
+
+        `npz` 로 둔다. 추론은 `X @ W.T + b` 한 줄이라 화면 쪽에서 torch 를 들일
+        이유가 없다.
+        """
+        out = {}
+        for side in ("left", "right"):
+            m = (fac == side) & (lab >= 0)
+            idx = np.where(m)[0]
+            classes = sorted(set(lab[idx].tolist()))
+            if len(idx) < 10 or len(classes) < 2:
+                w(f"  {side}: 배울 것이 모자란다 ({len(idx)}조각 · 개체 {len(classes)})")
+                continue
+            k = {c: i for i, c in enumerate(classes)}
+            W_, B_ = self._fit(X[idx], [k[int(v)] for v in lab[idx]], len(classes),
+                               o["epochs"], o["lr"], o["wd"], o["seed"])
+            out[f"{side}_W"] = W_
+            out[f"{side}_b"] = B_
+            out[f"{side}_cls"] = np.array(classes, dtype=np.int64)
+            w(f"  {side:<6} 개체 {len(classes):>2} · 조각 {len(idx):>3}")
+        if not out:
+            raise CommandError("배운 것이 없다")
+        out["emb"] = np.array([o["emb"]])
+        out["dim"] = np.array([X.shape[1]])
+        out["n_labeled"] = np.array([int((lab >= 0).sum())])
+        np.savez_compressed(o["fit_all"], **out)
+        w(f"\n{o['fit_all']}  — 아는 것을 전부 써서 배웠다.")
+        w("**이것으로 성적을 재지 말 것** — 배운 것으로 배운 것을 재게 된다.")
