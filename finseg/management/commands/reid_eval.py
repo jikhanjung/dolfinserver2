@@ -52,12 +52,13 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import reid
 from finseg.models import Box
 
-DIR = "reid/v1"
+# **기본은 화면이 보는 격자다** — 박아 두면 갈아 끼울 때마다 옛것을 잰다
 # 자 이름 → (파일, 화면에 쓸 이름). 순서가 표의 순서다
 METHODS = ["curve", "pixel", "silhouette", "emb"]
 LABEL = {"curve": "뒷날 곡선", "pixel": "조각 화소 그대로",
@@ -82,7 +83,7 @@ class Command(BaseCommand):
     help = "re-ID 자들을 사람이 붙인 개체 정답에 비교한다"
 
     def add_arguments(self, p):
-        p.add_argument("--dir", default=DIR)
+        p.add_argument("--dir", default=str(settings.FIN_REID))
         p.add_argument("--emb", help=f"기본은 <dir>/emb.npz")
         p.add_argument("--methods", nargs="+", default=METHODS, choices=METHODS)
         p.add_argument("--as-of", type=int, metavar="개체판정번호",

@@ -37,6 +37,7 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import reid
@@ -46,7 +47,7 @@ class Command(BaseCommand):
     help = "카탈로그를 클래스로 놓고 닫힌 집합 분류기를 배운다"
 
     def add_arguments(self, p):
-        p.add_argument("--dir", default="reid/v2")
+        p.add_argument("--dir", default=str(settings.FIN_REID), help="기본은 **화면이 보는 격자**(`FIN_REID`) — 박아 두면 격자를 갈아 끼울 때마다 조용히 옛것을 잰다")
         p.add_argument("--emb", default="emb-dinov2.npz",
                        help="`--dir` 안의 임베딩 파일 이름")
         p.add_argument("--test-days", type=int, default=8)

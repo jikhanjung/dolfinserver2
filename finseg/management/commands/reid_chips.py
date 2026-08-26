@@ -49,7 +49,7 @@ class Command(BaseCommand):
     help = "상자에서 re-ID 조각·곡선·임베딩을 만든다"
 
     def add_arguments(self, p):
-        p.add_argument("--out", default="reid/v2")
+        p.add_argument("--out", default=str(settings.FIN_REID), help="기본은 **화면이 보는 격자**(`FIN_REID`) — 박아 두면 격자를 갈아 끼울 때마다 조용히 옛것을 잰다")
         p.add_argument("--auto-facing", action="store_true",
                        help="`facing` 이 없으면 기하로 짐작한다 (검토 안 된 상자)")
         p.add_argument("--auto-cls", action="store_true",

@@ -36,6 +36,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import reid
@@ -57,7 +58,7 @@ class Command(BaseCommand):
     help = "정답 위에 선형 사영을 배워 ImageNet 기준선과 견준다"
 
     def add_arguments(self, p):
-        p.add_argument("--dir", default="reid/v2")
+        p.add_argument("--dir", default=str(settings.FIN_REID), help="기본은 **화면이 보는 격자**(`FIN_REID`) — 박아 두면 격자를 갈아 끼울 때마다 조용히 옛것을 잰다")
         p.add_argument("--test-days", type=int, default=6,
                        help="재는 데 쓸 관찰일 수 (나머지가 배우는 날)")
         p.add_argument("--hold-individuals", type=int, default=0,

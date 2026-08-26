@@ -28,6 +28,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from finseg import reid
@@ -41,7 +42,7 @@ class Command(BaseCommand):
     help = "뒷날 복잡도 자를 내고 개체 맞히기 성적과의 상관을 잰다"
 
     def add_arguments(self, p):
-        p.add_argument("--dir", default="reid/v2")
+        p.add_argument("--dir", default=str(settings.FIN_REID), help="기본은 **화면이 보는 격자**(`FIN_REID`) — 박아 두면 격자를 갈아 끼울 때마다 조용히 옛것을 잰다")
         p.add_argument("--emb", default="emb-dinov2.npz")
         p.add_argument("--test-days", type=int, default=8)
         p.add_argument("--epochs", type=int, default=400,

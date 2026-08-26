@@ -437,6 +437,7 @@ def reid(request):
     # 격자를 감춘다 — 끌기·놓기·저장 코드를 그대로 물려받으려는 것이다
     return render(request, "review/reid.html", {
         "only_boxes": request.GET.get("only") == "boxes",
+        "reid_dir": str(settings.FIN_REID),
         "ready": ready,
         "notfin_keys": json.dumps(notfin, ensure_ascii=False),
         "notfin_names": json.dumps(dict(CLASSES), ensure_ascii=False),

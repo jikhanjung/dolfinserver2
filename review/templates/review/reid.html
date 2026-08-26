@@ -282,8 +282,8 @@
 
 {% if not ready %}
 <div class="warn">
-  <b>분류할 것이 없다.</b> <code>reid/v1/items.json</code> 과
-  <code>reid/v1/look/</code> 이 있어야 한다.
+  <b>분류할 것이 없다.</b> <code>{{ reid_dir }}/items.json</code> 과
+  <code>{{ reid_dir }}/look/</code> 이 있어야 한다.
 </div>
 {% else %}
 <div id="focusbar">
