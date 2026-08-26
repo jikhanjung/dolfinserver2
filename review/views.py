@@ -1116,5 +1116,19 @@ def healthz(request):
         ok = False
         body["reid_error"] = "격자가 비었다 — 조각이 안 왔거나 FIN_REID 가 딴 곳이다"
 
-    body["status"] = "ok" if ok else "unhealthy"
+    # **백업이 막혀 있으면 그것을 말한다** (`.guides/web/data-safety.md` §2).
+    # 시간별 백업이 `integrity_check` 에 걸리면 센티넬을 세우고 그때부터
+    # 성한 사본이 안 쌓인다 — 서빙은 되니 `unhealthy` 가 아니라 **`degraded`**
+    # 이고, 상태코드는 **200 이다.** 503 은 "트래픽 보내지 말라" 는 뜻이라
+    # 배포 스크립트의 liveness 대기를 멈춰 세워, 게이트가 아니라 배포 장애가 된다.
+    sentinel = Path(settings.FIN_SENTINEL)
+    degraded = sentinel.exists()
+    if degraded:
+        try:
+            body["integrity"] = sentinel.read_text(encoding="utf-8").strip()[:200]
+        except OSError:
+            body["integrity"] = "센티넬이 있는데 못 읽었다"
+
+    body["status"] = ("unhealthy" if not ok else
+                      "degraded" if degraded else "ok")
     return JsonResponse(body, status=200 if ok else 503)

@@ -1546,3 +1546,17 @@ class HealthzTests(TestCase):
         self.assertEqual(d["role"], "work")
         self.assertEqual(d["status"], "ok")
         self.assertIn("version", d)
+
+    def test_a_blocked_backup_shows_as_degraded_but_still_200(self):
+        """503 은 "트래픽 보내지 말라" 는 뜻이라 배포 스크립트의 liveness
+        대기를 멈춰 세운다 — **게이트가 아니라 배포 장애가 된다.**"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "INTEGRITY_FAIL"
+            f.write_text("2026-08-26T00:00:00 integrity_check failed\n")
+            with self.settings(FIN_SENTINEL=f):
+                r = self.client.get("/healthz")
+            self.assertEqual(r.status_code, 200)
+            d = r.json()
+            self.assertEqual(d["status"], "degraded")
+            self.assertIn("integrity_check failed", d["integrity"])
