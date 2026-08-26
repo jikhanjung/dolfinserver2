@@ -172,7 +172,8 @@
     ><button id="mstale" onclick="load({mode:'stale'})">엔진 바뀜</button
     ><button id="mnew" onclick="load({mode:'new'})">새 검출</button
     ><button id="mnoshape" onclick="load({mode:'noshape'})">윤곽 없음</button
-    ><button id="mreid" onclick="load({mode:'reid'})">re-ID 후보</button>
+    ><button id="mreid" onclick="load({mode:'reid'})">re-ID 후보</button
+    ><button id="mnotfin" onclick="load({mode:'notfin'})">저쪽에서 아니라 한 것</button>
     <button id="first" onclick="load({page:1})" title="첫 페이지 (Home)">«</button>
     <button id="prev" onclick="load({page:page-1})">←</button>
     <span id="pg" class="stat">1 / 1</span>
@@ -359,7 +360,7 @@ function warn(msg) {
 // 판정만 한 벌 더 쌓인다
 // `reid` 도 묶음이다 — 몸통·바위를 골라내는 일이라 한 칸씩 물으면 안 끝난다.
 const isBatch = () => mode === "todo" || mode === "stale" || mode === "new"
-                   || mode === "reid";
+                   || mode === "reid" || mode === "notfin";
 
 // `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
 // 되짚어 보는 길이 있어야 첫 페이지와 열 번째 페이지의 기준이 같은지 알 수 있다
@@ -395,6 +396,9 @@ async function load(opts = {}) {
       : mode === "noshape"
       ? "윤곽이 없는 상자가 없다 — 판정이 붙은 상자는 전부 마스크나 사람이 "
         + "그린 윤곽을 갖고 있다."
+      : mode === "notfin"
+      ? "re-ID 자리에서 아니라고 한 것이 없다. 거기서 `지느러미 아님` 상자에 "
+        + "넣으면 여기로 온다 — 무엇인지는 여기서 골라 적는다."
       : mode === "reid"
       ? "격자에 실린 것 중 안 본 것이 없다. 조각을 새로 만들면(reid_chips) 다시 찬다."
       : mode === "new"
@@ -866,7 +870,7 @@ async function stat() {
 // **주소로 대기열을 고른다** (`/review?queue=reid`). 홈이 그렇게 걸어 두고
 // 있었는데 여기서 안 읽어서, 눌러도 늘 `검토할 것` 으로 떨어졌다 —
 // **링크는 있는데 아무 데도 안 데려다주는 상태였다.**
-const MODES = ["todo", "done", "stuck", "stale", "new", "noshape", "reid"];
+const MODES = ["todo", "done", "stuck", "stale", "new", "noshape", "reid", "notfin"];
 const want = new URLSearchParams(location.search).get("queue");
 load(MODES.includes(want) ? {mode: want} : {});
 </script>

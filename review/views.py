@@ -190,7 +190,8 @@ def batch(request):
     n = min(int(request.GET.get("n", 24)), 100)
     page = max(int(request.GET.get("page", 1)), 1)
     mode = request.GET.get("mode", "todo")
-    if mode not in ("todo", "done", "stuck", "stale", "new", "noshape", "reid"):
+    if mode not in ("todo", "done", "stuck", "stale", "new", "noshape",
+                    "reid", "notfin"):
         mode = "todo"
     cls = request.GET.get("cls", "")
     if cls not in {c for c, _ in CLASSES}:
@@ -260,6 +261,24 @@ def batch(request):
         conf = dict(Box.objects.filter(id__in=want).values_list("id", "conf"))
         ids = sorted(want, key=lambda b: (latest[b][0] != "fin",
                                           -(conf.get(b) or 0)))
+        qs = None
+    elif mode == "notfin":
+        # **저쪽에서 "지느러미가 아니다" 라고 한 것.** re-ID 자리는 `Review` 를
+        # 못 쓰므로(주인이 이 기계 하나다) 제 레인의 특수 상자에 넣어 두는데,
+        # 그것은 **분류가 아니라 표시**다 — 몸통인지 바위인지 새인지는 안 말한다.
+        #
+        # **그래서 사람이 옮겨 적는다.** 기계가 `기타` 같은 것으로 대신 적으면
+        # 그 라벨이 검출·분할 학습 자료로 그대로 나간다 — 거짓 라벨을 만드느니
+        # 한 번 더 보는 편이 낫다. 많지 않다.
+        #
+        # 이미 지느러미가 아니라고 판정한 것은 뺀다 — 옮겨 적기가 끝난 것이다.
+        marked = set(Identification.objects
+                     .filter(individual__kind="notfin")
+                     .values_list("box_id", flat=True))
+        done_ids = set(Review.objects.filter(box_id__in=marked)
+                       .exclude(cls="fin").exclude(cls="")
+                       .values_list("box_id", flat=True))
+        ids = sorted(marked - done_ids)
         qs = None
     elif mode == "reid":
         # **격자에 실렸는데 사람이 한 번도 안 본 것.** 옛 검출기 상자 100만 개
@@ -468,13 +487,18 @@ def reid(request):
         # `상자 10` 이 `상자 2` 앞에 오고, 무엇보다 **이름을 고치는 순간 그
         # 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 눈으로 다시
         # 찾아야 한다. 분류는 만든 순서대로 쌓이는 일이라 그 순서가 맞다.
-        # **보류함은 늘 있다.** 어디에 넣을지 모르겠는 것이 반드시 나오는데,
-        # 아무 상자에나 넣으면 그 상자가 오염되고 미분류로 두면 다음에 또
-        # 같은 고민을 처음부터 한다
-    hold, _ = Individual.objects.get_or_create(
-        holding=True, defaults={"name": "보류함"})
+        # **개체가 아닌 자리 둘은 늘 있다** (`Individual.KINDS`).
+        # `임시보관함` — 어디에 넣을지 모르겠는 것이 반드시 나오는데, 아무
+        # 상자에나 넣으면 그 상자가 오염되고 미분류로 두면 다음에 또 같은
+        # 고민을 처음부터 한다.
+        # `지느러미 아님` — 이 화면은 `Review` 를 못 쓴다(주인이 작업 자리
+        # 하나다). 그래서 **제 레인으로 말해 두고**, 되받은 뒤 작업 자리에서
+        # 사람이 진짜 분류를 골라 옮겨 적는다.
+    for k, nm in Individual.KINDS:
+        if k:
+            Individual.objects.get_or_create(kind=k, defaults={"name": nm})
     boxes = [{"id": i.id, "name": i.name, "rep": i.rep_id,
-              "hold": i.holding,
+              "hold": bool(i.kind), "kind": i.kind,
               "n": sum(1 for v in latest.values() if v == i.id)}
              for i in Individual.objects.order_by("id")]
     # **키는 검토 화면과 같은 것을 쓴다** (`models.CLASS_KEYS`) — 두 화면에서
@@ -511,7 +535,7 @@ def catalog(request):
     수백 개 만들어도 증거로는 약하다. 그래서 날이 바뀌는 자리에 금을 긋고
     `날 n` 을 함께 낸다 — 한 날짜뿐인 개체는 그것만으로 눈에 띈다.
 
-    **보류함은 개체가 아니다** (`Individual.holding`). `reid.catalog()` 가 안
+    **개체가 아닌 자리가 있다** (`Individual.kind`). `reid.catalog()` 가 안
     세므로 여기에도 안 나온다.
     """
     from finseg import reid
@@ -906,7 +930,7 @@ def home(request):
         return parts[-3] if len(parts) >= 3 else None
 
     n_ident = Identification.objects.count()
-    cat_n = Individual.objects.filter(holding=False).count()
+    cat_n = Individual.objects.filter(kind="").count()
     pool, filed, held, unjudged = 0, 0, 0, 0
     root = Path(settings.FIN_REID)
     if (root / "items.json").exists():
@@ -916,10 +940,10 @@ def home(request):
         for b, i in (Identification.objects.order_by("id")
                      .values_list("box_id", "individual_id")):
             latest_id[b] = i
-        # **보류함은 개체가 아니라 자리다** (`Individual.holding`) — `catalog()` 가
+        # **개체가 아닌 자리가 있다** (`Individual.kind`) — `catalog()` 가
         # 안 세는 것을 여기서 세면 "분류가 852장 됐다" 고 말하게 된다.
         # 실제로 그렇게 말하고 있었고, 그중 312장은 아직 답을 못 정한 것이다
-        hold = set(Individual.objects.filter(holding=True).values_list("id", flat=True))
+        hold = set(Individual.objects.exclude(kind="").values_list("id", flat=True))
         filed = sum(1 for it in items
                     if latest_id.get(it["id"]) and latest_id[it["id"]] not in hold)
         held = sum(1 for it in items if latest_id.get(it["id"]) in hold)
@@ -1129,7 +1153,7 @@ def healthz(request):
     try:
         counts = {
             "box": Box.objects.count(),
-            "individual": Individual.objects.filter(holding=False).count(),
+            "individual": Individual.objects.filter(kind="").count(),
             "identification": Identification.objects.count(),
         }
     except Exception as e:                       # DB 가 안 붙었다

@@ -190,7 +190,7 @@ class Command(BaseCommand):
         w(f"정답 조각 {int((lab >= 0).sum()):,} · 개체 {len(cat)} · 격자 {n:,}"
           + (f"  ← 개체판정 {o['as_of']}번까지의 정답" if o["as_of"] else ""))
         if o["as_of"]:
-            w("** `--as-of` 는 `holding` 을 못 되살린다 — 그때 보류함이던 것이"
+            w("** `--as-of` 는 `kind` 를 못 되살린다 — 그때 임시보관함이던 것이"
               " 지금 개체면 정답에 들어온다 (`reid.catalog`)")
         w(f"같은 개체 짝 {n_pair:,} — 날을 건너뛴 것 {n_cross:,}"
           f" · 좌우가 갈려 못 재는 것 {n_flip:,}")

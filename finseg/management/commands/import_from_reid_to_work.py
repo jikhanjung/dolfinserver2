@@ -27,6 +27,10 @@ from django.db import connection, transaction
 from .export_from_work_to_reid import REID_OWNS, WORK_OWNS
 
 
+# 되돌릴 자리로 둘 벌 수. 이보다 옛것은 시간별 백업이 들고 있다.
+KEEP_SNAPS = 7
+
+
 class _Stop(Exception):
     def __init__(self, msg=""):
         self.msg = msg
@@ -113,6 +117,15 @@ class Command(BaseCommand):
                 s2.execute("pragma journal_mode=DELETE")
                 s2.close()
                 w(f"  뜬 것: {snap.name}")
+                # **날마다 돌면 쌓인다.** 36MB 짜리가 하루 한 벌씩 늘어난다 —
+                # 되돌릴 자리로는 최근 것 몇 벌이면 되고, 그보다 옛것은
+                # 시간별 백업이 이미 들고 있다.
+                old = sorted(db.parent.glob("fin.before-reid-import.*.bak"))
+                for f in old[:-KEEP_SNAPS]:
+                    f.unlink(missing_ok=True)
+                if len(old) > KEEP_SNAPS:
+                    w(f"  옛 스냅샷 {len(old) - KEEP_SNAPS}개를 지웠다 "
+                      f"(최근 {KEEP_SNAPS}벌만 둔다)")
 
             work_before = {t: count(t) for t in WORK_OWNS}
             try:

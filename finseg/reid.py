@@ -632,7 +632,8 @@ def overlay(state, crop, n=24):
     """조각 위에 얹을 **윤곽과 밑동**. `chip()` 과 같은 자로 옮긴다.
 
     돌려주는 것은 그림 크기로 나눈 0~1 좌표다 —
-    `{"out": [[x,y]…], "base": [[x,y],[x,y]]}`. 크기로 나누는 것은
+    `{"out": [[x,y]…], "base": [앞, 뒤], "facing": …}`. **밑동은 앞(머리 쪽)이
+    먼저다.** 크기로 나누는 것은
     `look/`(사람이 보는 것)과 `chips/`(모델이 먹는 것)의 **크기가 달라서**다.
     같은 `frame()` 을 쓰므로 어느 쪽에 얹어도 자리가 맞는다.
 
@@ -675,8 +676,14 @@ def overlay(state, crop, n=24):
         if len(got) <= n:
             break
         eps *= 1.6
+    # **밑동 두 점을 앞(머리 쪽)부터 낸다.** `frame()` 이 안에서 `facing` 에
+    # 따라 뒤바꾸므로, 원래 순서 그대로 옮기면 좌현·우현에서 앞뒤가 반대로
+    # 나온다. 여기서 같은 규칙으로 맞춰 두면 **화면은 "0번이 앞" 하나만 알면
+    # 된다** — 규칙이 두 곳에 있으면 언젠가 갈라진다.
+    b = list(base[::-1] if state["facing"] == "right" else base)
     return {"out": [[round(float(x), 4), round(float(y), 4)] for x, y in out],
-            "base": [[round(float(x), 4), round(float(y), 4)] for x, y in put(base)]}
+            "base": [[round(float(x), 4), round(float(y), 4)] for x, y in put(b)],
+            "facing": state["facing"]}
 
 
 # ---- 개체 판정 ---------------------------------------------------------------
@@ -697,7 +704,7 @@ def catalog(as_of=None):
     표가 쌓이는 것이 그러라고 있는 것이다 (`models.Identification`) — 자가
     좋아진 것인지 정답이 늘어서인지는 **옛 정답에 새 자를 대 봐야** 갈린다.
 
-    다만 `holding` 은 개체의 **지금** 상태라 되살릴 수 없다. 그때 보류함이던
+    다만 `kind` 는 개체의 **지금** 상태라 되살릴 수 없다. 그때 임시보관함이던
     것이 지금 개체면 여기 들어온다 — 부르는 쪽이 그 한정을 함께 말한다.
     """
     from collections import defaultdict
@@ -709,9 +716,10 @@ def catalog(as_of=None):
     latest = {}
     for i in qs.values_list("box_id", "individual_id"):
         latest[i[0]] = i[1]
-    # **보류함은 개체가 아니다** — 카탈로그에 안 넣는다
+    # **개체가 아닌 자리는 카탈로그에 안 넣는다** — 임시보관함도, 지느러미가
+    # 아니라고 한 것도. 세면 성적이 그만큼 부풀고, 그 사실이 눈에 안 띈다
     from finseg.models import Individual
-    hold = set(Individual.objects.filter(holding=True)
+    hold = set(Individual.objects.exclude(kind="")
                .values_list("id", flat=True))
     out = defaultdict(list)
     for box_id, ind in latest.items():

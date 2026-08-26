@@ -66,6 +66,13 @@
   .ov .halo { fill:none; stroke:#000; stroke-opacity:.55; stroke-width:3 }
   .ov .edge { fill:none; stroke:#ffd54a; stroke-width:1.4 }
   .ov .base { fill:none; stroke:#4ad9ff; stroke-width:1.8 }
+  .ov .rear  { fill:#4ad9ff; stroke:none }
+  .ov .front { fill:#4ad9ff; stroke:none }
+  .ov .halo  { paint-order:stroke }
+  .fin .side { position:absolute; right:4px; bottom:4px; z-index:3;
+               font:600 11px "IBM Plex Mono",monospace; color:#4ad9ff;
+               background:#0009; border-radius:4px; padding:0 4px }
+  body:not(.ovon) .fin .side { display:none }
   #menu { position:fixed; z-index:50; min-width:220px; padding:4px;
           background:#1a212b; border:1px solid #33404f; border-radius:8px;
           box-shadow:0 10px 28px #000a; }
@@ -77,8 +84,18 @@
   #menu kbd { color:var(--dim); background:none; border:0; padding:0 }
   #menu hr { border:0; border-top:1px solid var(--line); margin:4px 6px }
   #menu .head { color:var(--dim); font-size:11.5px; padding:3px 9px }
-  /* 상자만 보는 창 — 격자와 **머리말·차림표까지** 감춘다. 여기서 하는 일은
-     끌어 넣는 것 하나뿐이라, 정렬·크기 같은 것은 격자 쪽 창에서 정한다 */
+  /* 상자만 보는 창 — 격자와 **머리말·차림표까지** 감춘다. 정렬·격자 크기는
+     격자 쪽 창에서 정한다.
+
+     **다만 상자 크기는 여기 남긴다.** 이 창에서 보는 것이 상자인데 그 크기를
+     저쪽 창에 두면, 조절할 때마다 창을 오가면서 **결과는 이쪽을 봐야 한다** —
+     보는 곳과 만지는 곳이 갈리면 몇 번을 왔다 갔다 한다. 머리말째로 감췄던
+     것을 되살리지 않고 그 하나만 떠 있게 한다 (`localStorage` 로 두 창이
+     같은 값을 본다). */
+  body.onlybox #tsizebar { display:flex !important; align-items:center; gap:6px;
+     position:fixed; right:10px; bottom:10px; z-index:40; padding:5px 10px;
+     background:#0d131aee; border:1px solid var(--line); border-radius:999px;
+     font-size:12px; color:var(--dim) }
   body.onlybox #grid, body.onlybox .gridonly { display:none !important }
   body.onlybox > header, body.onlybox > .topnav,
   body.onlybox #side > .top { display:none !important }
@@ -190,6 +207,11 @@
   .box.hold { border-color:#7a5a1e; background:#1b1710 }
   .box.hold .nm { color:#ffd479 }
   .box.hold.over { border-color:#ffd479; background:#2a2314 }
+  /* **지느러미가 아닌 것은 다른 색이다.** 임시보관함과 나란히 있는데 색이
+     같으면 손이 미끄러지고, 그 실수는 자료가 나갈 때에야 드러난다 */
+  .box.hold.notfin { border-color:#7a2e2e; background:#1d1111 }
+  .box.hold.notfin .nm { color:#ff9a9a }
+  .box.hold.notfin.over { border-color:#ff9a9a; background:#2c1717 }
   /* **붙박이 셋을 목록 위에 띄운다.** 격자 위에 한 줄로 자리를 잡고 있으면
      폭이 넓어도 첫 줄에 개체 상자가 한 칸도 안 들어간다 — 정작 자주 보는 것이
      밀려난다. 목록은 폭을 온전히 쓰고, 셋은 아래에 떠서 늘 손 닿는 데 있다 */
@@ -288,7 +310,7 @@
     윤곽·밑동 (o)</label>
   <span class="stat">크기 <input type="range" id="size" min="96" max="380"
     step="4" value="220"></span>
-  <span class="stat">상자 <input type="range" id="tsize" min="44" max="160"
+  <span class="stat" id="tsizebar">상자 <input type="range" id="tsize" min="44" max="160"
     step="4" value="88"></span>
   <span style="flex:1"></span>
   <span class="stat"><kbd>클릭</kbd>더하기·빼기 <kbd>Shift</kbd>범위
@@ -424,13 +446,33 @@ function draw() {
 // `non-scaling-stroke` 라 조각을 키워도 굵기가 그대로다.
 const _sh = (tag, cls) => tag.replace(/^<(\w+)/,
   `<$1 vector-effect="non-scaling-stroke" class="${cls}"`);
+// **앞쪽은 점이 아니라 화살표다** — `/edit` 과 같은 어법이다. 색으로만
+// 말하면 "저 색이 앞이었나" 를 볼 때마다 되짚게 된다. `base[0]` 이 앞이고,
+// 그 규칙은 `reid.overlay` 한 곳에 있다.
+//
+// **조각은 밑동으로 회전을 지운 것이라 화살표가 늘 같은 쪽을 가리킨다.**
+// 그것이 정보가 없다는 뜻은 아니다 — 이 그림이 어느 자로 세워진 것인지를
+// 화살표가 말해 주고, 그 자가 흔들린 조각은 지느러미가 기울어 보인다.
+const _arrow = (f, r) => {
+  const dx = f[0] - r[0], dy = f[1] - r[1], L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L, px = -uy, py = ux;   // 방향과 그 수직
+  const t = (a, b) => `${(a).toFixed(4)},${(b).toFixed(4)}`;
+  return `<polygon points="${t(f[0] + ux * .07, f[1] + uy * .07)} `
+       + `${t(f[0] + px * .04, f[1] + py * .04)} `
+       + `${t(f[0] - px * .04, f[1] - py * .04)}"/>`;
+};
 const ovHtml = i => (!i.out) ? "" :
   `<svg class="ov" viewBox="0 0 1 1" preserveAspectRatio="none">`
   + [[`<polygon points="${i.out.map(p => p.join(",")).join(" ")}"/>`, "edge"],
      [i.base ? `<line x1="${i.base[0][0]}" y1="${i.base[0][1]}"`
-                    + ` x2="${i.base[1][0]}" y2="${i.base[1][1]}"/>` : "", "base"]]
+                    + ` x2="${i.base[1][0]}" y2="${i.base[1][1]}"/>` : "", "base"],
+     [i.base ? `<circle cx="${i.base[1][0]}" cy="${i.base[1][1]}" r=".022"/>` : "", "rear"],
+     [i.base ? _arrow(i.base[0], i.base[1]) : "", "front"]]
     .map(([tag, cls]) => tag ? _sh(tag, "halo") + _sh(tag, cls) : "").join("")
-  + `</svg>`;
+  + `</svg>`
+  // **좌현·우현은 그림에서 사라진 축이다.** 조각은 그것으로 뒤집어 세운
+  // 것이라 눈으로 못 가르는데, **섞으면 개체가 아니라 어느 면인가를 배운다.**
+  + `<span class="side">${i.facing === "right" ? "우" : "좌"}</span>`;
 
   const fin = parseInt(getComputedStyle(document.documentElement)
                        .getPropertyValue("--fin")) || 220;
@@ -463,7 +505,8 @@ function boxHtml(b, mine) {
   const has = mine[b.id] || [];
   const rep = has.includes(b.rep) ? b.rep : has[0];
   return `
-      <div class="box${b.hold ? " hold" : ""}${focusOn === b.id ? " focus" : ""}"
+      <div class="box${b.hold ? " hold" : ""}${b.kind === "notfin" ? " notfin" : ""}${
+              focusOn === b.id ? " focus" : ""}"
            data-box="${b.id}">
         <div class="hd">
           <span class="nm"${b.hold ? "" : ' contenteditable="plaintext-only"'}
@@ -482,9 +525,10 @@ function boxHtml(b, mine) {
 function drawBoxes() {
   const mine = {};
   ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
-  const hold = BOXES.find(b => b.hold);
+  // **개체가 아닌 자리를 위에 붙여 둔다** — 굴리지 않고 늘 닿게.
+  const hold = BOXES.filter(b => b.hold);
   document.getElementById("holdbox").innerHTML =
-    hold ? boxHtml(hold, mine) : "";
+    hold.map(b => boxHtml(b, mine)).join("");
   document.getElementById("boxes").innerHTML =
     BOXES.filter(b => !b.hold).map(b => boxHtml(b, mine)).join("");
   bindBoxes();
@@ -612,7 +656,7 @@ function dropTarget(el) {
       const r = await post("/api/reid/box", {});
       if (!r) return;
       BOXES.push({id: r.id, name: r.name, n: 0, rep: null});
-      tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, n: 0}});
+      tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, kind: "", n: 0}});
       await assign(r.id, ids);
       document.getElementById("boxes").scrollTop = 1e9;
       return;
@@ -778,8 +822,8 @@ document.getElementById("gnewbox").onclick = async () => {
   if (!g) return;
   const r = await post("/api/reid/box", {});
   if (!r) return;
-  BOXES.push({id: r.id, name: r.name, rep: null, hold: false, n: 0});
-  tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, n: 0}});
+  BOXES.push({id: r.id, name: r.name, rep: null, hold: false, kind: "", n: 0});
+  tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, kind: "", n: 0}});
   await groupAssign(r.id);
 };
 
@@ -799,6 +843,10 @@ if (BC) BC.onmessage = e => {
   } else if (m.t === "box") {
     if (!BOXES.some(x => x.id === m.box.id)) BOXES.push(m.box);
     draw();
+  } else if (m.t === "thumb") {
+    tsize.value = m.v;
+    document.documentElement.style.setProperty("--thumb", m.v + "px");
+    localStorage.setItem("thumbSize", m.v);
   } else if (m.t === "notfin") {
     (m.ids || []).forEach(id => { if (byId[id]) byId[id].notfin = m.cls; });
     draw();
@@ -850,6 +898,9 @@ const setThumb = () => {
   document.documentElement.style.setProperty(
     "--sidew", Math.max(460, Math.round(t * 3.4) + 80) + "px");
   localStorage.setItem("thumbSize", t);
+  // **다른 창도 함께 움직인다.** 한쪽에서 줄여 놓고 저쪽을 보면 다르게
+  // 보이는데, 같은 자료를 두 창으로 보는 화면에서 그것은 바로 헷갈린다
+  tell({t: "thumb", v: t});
 };
 tsize.oninput = () => { setThumb(); fitPinned(); };
 setThumb();

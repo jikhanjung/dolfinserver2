@@ -810,14 +810,17 @@ class ReidTests(TestCase):
         self.box(id=ind["id"], rep=self.a.id)
         html = self.client.get("/reid").content.decode()
         m = re.search(r"let BOXES = (\[.*?\]);", html, re.S)
-        self.assertEqual(json.loads(m.group(1))[0]["rep"], self.a.id)
+        # **번호로 찾는다.** 자리에 기대면 개체가 아닌 자리(임시보관함·
+        # 지느러미 아님)가 앞에 서면서 깨진다
+        got = {b["id"]: b for b in json.loads(m.group(1))}
+        self.assertEqual(got[ind["id"]]["rep"], self.a.id)
 
     def test_the_holding_box_is_made_and_is_not_a_catalog_entry(self):
         """**보류함은 개체가 아니라 자리다.** 어디에 넣을지 모르겠는 것을
         아무 상자에나 넣으면 그 상자가 오염되고, 미분류로 두면 다음에 또 같은
         고민을 처음부터 한다. 그렇다고 카탈로그에 세면 개체 수가 틀린다."""
         self.client.get("/reid")
-        hold = Individual.objects.get(holding=True)
+        hold = Individual.objects.get(kind="hold")
         self.assign(individual=hold.id, boxes=[self.a.id])
         self.assertEqual(reid.catalog(), {})           # 개체로 안 센다
         self.assertEqual(reid.effective_id(self.a).individual_id, hold.id)
@@ -831,7 +834,7 @@ class ReidTests(TestCase):
         나왔고 확인하는 데 손이 갔다 — 시험이 있으면 한 줄로 끝난다.
         """
         self.client.get("/reid")                 # 보류함이 여기서 생긴다
-        hold = Individual.objects.get(holding=True)
+        hold = Individual.objects.get(kind="hold")
         ind = self.box().json()
         self.assign(individual=hold.id, boxes=[self.a.id, self.b.id])
         self.assign(individual=ind["id"], boxes=[self.a.id])
@@ -854,7 +857,7 @@ class ReidTests(TestCase):
         """화면이 받는 값도 함께 잰다 — DB 는 맞는데 화면이 안 따라오는 것이
         이 저장소에서 가장 자주 겪은 모양이다."""
         self.client.get("/reid")
-        hold = Individual.objects.get(holding=True)
+        hold = Individual.objects.get(kind="hold")
         ind = self.box().json()
         self.assign(individual=hold.id, boxes=[self.a.id])
         self.assign(individual=ind["id"], boxes=[self.a.id])
@@ -1775,3 +1778,66 @@ class ReidOrderTests(TestCase):
         """없는 것이 맨 앞으로 몰리면 그 순서에 뜻이 없어진다."""
         Image.objects.update(exifdatetime=None)
         self.assertTrue(all(i["at"] == "2016-03-15" for i in self.items()))
+
+
+class SpecialBoxTests(TestCase):
+    """**개체가 아닌 자리 둘** (`Individual.KINDS`).
+
+    `지느러미 아님` 이 있는 이유는 re-ID 자리가 `Review` 를 못 쓰기 때문이다 —
+    주인이 작업 자리 하나다. 거기서는 **제 레인으로 말해 두고**, 되받은 뒤
+    여기서 사람이 진짜 분류를 골라 옮겨 적는다.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "items.json").write_text('{"items": []}', encoding="utf-8")
+        (self.tmp / "look").mkdir()
+        img = Image.objects.create(path="a.JPG", obsdate=date(2016, 3, 15),
+                                   width=100, height=100)
+        self.box = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                      source="yolov5", conf=0.9)
+        Crop.objects.create(box=self.box, path=f"000/{self.box.id:08d}.jpg",
+                            x0=0, y0=0, x1=60, y1=60, w=640, h=640)
+        # **마이그레이션이 이미 만들어 둔다** — 자리는 자료가 아니라 뼈대라,
+        # 화면을 한 번도 안 연 기계에서도 있어야 한다
+        self.nf = Individual.objects.get(kind="notfin")
+
+    def test_opening_the_screen_makes_both_boxes(self):
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            self.client.get("/reid")
+        self.assertEqual(
+            sorted(Individual.objects.exclude(kind="").values_list("kind", "name")),
+            [("hold", "임시보관함"), ("notfin", "지느러미 아님")])
+
+    def test_only_one_box_per_kind(self):
+        """둘이 되면 어느 쪽에 넣었는지에 따라 결과가 갈리는데, **그 사실은
+        눈에 안 띈다.**"""
+        from django.db import IntegrityError, transaction
+        # 제약을 건드리면 그 트랜잭션이 깨진다 — 안쪽에 하나 더 두어 감싼다
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Individual.objects.create(kind="notfin", name="또 하나")
+
+    def test_a_special_box_is_not_an_individual(self):
+        """세면 성적이 그만큼 부푼다."""
+        from finseg import reid
+        Identification.objects.create(box=self.box, individual=self.nf)
+        self.assertEqual(reid.catalog(), {})
+
+    def test_what_the_other_seat_marked_comes_to_the_queue(self):
+        Identification.objects.create(box=self.box, individual=self.nf)
+        r = self.client.get("/api/batch?mode=notfin").json()
+        self.assertEqual(r["total"], 1)
+        self.assertEqual(r["tiles"][0]["box_id"], self.box.id)
+
+    def test_once_a_person_writes_it_down_it_leaves_the_queue(self):
+        """옮겨 적기가 끝난 것을 또 보여 주면 **볼 때마다 같은 판단을 다시 한다.**"""
+        Identification.objects.create(box=self.box, individual=self.nf)
+        Review.objects.create(box=self.box, cls="body")
+        self.assertEqual(self.client.get("/api/batch?mode=notfin").json()["total"], 0)
+
+    def test_calling_it_a_fin_keeps_it_in_the_queue(self):
+        """저쪽이 아니라 했는데 여기서 `fin` 이라 적었으면 **아직 안 옮긴 것**이다."""
+        Identification.objects.create(box=self.box, individual=self.nf)
+        Review.objects.create(box=self.box, cls="fin")
+        self.assertEqual(self.client.get("/api/batch?mode=notfin").json()["total"], 1)

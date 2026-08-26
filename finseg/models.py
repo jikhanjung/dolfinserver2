@@ -380,18 +380,29 @@ class Individual(models.Model):
     rep = models.ForeignKey("Box", on_delete=models.SET_NULL, null=True,
                             blank=True, related_name="represents",
                             help_text="이 개체를 대표하는 상자(사진)")
-    # **보류함.** 개체가 아니라 **아직 못 정한 것을 모아 두는 자리**다.
-    # 특징이 뚜렷해서 언젠가 이어질 것 같은데 지금은 어느 상자인지 모르겠는
-    # 것들이 반드시 나오고, 그것을 아무 상자에나 넣으면 그 상자가 오염된다.
-    # 그렇다고 미분류로 두면 다음에 또 같은 고민을 처음부터 한다.
+    # **개체가 아닌 자리들.** 분류하다 보면 "이 개체다" 라고 못 하는 것이
+    # 반드시 나오는데, 아무 상자에나 넣으면 그 상자가 오염되고 미분류로 두면
+    # 다음에 또 같은 고민을 처음부터 한다. 그래서 **개체가 아닌 자리를 갈래로
+    # 둔다** — `catalog()` 가 여기 든 것을 안 센다.
     #
-    # `catalog()` 가 여기 든 것을 안 센다 — 개체가 아니기 때문이다.
-    holding = models.BooleanField(default=False,
-                                  help_text="개체가 아니라 보류함이다")
+    # `hold`   특징은 뚜렷한데 지금은 어느 상자인지 모르겠는 것
+    # `notfin` **지느러미가 아닌 것.** re-ID 자리는 `Review` 를 못 쓰므로
+    #          (주인이 작업 자리 하나다) 여기에 넣어 두면, 되받은 뒤 작업
+    #          자리에서 **사람이 진짜 분류를 골라 `Review` 로 옮겨 적는다**
+    #          (검토 화면의 `저쪽에서 아니라 한 것` 대기열)
+    KINDS = [("", "개체"), ("hold", "임시보관함"), ("notfin", "지느러미 아님")]
+    kind = models.CharField(max_length=10, choices=KINDS, blank=True, default="",
+                            help_text="비어 있으면 진짜 개체다")
     at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            # **갈래마다 하나뿐이다.** 둘이 되면 어느 쪽에 넣었는지에 따라
+            # 결과가 갈리는데, 그 사실은 눈에 안 띈다.
+            models.UniqueConstraint(fields=["kind"], condition=~models.Q(kind=""),
+                                    name="one_box_per_kind"),
+        ]
 
     def __str__(self):
         return self.name
