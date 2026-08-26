@@ -282,10 +282,11 @@
 
 {% if not ready %}
 <div class="warn">
-  <b>분류할 것이 없다.</b> <code>{{ reid_dir }}/items.json</code> 과
-  <code>{{ reid_dir }}/look/</code> 이 있어야 한다.
+  <b>분류할 조각이 없다.</b> <code>{{ reid_dir }}/items.json</code> 과
+  <code>{{ reid_dir }}/look/</code> 이 있어야 한다 — <code>reid_chips</code> 가
+  만든다. <b>상자 목록은 그대로 보인다</b>: 상자는 자료지 격자 파일이 아니다.
 </div>
-{% else %}
+{% endif %}
 <div id="focusbar">
   <span><b id="fname"></b> 만 보는 중 · <span id="fcount"></span></span>
   <button id="unfocus">전체로 돌아가기 (Esc)</button>
@@ -926,4 +927,4 @@ if ({{ only_boxes|yesno:"true,false" }}) {
 
 draw();
 </script>
-{% endif %}
+

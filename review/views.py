@@ -394,14 +394,16 @@ def reid(request):
     items_f = root / "items.json"
     ready = items_f.exists() and ((root / "look").is_dir()
                                   or (root / "chips").is_dir())
-    items, boxes = [], []
+    # **상자 목록은 조각이 있든 없든 만든다.** 상자는 자료(`Individual`)지
+    # 격자 파일이 아니다 — `ready` 안에 묶어 두었더니 조각을 지운 순간
+    # 보류함조차 안 생겨, 파일이 있는지에 따라 **자료가 달라졌다**
+    latest = {}
+    for box_id, ind in (Identification.objects.order_by("id")
+                        .values_list("box_id", "individual_id")):
+        latest[box_id] = ind
+    items = []
     if ready:
         items = json.loads(items_f.read_text(encoding="utf-8")).get("items", [])
-        # 지금 어느 상자에 들어 있나 — **가장 늦은 판정이 이긴다**
-        latest = {}
-        for box_id, ind in (Identification.objects.order_by("id")
-                            .values_list("box_id", "individual_id")):
-            latest[box_id] = ind
         # **이미 "지느러미가 아니다" 라고 한 것은 표를 달고 보인다.** 격자에서
         # 지워 버리면 방금 무엇을 했는지 확인할 길이 없고, 새로고침하면 그
         # 판정이 화면에서 사라져 같은 것을 또 누르게 된다
@@ -422,12 +424,12 @@ def reid(request):
         # **보류함은 늘 있다.** 어디에 넣을지 모르겠는 것이 반드시 나오는데,
         # 아무 상자에나 넣으면 그 상자가 오염되고 미분류로 두면 다음에 또
         # 같은 고민을 처음부터 한다
-        hold, _ = Individual.objects.get_or_create(
-            holding=True, defaults={"name": "보류함"})
-        boxes = [{"id": i.id, "name": i.name, "rep": i.rep_id,
-                  "hold": i.holding,
-                  "n": sum(1 for v in latest.values() if v == i.id)}
-                 for i in Individual.objects.order_by("id")]
+    hold, _ = Individual.objects.get_or_create(
+        holding=True, defaults={"name": "보류함"})
+    boxes = [{"id": i.id, "name": i.name, "rep": i.rep_id,
+              "hold": i.holding,
+              "n": sum(1 for v in latest.values() if v == i.id)}
+             for i in Individual.objects.order_by("id")]
     # **키는 검토 화면과 같은 것을 쓴다** (`models.CLASS_KEYS`) — 두 화면에서
     # 다른 키를 누르게 하면 손이 헷갈리고, 그 순간 잘못된 분류가 남는다.
     # 여기서는 `fin` 만 뺀다 — 격자에 있다는 것 자체가 "지느러미로 봤다" 이므로
