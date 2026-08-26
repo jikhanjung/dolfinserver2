@@ -65,8 +65,10 @@
       </div>
       <div class="acts">
         {% for a in s.acts %}<a href="{{ a.1 }}" {% if a.2 %}class="pri"{% endif %}>{{ a.0 }}</a>{% endfor %}
-        {# **여기서 못 하는 일은 길을 안 낸다.** 없는 주소를 내밀면 누른 사람은
-           화면이 깨진 줄 알지, 이 자리가 그 일을 안 하기로 한 줄 모른다. #}
+        {% comment %}
+        **여기서 못 하는 일은 길을 안 낸다.** 없는 주소를 내밀면 누른 사람은
+        화면이 깨진 줄 알지, 이 자리가 그 일을 안 하기로 한 줄 모른다.
+        {% endcomment %}
         {% if s.elsewhere %}<span class="elsewhere">{{ s.elsewhere }}</span>{% endif %}
       </div>
     </div>

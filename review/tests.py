@@ -1841,3 +1841,50 @@ class SpecialBoxTests(TestCase):
         Identification.objects.create(box=self.box, individual=self.nf)
         Review.objects.create(box=self.box, cls="fin")
         self.assertEqual(self.client.get("/api/batch?mode=notfin").json()["total"], 1)
+
+
+class FlipMarkTests(TestCase):
+    """**뒤집힌 것만 표시한다.**
+
+    조각은 앞쪽이 늘 왼쪽에 오게 세운 것이라, 원래 오른쪽이 앞이던 사진은
+    좌우로 뒤집혀 있다. 원본과 나란히 놓고 볼 때 그것을 모르면 **다른
+    지느러미로 읽는다.**
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "look").mkdir()
+        ids = []
+        for f in ("left", "right"):
+            img = Image.objects.create(path=f"{f}.JPG", obsdate=date(2016, 3, 15),
+                                       width=100, height=100)
+            b = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                   source="yolov5", conf=0.9)
+            ids.append((b.id, f))
+        (self.tmp / "items.json").write_text(json.dumps({"items": [
+            {"id": i, "day": "2016-03-15", "facing": f, "rough": 0.1}
+            for i, f in ids]}), encoding="utf-8")
+        self.ids = dict((f, i) for i, f in ids)
+
+    def page(self):
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            return self.client.get("/reid").content.decode()
+
+    def test_the_page_carries_which_way_each_chip_faces(self):
+        got = {i["id"]: i["facing"]
+               for i in json.loads(re.search(r"const ITEMS = (\[.*?\]);",
+                                             self.page(), re.S).group(1))}
+        self.assertEqual(got[self.ids["right"]], "right")
+        self.assertEqual(got[self.ids["left"]], "left")
+
+    def test_only_the_flipped_one_gets_a_mark(self):
+        """둘 다 표를 달면 격자가 글자로 덮인다 — **절반에 다는 것으로 충분하다.**"""
+        html = self.page()
+        self.assertIn('i.facing === "right"', html)      # 표는 `right` 에만
+        self.assertNotIn('"우"', html)                    # 좌·우를 다 적지 않는다
+
+    def test_the_mark_does_not_hide_with_the_outline_toggle(self):
+        """뒤집혔다는 것은 그림 자체의 성질이라 윤곽을 끄고 보아도 알아야 한다."""
+        html = self.page()
+        self.assertNotIn("body:not(.ovon) .fin .flip", html)

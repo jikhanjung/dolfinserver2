@@ -216,7 +216,17 @@ class Command(BaseCommand):
         got = miss = 0
         for it in d["items"]:
             b, crop = boxes.get(it["id"]), crops.get(it["id"])
-            ov = reid.overlay(rules.resolve(b), crop) if b and crop else None
+            st = None
+            if b and crop:
+                # **`facing` 은 격자가 적어 둔 것을 쓴다 — 지금 다시 셈하지
+                # 않는다.** 그림은 그때 그 값으로 구워졌고, `frame()` 은 그
+                # 값으로 좌우를 뒤집는다. 여기서 `rules.resolve` 만 믿으면
+                # `--auto-facing` 으로 짐작했던 것이 빈 값으로 돌아와, **뒤집혀
+                # 구워진 그림 위에 안 뒤집힌 좌표를 얹는다** — 정확히 좌우반전
+                # 이다. 2026-08-27 에 격자의 45%가 그렇게 어긋났다.
+                st = dict(rules.resolve(b))
+                st["facing"] = it.get("facing") or st.get("facing")
+            ov = reid.overlay(st, crop) if st and st.get("facing") else None
             it["out"] = ov["out"] if ov else None
             it["base"] = ov["base"] if ov else None
             got += bool(ov)

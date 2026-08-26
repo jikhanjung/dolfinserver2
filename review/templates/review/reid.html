@@ -69,10 +69,11 @@
   .ov .rear  { fill:#4ad9ff; stroke:none }
   .ov .front { fill:#4ad9ff; stroke:none }
   .ov .halo  { paint-order:stroke }
-  .fin .side { position:absolute; right:4px; bottom:4px; z-index:3;
-               font:600 11px "IBM Plex Mono",monospace; color:#4ad9ff;
-               background:#0009; border-radius:4px; padding:0 4px }
-  body:not(.ovon) .fin .side { display:none }
+  /* **윤곽 토글과 함께 숨기지 않는다.** 뒤집혔다는 것은 그림 자체의 성질이라
+     윤곽을 끄고 보아도 알아야 한다 */
+  .fin .flip { position:absolute; right:3px; bottom:3px; z-index:3;
+               font:13px/1 system-ui, sans-serif; color:#9fe6ff;
+               background:#0009; border-radius:4px; padding:1px 3px }
   #menu { position:fixed; z-index:50; min-width:220px; padding:4px;
           background:#1a212b; border:1px solid #33404f; border-radius:8px;
           box-shadow:0 10px 28px #000a; }
@@ -303,9 +304,11 @@
   </select>
   <label class="stat"><input type="checkbox" id="hidedone" checked>
     넣은 것 숨기기</label>
-  {# **윤곽·밑동은 좌표로 온다** (`items.json` 의 `out`·`base`) — 그림에 구우면
-     모델이 먹는 `chips/` 에도 선이 들어가 그 선을 배운다. 켜고 끄는 것은
-     결각을 볼 때만 필요해서다: 늘 켜 두면 조각 자체가 안 보인다. #}
+  {% comment %}
+  **윤곽·밑동은 좌표로 온다** (`items.json` 의 `out`·`base`) — 그림에 구우면
+  모델이 먹는 `chips/` 에도 선이 들어가 그 선을 배운다. 켜고 끄는 것은 결각을
+  볼 때만 필요해서다: 늘 켜 두면 조각 자체가 안 보인다.
+  {% endcomment %}
   <label class="stat"><input type="checkbox" id="showov">
     윤곽·밑동 (o)</label>
   <span class="stat">크기 <input type="range" id="size" min="96" max="380"
@@ -470,9 +473,14 @@ const ovHtml = i => (!i.out) ? "" :
      [i.base ? _arrow(i.base[0], i.base[1]) : "", "front"]]
     .map(([tag, cls]) => tag ? _sh(tag, "halo") + _sh(tag, cls) : "").join("")
   + `</svg>`
-  // **좌현·우현은 그림에서 사라진 축이다.** 조각은 그것으로 뒤집어 세운
-  // 것이라 눈으로 못 가르는데, **섞으면 개체가 아니라 어느 면인가를 배운다.**
-  + `<span class="side">${i.facing === "right" ? "우" : "좌"}</span>`;
+  // **뒤집힌 것만 표시한다.** 조각은 앞쪽이 늘 왼쪽에 오게 세운 것이라,
+  // 원래 오른쪽이 앞이던 사진은 **좌우로 뒤집혀 있다** — 원본과 나란히 놓고
+  // 볼 때 그것을 모르면 다른 지느러미로 읽는다. 안 뒤집힌 쪽(원본 그대로)에는
+  // 아무것도 안 붙인다: 절반에 표를 다는 것만으로 충분하고, 둘 다 달면
+  // 격자가 글자로 덮인다.
+  + (i.facing === "right"
+      ? `<span class="flip" title="원본은 오른쪽이 앞 — 좌우로 뒤집어 세운 것이다">⇄</span>`
+      : "");
 
   const fin = parseInt(getComputedStyle(document.documentElement)
                        .getPropertyValue("--fin")) || 220;
@@ -486,7 +494,8 @@ const ovHtml = i => (!i.out) ? "" :
           draggable="true" data-id="${i.id}"
           data-box-name="${i.in ? (nm[i.in] || "") : ""}"
           style="${i.in ? `--nfs:${fs(nm[i.in] || "").toFixed(0)}px` : ""}"
-          title="box ${i.id} · ${i.day} · 결각 ${i.rough}">
+          title="box ${i.id} · ${i.day} · 결각 ${i.rough}${
+            i.facing === "right" ? " · 좌우 뒤집힘" : ""}">
        <img src="/reid/chip/${i.id}.png" loading="lazy" alt="">
        ${ovHtml(i)}
        <button class="star" data-star="${i.id}"

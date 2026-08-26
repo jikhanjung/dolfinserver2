@@ -648,6 +648,11 @@ def overlay(state, crop, n=24):
 
     from finseg import rules
 
+    # **앞쪽을 모르면 안 낸다.** `frame()` 이 `facing` 으로 좌우를 뒤집으므로,
+    # 빈 값으로 부르면 **안 뒤집힌 좌표**가 나온다 — 그림이 뒤집혀 구워졌다면
+    # 그 위에 거울상이 얹힌다. 없는 것보다 나쁜 것이 어긋난 것이다.
+    if not state.get("facing"):
+        return None
     pts = rules.final_points(state, crop)
     if len(pts) < 3:
         return None

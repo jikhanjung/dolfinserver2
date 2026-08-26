@@ -11,7 +11,7 @@ from pathlib import Path
 
 from django.core.management import CommandError, call_command
 from django.db import connection
-from django.test import TransactionTestCase
+from django.test import SimpleTestCase, TransactionTestCase
 
 from finseg.models import Box, Identification, Image, Individual, Review
 
@@ -178,3 +178,48 @@ class ReturnLaneTests(TransactionTestCase):
         call_command("import_from_reid_to_work", src=str(self.out),
                      dry_run=True, allow_shrink=True)
         self.assertEqual(Identification.objects.count(), 2)
+
+
+class OverlayFrameTests(SimpleTestCase):
+    """**조각과 좌표가 같은 자로 세워졌나.**
+
+    `frame()` 은 `facing` 으로 좌우를 뒤집는다. 그림을 구울 때와 좌표를 낼 때
+    그 값이 다르면 **정확히 좌우반전된 윤곽**이 얹힌다 — 2026-08-27 에 격자의
+    45%가 그렇게 어긋났고, 눈으로 보기 전에는 아무 오류도 안 났다.
+    """
+
+    def make(self, facing):
+        from finseg import reid
+        st = {"cls": "fin", "facing": facing,
+              "polygon": "20,60 40,10 60,60", "base_line": "20,60 60,60",
+              "base_partial": None, "review": None, "mask": None}
+        crop = type("C", (), {"x0": 0, "y0": 0, "x1": 80, "y1": 80,
+                              "w": 80, "h": 80, "scale": 1.0, "path": None})()
+        return st, crop, reid
+
+    def test_the_outline_follows_the_same_flip_as_the_image(self):
+        """뒤집힌 그림 위에 안 뒤집힌 좌표를 얹으면 거울상이 된다."""
+        st, crop, reid = self.make("right")
+        left = reid.overlay({**st, "facing": "left"}, crop)
+        right = reid.overlay(st, crop)
+        self.assertIsNotNone(left)
+        self.assertIsNotNone(right)
+        # 같은 폴리곤인데 `facing` 만 다르면 **x 가 뒤집힌다** — 그것이 곧
+        # 그림이 뒤집히는 방식이고, 좌표도 같이 뒤집혀야 맞는다
+        lx = sorted(round(x, 3) for x, _ in left["out"])
+        rx = sorted(round(1 - x, 3) for x, _ in right["out"])
+        self.assertEqual(lx, rx)
+
+    def test_the_front_point_is_first_whichever_side(self):
+        """`base[0]` 이 앞이라는 규칙은 `reid.overlay` 한 곳에 있어야 한다 —
+        화면이 그것 하나만 알면 되게."""
+        for f in ("left", "right"):
+            st, crop, reid = self.make(f)
+            ov = reid.overlay(st, crop)
+            self.assertLess(ov["base"][0][0], ov["base"][1][0], f)
+
+    def test_no_facing_means_no_overlay(self):
+        """짐작조차 못 한 것에 억지로 좌표를 내면 **어느 쪽으로 세운 것인지
+        모르는 선**이 얹힌다. 안 내는 편이 낫다."""
+        st, crop, reid = self.make("")
+        self.assertIsNone(reid.overlay(st, crop))
