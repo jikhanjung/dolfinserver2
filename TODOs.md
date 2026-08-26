@@ -194,13 +194,10 @@
 - [x] ~~**보내는 길 (m710q → GCP)**~~ — 섰다 (2026-08-27).
       `export_from_work_to_reid` / `import_from_work_to_reid` /
       `deploy/gcp/from_work_to_reid.sh`. 27.7MB · 10초. **며칠 뒤 지울 것**
-- [ ] **되받는 길 (GCP → m710q).** `export_from_reid_to_work` /
-      `import_from_reid_to_work` — 이름은 짝이 정해져 있다. `Individual`·
-      `Identification` 을 **통째로 갈아 끼운다**(GCP 가 유일한 주인이라 병합이
-      아니다). **지금 GCP 에 쌓이는 개체 판정은 거기에만 있다** — 매시 백업을
-      m710q 가 당겨오지만 그것은 사본이지 병합이 아니다.
-      되받을 때 `Individual.rep` 이 가리키는 상자가 이쪽에 있어야 하는데,
-      보내는 길이 섰으니 그 조건은 이제 지켜진다
+- [x] ~~**되받는 길 (GCP → m710q)**~~ — 섰다 (2026-08-27).
+      `deploy/gcp/from_reid_to_work.sh`. 갈아 끼우기 전에 한 벌 뜨고, 줄어들면
+      멎고, 가리키는 상자가 없으면 "보내는 길을 먼저" 라고 말한다.
+      **며칠 뒤 지울 것**
 - [x] ~~**역할을 배포에서 막는다**~~ — **배포가 아니라 앱에 넣었다** (2026-08-26).
       `FIN_ROLE`(`work`|`reid`)이 `review/urls.py` 의 `patterns_for` 로 길을
       가른다. **nginx 로 막으면 정작 새는 자리가 안 막힌다** — `runserver` 앞에는

@@ -100,6 +100,7 @@ python manage.py eval_detect                               # 그 판정으로 �
 deploy/gcp/from_work_to_reid.sh          # 레인 한 번 (행 + 조각·크롭)
 python manage.py export_from_work_to_reid --out <파일>   # 작업 자리가 주인인 것만
 python manage.py import_from_work_to_reid --from <파일>  # re-ID 자리에서. upsert
+deploy/gcp/from_reid_to_work.sh          # 되받기 (개체·개체판정을 갈아 끼운다)
 
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
