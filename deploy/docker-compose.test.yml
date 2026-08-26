@@ -1,0 +1,32 @@
+# **시험 인스턴스.** 자리는 `/srv/dolfinserver2-test/`, 화면은 nginx 8086.
+#
+# **DB 는 NAS 백업을 복사해 쓴다** (`deploy/host/test_db.sh`). 운영 것을
+# 그대로 물리지 않는 이유가 둘이다 — 여기서 무엇을 해도 사람의 판정이 안
+# 다치고, **덤으로 백업이 성한지를 잰다.** 확인 안 한 백업은 백업이 아니다.
+#
+# 역할은 `.env` 로 바꾼다 — `work` 와 `reid` 를 둘 다 띄워 봐야 GCP 로 나가기
+# 전에 두 갈래가 다 도는지 안다.
+#
+#   docker compose -f docker-compose.test.yml up -d
+services:
+  web:
+    container_name: dolfinserver2-test
+    image: honestjung/dolfinserver2:${IMAGE_TAG:-0.2.0}
+    ports:
+      - "127.0.0.1:8105:8000"
+    volumes:
+      - ./db:/app/hostdb
+      # 크롭·조각은 운영과 같은 것을 읽기전용으로 본다. 시험이 자료를 못
+      # 건드리고, 945MB 를 또 복사할 이유도 없다.
+      - ${REPO:-/home/jikhanjung/projects/dolfinserver2}/crops:/app/crops:ro
+      - ${REPO:-/home/jikhanjung/projects/dolfinserver2}/reid:/app/reid:ro
+      - ./staticfiles:/app/staticfiles
+      - /nas/JikhanJung/dolfinimage:/app/photos/nas:ro
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

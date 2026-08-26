@@ -1,0 +1,6 @@
+`STATICFILES_DIRS` 가 이 디렉토리를 가리킨다. 비어 있어도 있어야 명령마다
+`staticfiles.W004` 가 안 뜬다 — 경고가 늘 떠 있으면 진짜 경고를 안 읽게 된다.
+
+여기 실제로 들어오는 것은 내려받는 것들이고 `.gitignore` 가 막는다 —
+`vendor/ort`(26MB) · `models/*.onnx`(37MB). 없으면 `/detect` 가 화면에서
+왜 없는지 말한다.

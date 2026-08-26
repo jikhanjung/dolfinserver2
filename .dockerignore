@@ -1,0 +1,42 @@
+# 이미지에는 코드만 들어간다. 자료는 전부 호스트 마운트다
+# (`deploy/docker-compose.yml` — db · crops · reid · photos).
+
+# 자료 — 저장소 밖에 두는 것들 (.gitignore 와 같은 줄)
+db/
+crops/
+reid/
+runs/
+datasets/
+weights/
+out/
+bundles/
+staticfiles/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+*.pt
+*.onnx
+
+# 내려받은 것 — 없으면 `/detect` 가 화면에서 없다고 말한다
+static/vendor/
+static/models/
+
+# **안에서 보는 문서는 안 넣는다.** 이미지에 있어도 아무것도 안 하고, 경로·
+# 기계 이름·운영 사정이 적혀 있다 — 레지스트리에 올리면 그것이 함께 나간다.
+CLAUDE.md
+HANDOFF.md
+TODOs.md
+
+# 기록·개발 부산물
+.git/
+devlog/
+devdocs/
+.guides
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log
+.claude/

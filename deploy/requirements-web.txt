@@ -1,0 +1,8 @@
+# 웹으로 낼 때만 더 드는 것. 학습·추론 쪽(`../requirements-gpu.txt`)과 다르다.
+#
+#   pip install -r ../requirements.txt -r requirements-web.txt
+#
+# **이미지에 torch 를 넣지 않는다.** 검토 화면이 읽는 것은 이미 만들어 둔
+# `.npz`(임베딩·분류기)이지 모델이 아니다 — 학습은 2080ti 에서 명령으로 돌고,
+# 그 산출물만 `reid/` 를 통해 화면에 온다. 넣으면 이미지가 2GB 를 넘는다.
+gunicorn==25.1.0
