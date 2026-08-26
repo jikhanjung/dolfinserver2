@@ -171,7 +171,8 @@
     ><button id="mstuck" onclick="load({mode:'stuck'})">교정 대기</button
     ><button id="mstale" onclick="load({mode:'stale'})">엔진 바뀜</button
     ><button id="mnew" onclick="load({mode:'new'})">새 검출</button
-    ><button id="mnoshape" onclick="load({mode:'noshape'})">윤곽 없음</button>
+    ><button id="mnoshape" onclick="load({mode:'noshape'})">윤곽 없음</button
+    ><button id="mreid" onclick="load({mode:'reid'})">re-ID 후보</button>
     <button id="first" onclick="load({page:1})" title="첫 페이지 (Home)">«</button>
     <button id="prev" onclick="load({page:page-1})">←</button>
     <span id="pg" class="stat">1 / 1</span>
@@ -356,7 +357,9 @@ function warn(msg) {
 // `noshape` 는 묶음 저장이 아니다. **여기서 할 일은 윤곽을 그리는 것 하나**고
 // 그것은 편집 창에서 한다 — 격자에서 Enter 로 넘기면 아무것도 안 그린 채
 // 판정만 한 벌 더 쌓인다
-const isBatch = () => mode === "todo" || mode === "stale" || mode === "new";
+// `reid` 도 묶음이다 — 몸통·바위를 골라내는 일이라 한 칸씩 물으면 안 끝난다.
+const isBatch = () => mode === "todo" || mode === "stale" || mode === "new"
+                   || mode === "reid";
 
 // `todo` 는 아직 안 본 것, `done` 은 **본 순서대로** 이미 본 것.
 // 되짚어 보는 길이 있어야 첫 페이지와 열 번째 페이지의 기준이 같은지 알 수 있다
@@ -392,6 +395,8 @@ async function load(opts = {}) {
       : mode === "noshape"
       ? "윤곽이 없는 상자가 없다 — 판정이 붙은 상자는 전부 마스크나 사람이 "
         + "그린 윤곽을 갖고 있다."
+      : mode === "reid"
+      ? "격자에 실린 것 중 안 본 것이 없다. 조각을 새로 만들면(reid_chips) 다시 찬다."
       : mode === "new"
       ? "새 검출기가 들인 상자가 없다. manage.py infer_boxes 로 들이고 "
         + "manage.py crops 로 잘라 둘 것 — 크롭이 없으면 여기 안 뜬다."

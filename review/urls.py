@@ -45,7 +45,6 @@ reid = [
     path("api/reid/groups", views.reid_groups, name="reid_groups"),
     path("api/reid/suggest", views.reid_suggest, name="reid_suggest"),
     path("api/reid/assign", views.reid_assign, name="reid_assign"),
-    path("api/reid/cls", views.reid_cls_set, name="reid_cls_set"),
     path("reid/chip/<int:box_id>.png", views.reid_chip, name="reid_chip"),
 ]
 

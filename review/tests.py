@@ -8,6 +8,7 @@
 import io
 import json
 import re
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -1487,9 +1488,13 @@ class RoleTests(SimpleTestCase):
     **미들웨어가 아니라 URLconf 에서 뺀다** — 경로가 없으면 실수로 도는 길이
     없다. 그래서 시험도 "403 이 나오나" 가 아니라 **"길이 아예 없나"** 를 묻는다.
     """
-    # 이 다섯이 `Identification`·`Individual` 에 쓰는 전부다. 하나라도 `work`
+    # 이 넷이 `Identification`·`Individual` 에 쓰는 전부다. 하나라도 `work`
     # 쪽에 새면 그 자리가 조용히 두 번째 주인이 된다.
-    WRITES_INDIVIDUALS = {"reid", "reid_box", "reid_assign", "reid_cls_set", "catalog"}
+    #
+    # **`reid_cls_set` 이 여기 있었다가 사라졌다** — `/reid` 에서 "지느러미가
+    # 아니다" 를 쓰던 자리인데, 그것은 `Individual` 이 아니라 `Review` 에
+    # 쓰는 길이었다. 걷어냈으므로 이제 `Review` 의 주인도 이 기계 하나다.
+    WRITES_INDIVIDUALS = {"reid", "reid_box", "reid_assign", "catalog"}
 
     def names(self, role):
         from review.urls import patterns_for
@@ -1649,3 +1654,54 @@ class HealthzOutsideTheDoorTests(TestCase):
         d = self.client.get("/healthz").json()
         self.assertIn("box", d)
         self.assertIn("db", d)
+
+
+class ReidCandidateQueueTests(TestCase):
+    """**격자로 나가기 전에 한 번 거르는 자리.**
+
+    `/reid` 가 판정을 안 쓰게 되면서(`Review` 의 주인을 한 곳으로 두려고)
+    몸통·바위를 걸러 낼 자리가 없어졌다. 검토 화면의 대기열이 그것을 받는다.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        img = Image.objects.create(path="nas/2016/03/15/a.JPG", obsdate=date(2016, 3, 15),
+                                   width=100, height=100)
+        self.boxes = [Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                         source="yolov5", conf=0.9) for _ in range(3)]
+        for b in self.boxes:
+            Crop.objects.create(box=b, path=f"000/{b.id:08d}.jpg",
+                                x0=0, y0=0, x1=60, y1=60, w=640, h=640)
+        items = {"n": 3, "items": [
+            {"id": self.boxes[0].id, "day": "2016-03-15", "facing": "L", "pfin": 0.02},
+            {"id": self.boxes[1].id, "day": "2016-03-15", "facing": "L", "pfin": 0.98},
+            {"id": self.boxes[2].id, "day": "2016-03-15", "facing": "L"},
+        ]}
+        (self.tmp / "items.json").write_text(json.dumps(items), encoding="utf-8")
+
+    def ids(self):
+        with self.settings(FIN_REID=self.tmp):
+            r = self.client.get("/api/batch?mode=reid&n=24").json()
+        return [t["box_id"] for t in r["tiles"]], r["total"]
+
+    def test_the_most_suspicious_comes_first(self):
+        """`fin_filter` 가 적어 둔 `p(fin)` 이 낮은 것부터 — **의심스러운 것을
+        먼저 치워야 격자가 빨리 깨끗해진다.**"""
+        got, total = self.ids()
+        self.assertEqual(total, 3)
+        self.assertEqual(got[0], self.boxes[0].id)      # p(fin) 0.02
+        self.assertEqual(got[1], self.boxes[1].id)      # 0.98
+        self.assertEqual(got[2], self.boxes[2].id)      # 값이 없으면 뒤로
+
+    def test_what_a_person_already_judged_drops_out(self):
+        """한 번 본 것을 또 보여 주면 **볼 때마다 같은 판단을 다시 한다.**"""
+        Review.objects.create(box_id=self.boxes[0].id, cls="body")
+        got, total = self.ids()
+        self.assertEqual(total, 2)
+        self.assertNotIn(self.boxes[0].id, got)
+
+    def test_no_grid_is_not_an_error(self):
+        """조각을 아직 안 만든 자리가 있다 — 빈 대기열이지 오류가 아니다."""
+        with self.settings(FIN_REID=self.tmp / "없는곳"):
+            r = self.client.get("/api/batch?mode=reid").json()
+        self.assertEqual(r["total"], 0)

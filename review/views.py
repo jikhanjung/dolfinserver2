@@ -131,6 +131,18 @@ def index(request):
     })
 
 
+def _reid_items():
+    """지금 격자에 실린 조각들. 없으면 빈 목록 — **없는 것은 오류가 아니다**
+    (`work` 자리에서 조각을 아직 안 만들었을 수 있다)."""
+    f = Path(settings.FIN_REID) / "items.json"
+    if not f.exists():
+        return []
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))["items"]
+    except (ValueError, KeyError):
+        return []
+
+
 def _tiles_for(boxes):
     """상자 목록 → 칸 목록. 크롭 없는 상자는 뺀다 (화면에 낼 것이 없다)."""
     out = []
@@ -177,7 +189,7 @@ def batch(request):
     n = min(int(request.GET.get("n", 24)), 100)
     page = max(int(request.GET.get("page", 1)), 1)
     mode = request.GET.get("mode", "todo")
-    if mode not in ("todo", "done", "stuck", "stale", "new", "noshape"):
+    if mode not in ("todo", "done", "stuck", "stale", "new", "noshape", "reid"):
         mode = "todo"
     cls = request.GET.get("cls", "")
     if cls not in {c for c, _ in CLASSES}:
@@ -247,6 +259,24 @@ def batch(request):
         conf = dict(Box.objects.filter(id__in=want).values_list("id", "conf"))
         ids = sorted(want, key=lambda b: (latest[b][0] != "fin",
                                           -(conf.get(b) or 0)))
+        qs = None
+    elif mode == "reid":
+        # **격자에 실렸는데 사람이 한 번도 안 본 것.** 옛 검출기 상자 100만 개
+        # 에서 길어 온 조각이라 몸통·바위·물보라가 섞여 있다 — `fin_filter` 가
+        # 적어 둔 대로 그 조각 2,321장이 분할 엔진의 분류를 **전부 `fin` 으로
+        # 통과**했다.
+        #
+        # **거르는 자리가 여기인 것은 역할을 갈라 둔 결과다.** `/reid` 는
+        # 개체만 묻고 판정을 안 쓴다(`Review` 의 주인은 이 기계 하나다).
+        # 그래서 격자로 나가기 전에 여기서 한 번 훑는다.
+        #
+        # **`p(fin)` 이 낮은 것부터.** `fin_filter --write` 가 `items.json` 에
+        # 적어 둔 값이고, 의심스러운 것을 먼저 치워야 격자가 빨리 깨끗해진다.
+        # 없으면 상자 번호순 — 그때는 순서에 뜻이 없다.
+        seen = set(Review.objects.values_list("box_id", flat=True))
+        cand = [it for it in _reid_items() if it["id"] not in seen]
+        cand.sort(key=lambda it: (it.get("pfin", 1.0), it["id"]))
+        ids = [it["id"] for it in cand]
         qs = None
     elif mode == "stuck":
         # **고쳐야 한다고 해 놓고 안 고친 것.** 판정이 붙어 있어 `todo` 에 안
@@ -433,7 +463,6 @@ def reid(request):
     # **키는 검토 화면과 같은 것을 쓴다** (`models.CLASS_KEYS`) — 두 화면에서
     # 다른 키를 누르게 하면 손이 헷갈리고, 그 순간 잘못된 분류가 남는다.
     # 여기서는 `fin` 만 뺀다 — 격자에 있다는 것 자체가 "지느러미로 봤다" 이므로
-    notfin = {k: c for c, k in CLASS_KEYS.items() if c != "fin"}
     # **상자만 따로 창으로 뽑는다.** 격자와 상자 목록을 두 화면에 나눠 놓으면
     # 끌어 넣는 거리가 짧아지고 목록을 굴릴 일이 없다. 같은 템플릿을 쓰되
     # 격자를 감춘다 — 끌기·놓기·저장 코드를 그대로 물려받으려는 것이다
@@ -441,7 +470,6 @@ def reid(request):
         "only_boxes": request.GET.get("only") == "boxes",
         "reid_dir": str(settings.FIN_REID),
         "ready": ready,
-        "notfin_keys": json.dumps(notfin, ensure_ascii=False),
         "notfin_names": json.dumps(dict(CLASSES), ensure_ascii=False),
         "items": json.dumps(items, ensure_ascii=False),
         "boxes": json.dumps(boxes, ensure_ascii=False),
@@ -690,40 +718,6 @@ def reid_suggest(request):
 
 @require_POST
 @transaction.atomic
-def reid_cls_set(request):
-    """**격자에서 바로 "이건 지느러미가 아니다" 라고 말한다.**
-
-    옛 상자를 2,877개 길어 오면서 몸통·꼬리 같은 것이 섞여 들어왔다. 분할
-    엔진이 걸러 주기는 하는데 어휘가 셋뿐이라(`fin`·`dolphin`·`nonfin`) 놓치는
-    것이 있고, 그것이 격자에 앉아 있으면 **사람이 볼 때마다 같은 판단을 다시
-    한다.**
-
-    판정은 `Review` 로 남는다 — 검토 화면이 쓰는 바로 그 표다. 그래야
-    `rules.resolve` 가 그 분류를 내고 `reid.usable` 이 다음 격자에서 걸러낸다.
-    **여기서 따로 테이블을 만들지 않는다** — 두 곳에 두면 화면이 거른 것과 자료로
-    나가는 것이 갈린다.
-
-    `verdict` 는 안 적는다. 그것은 "이 마스크가 맞나" 를 묻는 말이라 분류와
-    다른 축이고, 여기서는 묻지 않았다.
-    """
-    body = json.loads(request.body or "{}")
-    cls = body.get("cls", "")
-    if cls not in dict(CLASSES):
-        return JsonResponse({"error": f"그런 분류가 없다: {cls}"}, status=400)
-    box_ids = [int(b) for b in body.get("boxes", [])]
-    if not box_ids:
-        return JsonResponse({"error": "고른 것이 없다"}, status=400)
-    user = request.user if request.user.is_authenticated else None
-    masks = {m.box_id: m for m in Mask.objects.filter(box_id__in=box_ids,
-                                                      is_current=True)}
-    Review.objects.bulk_create([
-        Review(box_id=b, mask=masks.get(b), cls=cls, reviewer=user)
-        for b in box_ids])
-    return JsonResponse({"saved": len(box_ids), "cls": cls})
-
-
-@require_POST
-@transaction.atomic
 def reid_assign(request):
     """지느러미를 상자에 넣거나 뺀다. **쌓는다, 덮어쓰지 않는다.**
 
@@ -921,6 +915,13 @@ def home(request):
         unjudged = sum(1 for it in items
                        if it["id"] not in latest_id and it["id"] not in done_cls)
 
+    # **격자에 실렸는데 판정이 한 번도 없는 것.** `/reid` 가 판정을 안 쓰게 된
+    # 뒤로 이 수가 줄어드는 자리는 검토 화면 하나다 (`batch` 의 `reid` 대기열).
+    unfiltered = 0
+    if pool:
+        seen = set(Review.objects.values_list("box_id", flat=True))
+        unfiltered = sum(1 for it in _reid_items() if it["id"] not in seen)
+
     stages = [
         {"name": "검출 — 사진에서 지느러미를 찾는다",
          "weights": latest("detect") or latest("yolo", "detect") or "—",
@@ -956,6 +957,13 @@ def home(request):
                   ("아직 안 만진 것", f"{unjudged:,}", unjudged > 0)],
          "acts": [("분류하기", "/reid", unjudged > 0),
                   ("카탈로그 보기", "/catalog", False)]},
+        {"name": "re-ID 후보 거르기 — 격자로 내보내기 전에",
+         "weights": "fin_filter" if (root / "items.json").exists() else "",
+         "why": "옛 상자에서 길어 온 조각에 몸통·바위가 섞여 있다. "
+                "**`/reid` 는 개체만 묻는다** — 거르는 자리는 여기다.",
+         "nums": [("격자", f"{pool:,}", False),
+                  ("안 거른 것", f"{unfiltered:,}", unfiltered > 0)],
+         "acts": [("거르러 가기", "/review?queue=reid", unfiltered > 0)]},
     ]
     return render(request, "review/home.html", {
         "stages": stages,
