@@ -628,6 +628,57 @@ def chip(state, crop, size=CHIP, pad=CHIP_PAD, color=False, cut=True):
     return np.where(m > 0, warp, 0).astype(np.float32) / 255.0
 
 
+def overlay(state, crop, n=24):
+    """조각 위에 얹을 **윤곽과 밑동**. `chip()` 과 같은 자로 옮긴다.
+
+    돌려주는 것은 그림 크기로 나눈 0~1 좌표다 —
+    `{"out": [[x,y]…], "base": [[x,y],[x,y]]}`. 크기로 나누는 것은
+    `look/`(사람이 보는 것)과 `chips/`(모델이 먹는 것)의 **크기가 달라서**다.
+    같은 `frame()` 을 쓰므로 어느 쪽에 얹어도 자리가 맞는다.
+
+    **꼭짓점을 줄여서 낸다.** 마스크는 중간값이 65개고 많으면 461개인데,
+    격자 화면은 조각을 한꺼번에 다 실어 보내는 자리라 그대로 실으면 페이지가
+    몇 배가 된다. 결각 모양을 보는 데 24점이면 남는다.
+
+    **그림에 구워 넣지 않는 이유**는 `chips/` 에 선이 들어가면 모델이 그 선을
+    배우기 때문이다. 좌표로 내면 사람이 보는 쪽에만 얹힌다.
+    """
+    import cv2
+
+    from finseg import rules
+
+    pts = rules.final_points(state, crop)
+    if len(pts) < 3:
+        return None
+    base = geometry.to_crop(geometry.loads(state["base_line"]), crop)
+    if len(base) != 2:
+        return None
+    F, _ = frame(base, pts, state["facing"])
+    if F is None:
+        return None
+    # `chip()` 의 `S` 와 같되 크기를 1 로 둔다 — 그래서 곧바로 0~1 이다.
+    k = 1.0 / (1.0 + 2 * CHIP_PAD)
+    S = np.array([[k, 0.0, CHIP_PAD * k], [0.0, -k, 1.0 - CHIP_PAD * k]])
+    M = S[:, :2] @ F[:, :2]
+    t = S[:, :2] @ F[:, 2:3] + S[:, 2:3]
+
+    def put(a):
+        return ((np.asarray(a, float) @ M.T) + t.ravel())
+
+    xy = put(pts).astype(np.float32)
+    # `approxPolyDP` 의 문턱을 올려 가며 점 수를 맞춘다. 한 번에 정하는 식이
+    # 없어서 훑는데, 열 번이면 닿는다.
+    eps, out = 0.002, xy
+    for _ in range(12):
+        got = cv2.approxPolyDP(xy.reshape(-1, 1, 2), eps, True).reshape(-1, 2)
+        out = got
+        if len(got) <= n:
+            break
+        eps *= 1.6
+    return {"out": [[round(float(x), 4), round(float(y), 4)] for x, y in out],
+            "base": [[round(float(x), 4), round(float(y), 4)] for x, y in put(base)]}
+
+
 # ---- 개체 판정 ---------------------------------------------------------------
 
 def effective_id(box):

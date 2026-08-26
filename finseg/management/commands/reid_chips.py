@@ -69,6 +69,9 @@ class Command(BaseCommand):
                        help="**조각은 그대로 두고 자만 바꾼다.** `resnet18` 은 "
                             "ImageNet 지도학습(512차원), `dinov2` 는 자기지도 "
                             "ViT-S/14(384차원)")
+        p.add_argument("--overlay-only", action="store_true",
+                       help="조각은 그대로 두고 **윤곽·밑동 좌표만** items.json 에 "
+                            "덧쓴다 — 화면이 조각 위에 얹어 켜고 끈다")
         p.add_argument("--emb-only", action="store_true",
                        help="이미 만든 조각으로 **임베딩만 다시 뽑는다** — 백본을 "
                             "갈아 볼 때. 조각·곡선·그림은 안 건드린다")
@@ -82,6 +85,8 @@ class Command(BaseCommand):
         out = Path(o["out"])
         if o["emb_only"]:
             return self._emb_only(o, out, w)
+        if o["overlay_only"]:
+            return self._overlay_only(out, w)
         crops = {c.box_id: c for c in Crop.objects.all()}
         qs = Box.objects.prefetch_related("reviews", "masks").select_related("image")
         if o["boxes"]:
@@ -125,9 +130,15 @@ class Command(BaseCommand):
             # `roughness` 는 못 재면 **None 을 돌려준다** — 0 으로 적으면
             # "매끈하다" 로 읽혀 정렬 맨 끝에 조용히 쌓인다
             rough = reid.roughness(st, crop)
+            # **윤곽과 밑동을 좌표로 함께 적는다** — 화면이 조각 위에 얹어
+            # 켜고 끌 수 있게. 그림에 구우면 `chips/` 에도 선이 들어가 모델이
+            # 그것을 배운다 (`reid.overlay` 머리말).
+            ov = reid.overlay(st, crop)
             rows.append({"id": b.id, "day": str(b.image.obsdate),
                          "facing": st["facing"], "facing_src": src,
                          "cls_src": cls_src,
+                         "out": ov["out"] if ov else None,
+                         "base": ov["base"] if ov else None,
                          "rough": (round(float(rough["rear_max"]), 4)
                                    if rough else None)})
             chips.append(c); looks.append(look); curves.append(curve)
@@ -185,6 +196,34 @@ class Command(BaseCommand):
             np.savez_compressed(out / o["emb_name"], box_id=ids, facing=fac, emb=emb)
             w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
             self._chain(out, ids, fac, emb, rows, w)
+
+    def _overlay_only(self, out, w):
+        """조각은 그대로 두고 **윤곽·밑동 좌표만 덧쓴다.**
+
+        조각을 다시 만들면 한 시간이 넘게 걸리는데, 여기서 더하는 것은 이미
+        있는 마스크를 옮겨 적는 일뿐이다. `--emb-only` 와 같은 이유다 —
+        **조각을 다시 만들면 그 사이에 마스크가 바뀌었을 수도 있어**, 무엇이
+        달라졌는지 못 가른다.
+        """
+        f = out / "items.json"
+        if not f.exists():
+            raise CommandError(f"{f} 가 없다 — 먼저 조각을 만들 것")
+        d = json.loads(f.read_text(encoding="utf-8"))
+        crops = {c.box_id: c for c in Crop.objects.all()}
+        ids = [it["id"] for it in d["items"]]
+        boxes = {b.id: b for b in Box.objects.filter(id__in=ids)
+                 .prefetch_related("reviews", "masks")}
+        got = miss = 0
+        for it in d["items"]:
+            b, crop = boxes.get(it["id"]), crops.get(it["id"])
+            ov = reid.overlay(rules.resolve(b), crop) if b and crop else None
+            it["out"] = ov["out"] if ov else None
+            it["base"] = ov["base"] if ov else None
+            got += bool(ov)
+            miss += not ov
+        f.write_text(json.dumps(d, ensure_ascii=False))
+        w(f"{f}  윤곽을 {got:,}개 적었다" + (f" · 못 낸 것 {miss:,}" if miss else ""))
+        w(f"  ({f.stat().st_size / 1024**2:.1f} MB)")
 
     def _emb_only(self, o, out, w):
         """조각은 그대로 두고 임베딩만 다시 뽑는다.

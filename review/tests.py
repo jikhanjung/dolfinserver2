@@ -1730,3 +1730,48 @@ class HomeTests(TestCase):
         자료가 흐르는 방향이다.**"""
         html = self.client.get("/").content.decode()
         self.assertLess(html.index("re-ID 후보 거르기"), html.index("개체 (re-ID)"))
+
+
+class ReidOrderTests(TestCase):
+    """찍힌 차례로 볼 수 있어야 한다 — **같은 무리를 잇달아 찍은 것이 붙어 있다.**"""
+
+    def setUp(self):
+        from django.utils import timezone
+        self.tmp = Path(tempfile.mkdtemp())
+        self.ids = []
+        # 같은 관찰일인데 UTC 로는 전날인 이른 아침 — 여기서 어긋난다
+        for h, m in ((5, 48), (5, 49), (18, 2)):
+            img = Image.objects.create(
+                path=f"nas/2016/03/15/{h}{m}.JPG", obsdate=date(2016, 3, 15),
+                width=100, height=100,
+                exifdatetime=timezone.make_aware(
+                    __import__("datetime").datetime(2016, 3, 15, h, m)))
+            b = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                   source="yolov5", conf=0.9)
+            self.ids.append(b.id)
+        (self.tmp / "items.json").write_text(json.dumps({"items": [
+            {"id": i, "day": "2016-03-15", "facing": "L"} for i in reversed(self.ids)]}),
+            encoding="utf-8")
+        (self.tmp / "look").mkdir()
+
+    def items(self):
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            html = self.client.get("/reid").content.decode()
+        return json.loads(re.search(r"const ITEMS = (\[.*?\]);", html, re.S).group(1))
+
+    def test_every_chip_gets_a_capture_time(self):
+        got = self.items()
+        self.assertEqual(len(got), 3)
+        self.assertTrue(all(i["at"] for i in got))
+
+    def test_the_time_is_local_so_it_matches_the_day_it_shows(self):
+        """UTC 그대로 쓰면 이른 아침 것이 **전날로 보인다** — 화면이 말하는 날과
+        정렬 축의 날이 어긋나면 사람이 그것을 오류로 읽는다."""
+        for i in self.items():
+            self.assertEqual(i["at"][:10], i["day"])
+
+    def test_a_chip_without_exif_falls_back_to_the_day(self):
+        """없는 것이 맨 앞으로 몰리면 그 순서에 뜻이 없어진다."""
+        Image.objects.update(exifdatetime=None)
+        self.assertTrue(all(i["at"] == "2016-03-15" for i in self.items()))

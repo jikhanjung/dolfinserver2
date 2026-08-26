@@ -22,6 +22,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -442,8 +443,24 @@ def reid(request):
                             .exclude(cls="").order_by("id")
                             .values_list("box_id", "cls")):
             judged[box_id] = cls
+        # **찍힌 때는 격자 파일이 아니라 DB 에서 온다.** `items.json` 에 구워
+        # 두면 격자를 갈아 끼울 때까지 낡고, EXIF 를 고쳐도 안 따라온다 —
+        # 정렬에 쓰는 축은 자료가 있는 곳에서 그때그때 읽는 편이 맞다.
+        when = {}
+        for box_id, dt, od in (Box.objects.filter(id__in=[i["id"] for i in items])
+                               .values_list("id", "image__exifdatetime",
+                                            "image__obsdate")):
+            # **여기 시각으로 바꿔서 낸다.** `USE_TZ` 라 DB 에는 UTC 로 있는데
+            # 그대로 쓰면 이른 아침 것이 **전날로 보인다** — 화면이 말하는 날
+            # (`day`, 관찰일)과 정렬 축의 날이 하루 어긋나 "날짜순인데 날짜가
+            # 안 맞는다" 가 된다. 차례 자체는 어느 쪽이든 같지만, **보이는 것과
+            # 정렬하는 것이 어긋나면 사람이 그것을 오류로 읽는다.**
+            when[box_id] = (timezone.localtime(dt).isoformat(sep=" ")[:19] if dt
+                            else (str(od) if od else ""))
         for it in items:
             it["in"] = latest.get(it["id"])
+            # 없으면 날짜로 물러선다 — **없는 것이 맨 앞으로 몰리지 않게** 한다
+            it["at"] = when.get(it["id"]) or it.get("day", "")
             c = judged.get(it["id"])
             if c and c != "fin":
                 it["notfin"] = c
