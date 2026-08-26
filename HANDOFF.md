@@ -839,13 +839,22 @@ curl -s http://m710q:8085/healthz | python3 -m json.tool
 | | |
 |---|---|
 | 자리 | `/srv/dolfinserver2` · 컨테이너 `127.0.0.1:8012` |
-| 화면 | **`http://100.126.94.48:8085`** — **tailnet 전용** |
+| 화면 | **`https://reid.nopeoplestime.info`** — **공개** (2026-08-27) |
 | 역할 | `reid` · 격자 7,912 · 상자 10,537 |
 | 백업 | 시간별(그쪽 cron) → m710q 가 05시에 당겨온다 → NAS |
 
-**공개하지 않았다.** nginx 가 tailscale 주소에만 바인드한다 — 이 기계는 80/443
-으로 cdGTS 를 공개하고 있지만 여기는 그 줄에 안 선다. 문(접속 코드)을 세웠어도
-**TLS 없이 공개 주소로 열면 코드도 세션 쿠키도 평문으로 간다.**
+**밖으로 열었다** (2026-08-27). 여는 조건이 둘이었다 — **https**(certbot,
+형제 `cdgts` 와 같은 방식)와 **`.env` 의 `FIN_HTTPS=1`**. 뒤엣것을 안 켜면
+Django 가 nginx 뒤에서 스스로를 http 로 알아 CSRF 가 스킴 어긋남으로 막는다
+(**코드를 맞게 넣어도 403**). 그 손잡이 하나가 `SECURE_PROXY_SSL_HEADER` 와
+세션·CSRF 쿠키의 `Secure` 를 함께 켠다 — 따로 두면 하나를 빠뜨린다.
+
+**tailnet 8085 는 닫았다.** 들어가는 길을 하나로 줄인 것이고, 대신 **certbot 이
+멎으면 들어갈 뒷문이 없다** — 급하면 `deploy/gcp/nginx.conf` 에 tailnet 리스너를
+다시 얹는다 (ssh 와 `docker compose` 는 그대로다).
+
+`FIN_ALLOWED_HOSTS` 에 `127.0.0.1` 을 함께 적었다 — **smoke 가 그리로 묻는다**
+(`http://127.0.0.1:8012/healthz`). 도메인만 적으면 배포가 제 검사에서 막힌다.
 
 ```bash
 deploy/gcp/install.sh          # m710q → GCP 로 호스트 파일 + bootstrap

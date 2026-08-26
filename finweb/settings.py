@@ -137,8 +137,21 @@ FIN_ACCESS_CODE = os.environ.get("FIN_ACCESS_CODE", "")
 SESSION_COOKIE_AGE = int(os.environ.get("FIN_SESSION_DAYS", "30")) * 86400
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
-# 공개 주소로 열 때 켠다 — 켜면 http 로는 쿠키가 아예 안 간다.
-SESSION_COOKIE_SECURE = os.environ.get("FIN_COOKIE_SECURE", "0") == "1"
+# **이 자리가 https 뒤에 있나.** 손잡이 하나로 셋을 켠다 — 따로 두면 하나를
+# 빠뜨리고, 빠뜨린 것이 조용히 틀린다.
+#
+# `SECURE_PROXY_SSL_HEADER` 를 안 켜면 **코드를 맞게 넣어도 403** 이 난다:
+# Django 는 nginx 뒤라 스스로를 http 로 알고 `http://<호스트>` 를 옳은 출처로
+# 삼는데, 브라우저는 `Origin: https://<호스트>` 를 보낸다. 스킴 한 글자가
+# 어긋나서 CSRF 가 막는다 — 포트 때문에 겪은 것과 같은 종류다.
+#
+# nginx 가 `X-Forwarded-Proto` 를 늘 덮어쓰고 컨테이너는 127.0.0.1 에만
+# 바인드하므로 그 헤더를 속일 자리가 없다.
+FIN_HTTPS = os.environ.get("FIN_HTTPS", "0") == "1"
+if FIN_HTTPS:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 FIN_ROLE = os.environ.get("FIN_ROLE", "work")
 if FIN_ROLE not in ("work", "reid"):
