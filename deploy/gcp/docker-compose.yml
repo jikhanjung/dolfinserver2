@@ -1,0 +1,31 @@
+# **GCP(`dolfinid-2`) 운영 compose.** 자리는 `/srv/dolfinserver2/docker-compose.yml`.
+#
+# m710q 판과 다른 것 셋:
+#   1. **역할이 `reid` 다** — 개체를 만들고 지느러미를 넣는 일은 여기서만 한다
+#   2. **사진 마운트가 없다** — NAS 가 여기 없다. `/photo` 는 어차피 `work`
+#      역할의 길이라 걸리지도 않는다
+#   3. **크롭·조각이 `/srv` 에 산다** — 여기엔 저장소 작업본이 없어서 읽기전용
+#      으로 걸 자리가 없다. `deploy/gcp/seed.sh` 가 m710q 에서 밀어 넣는다
+services:
+  web:
+    container_name: dolfinserver2
+    image: honestjung/dolfinserver2:${IMAGE_TAG:-0.3.0}
+    ports:
+      # nginx 가 유일한 리스너다. 8012 는 이 기계에서 빈 자리 —
+      # 8002 ghdb · 8004 fcmanager · 8010 strati2026 · 8011 cdgts.
+      - "127.0.0.1:8012:8000"
+    volumes:
+      # DB 는 디렉토리를 마운트한다 — WAL 형제가 컨테이너 임시 레이어에 갇히면
+      # 호스트 백업이 커밋 꼬리를 놓친다.
+      - ./db:/app/hostdb
+      - ./crops:/app/crops:ro
+      - ./reid:/app/reid:ro
+      - ./staticfiles:/app/staticfiles
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
