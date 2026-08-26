@@ -1956,3 +1956,31 @@ class ContextMenuTests(TestCase):
         html = self.page("reid")
         self.assertIn('if (ROLE !== "reid")', html)
         self.assertIn("if (!rows.length) return false", html)
+
+
+class TileStampTests(TestCase):
+    """조각에 **찍힌 때**를 적는다. `날짜·시간순` 으로 세워 놓고도 **어디서
+    끊기는지는 눈으로 못 본다** — 잇달아 찍은 것이 같은 개체인 자리가 많다."""
+
+    def setUp(self):
+        from django.utils import timezone
+        import datetime
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "look").mkdir()
+        img = Image.objects.create(
+            path="a.JPG", obsdate=date(2016, 3, 15), width=100, height=100,
+            exifdatetime=timezone.make_aware(datetime.datetime(2016, 3, 15, 5, 48, 12)))
+        b = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                               source="yolov5", conf=0.9)
+        (self.tmp / "items.json").write_text(json.dumps({"items": [
+            {"id": b.id, "day": "2016-03-15", "facing": "left", "rough": 0.1}]}),
+            encoding="utf-8")
+
+    def test_the_stamp_is_minutes_not_seconds(self):
+        """초까지 넣으면 글자가 조각을 덮는다."""
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            html = self.client.get("/reid").content.decode()
+        got = json.loads(re.search(r"const ITEMS = (\[.*?\]);", html, re.S).group(1))
+        self.assertEqual(got[0]["at"], "2016-03-15 05:48:12")
+        self.assertIn("i.at.slice(0, 16)", html)      # 화면은 분까지만 낸다
