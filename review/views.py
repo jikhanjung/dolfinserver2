@@ -947,23 +947,34 @@ def home(request):
                    f"{Review.objects.exclude(base_line='').values('box').distinct().count():,}",
                    False)],
          "acts": [("윤곽·밑동 고치기", "/review", False)]},
+        {"name": "re-ID 후보 거르기 — 격자로 내보내기 전에",
+         "weights": "fin_filter" if (root / "items.json").exists() else "",
+         "why": "옛 상자에서 길어 온 조각에 몸통·바위가 섞여 있다. "
+                "거르는 자리는 여기이고, 거른 결과가 다음 격자에 실린다.",
+         "nums": [("격자", f"{pool:,}", False),
+                  ("안 거른 것", f"{unfiltered:,}", unfiltered > 0)],
+         "acts": [("거르러 가기", "/review?queue=reid", unfiltered > 0)]},
         {"name": "개체 (re-ID) — 카탈로그의 몇 번인지 답한다",
          "weights": "cls-dinov2" if (root / "cls-dinov2.npz").exists() else "",
-         "why": "지금 여기를 판다. 얼린 DINOv2 위의 분류기 — 아는 개체 top-1 44.5%.",
+         "why": "얼린 DINOv2 위의 분류기 — 아는 개체 top-1 44.5%.",
          "nums": [("개체", f"{cat_n}", False),
                   ("격자", f"{pool:,}", False),
                   ("상자에 든 것", f"{filed:,}", False),
                   ("보류함", f"{held:,}", held > 0),
                   ("아직 안 만진 것", f"{unjudged:,}", unjudged > 0)],
-         "acts": [("분류하기", "/reid", unjudged > 0),
-                  ("카탈로그 보기", "/catalog", False)]},
-        {"name": "re-ID 후보 거르기 — 격자로 내보내기 전에",
-         "weights": "fin_filter" if (root / "items.json").exists() else "",
-         "why": "옛 상자에서 길어 온 조각에 몸통·바위가 섞여 있다. "
-                "**`/reid` 는 개체만 묻는다** — 거르는 자리는 여기다.",
-         "nums": [("격자", f"{pool:,}", False),
-                  ("안 거른 것", f"{unfiltered:,}", unfiltered > 0)],
-         "acts": [("거르러 가기", "/review?queue=reid", unfiltered > 0)]},
+         # **여기서는 못 한다.** 개체를 만들고 지느러미를 넣는 일은 `reid`
+         # 자리 하나에서만 한다 — 그래야 `Individual`·`Identification` 의
+         # 주인이 하나로 남는다. 그런데 셈은 보여야 한다: 이 화면은 한 바퀴
+         # 전체가 어디까지 왔나를 말하는 자리고, 그 단계를 지우면 **이 저장소가
+         # 무엇을 만드는지가 안 보인다.**
+         #
+         # 길을 안 내는 것이 규약보다 낫다. `/reid` 는 이 역할에서 404 라,
+         # 내밀면 누른 사람은 화면이 깨진 줄 안다.
+         "acts": ([("분류하기", "/reid", unjudged > 0),
+                   ("카탈로그 보기", "/catalog", False)]
+                  if settings.FIN_ROLE == "reid" else []),
+         "elsewhere": ("" if settings.FIN_ROLE == "reid"
+                       else "이 일은 `reid` 자리에서 한다 — 여기서는 셈만 본다.")},
     ]
     return render(request, "review/home.html", {
         "stages": stages,

@@ -863,5 +863,10 @@ async function stat() {
         : "");
 }
 
-load();
+// **주소로 대기열을 고른다** (`/review?queue=reid`). 홈이 그렇게 걸어 두고
+// 있었는데 여기서 안 읽어서, 눌러도 늘 `검토할 것` 으로 떨어졌다 —
+// **링크는 있는데 아무 데도 안 데려다주는 상태였다.**
+const MODES = ["todo", "done", "stuck", "stale", "new", "noshape", "reid"];
+const want = new URLSearchParams(location.search).get("queue");
+load(MODES.includes(want) ? {mode: want} : {});
 </script>

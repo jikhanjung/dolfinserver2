@@ -1705,3 +1705,28 @@ class ReidCandidateQueueTests(TestCase):
         with self.settings(FIN_REID=self.tmp / "없는곳"):
             r = self.client.get("/api/batch?mode=reid").json()
         self.assertEqual(r["total"], 0)
+
+
+class HomeTests(TestCase):
+    """홈은 **한 바퀴 전체가 어디까지 왔나**를 말하는 자리다."""
+
+    def test_it_does_not_offer_a_road_this_seat_does_not_have(self):
+        """`work` 자리에서 `/reid` 는 404 다. 그것을 내밀면 누른 사람은 화면이
+        깨진 줄 알지, **이 자리가 그 일을 안 하기로 한 줄 모른다.**"""
+        html = self.client.get("/").content.decode()
+        self.assertNotIn('href="/reid"', html)
+        self.assertNotIn('href="/catalog"', html)
+        self.assertIn("reid` 자리에서 한다", html)      # 어디서 하는지는 말한다
+        self.assertIn("개체 (re-ID)", html)             # 셈은 그대로 보인다
+
+    @override_settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests")
+    def test_the_reid_seat_gets_the_road(self):
+        # `reid` 자리에는 홈이 `/reid` 로 걸려 있다 (`urls.patterns_for`).
+        from review.urls import patterns_for
+        self.assertIn("reid", {p.name for p in patterns_for("reid")})
+
+    def test_filtering_comes_before_classifying(self):
+        """거른 결과가 다음 격자에 실리고, 그 격자로 분류한다 — **순서가 곧
+        자료가 흐르는 방향이다.**"""
+        html = self.client.get("/").content.decode()
+        self.assertLess(html.index("re-ID 후보 거르기"), html.index("개체 (re-ID)"))
