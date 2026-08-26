@@ -1560,3 +1560,92 @@ class HealthzTests(TestCase):
             d = r.json()
             self.assertEqual(d["status"], "degraded")
             self.assertIn("integrity_check failed", d["integrity"])
+
+
+@override_settings(FIN_ACCESS_CODE="열려라-참깨-0123456789")
+class AccessCodeTests(TestCase):
+    """문. **기본이 막힘이고 예외만 적는다** (`review/gate.py`).
+
+    이 앱에는 `login_required` 가 하나도 없고 쓰기 경로가 열려 있다 — 그것이
+    쓰는 것은 다시 만들 수 없는 개체 판정이다.
+    """
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()               # 잠금 셈이 시험끼리 새면 안 된다
+
+    def test_a_stranger_is_sent_to_the_door(self):
+        r = self.client.get("/review")
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r["Location"].startswith("/enter?next="))
+
+    def test_the_door_remembers_where_you_were_going(self):
+        """링크를 받고 들어온 사람이 문을 지난 뒤 처음 화면으로 떨어지면
+        그 링크가 무엇이었는지 잃는다."""
+        r = self.client.get("/edit/7")
+        self.assertIn("next=%2Fedit%2F7", r["Location"])
+        r = self.client.post("/enter", {"code": "열려라-참깨-0123456789",
+                                        "next": "/edit/7"})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r["Location"], "/edit/7")
+
+    def test_it_will_not_bounce_you_to_another_site(self):
+        """`next=//남의집` 을 그대로 받으면 이 화면이 남의 자리로 보내는
+        발판이 된다."""
+        r = self.client.post("/enter", {"code": "열려라-참깨-0123456789",
+                                        "next": "//example.com/x"})
+        self.assertEqual(r["Location"], "/")
+
+    def test_healthz_stays_outside_the_door(self):
+        """smoke 와 배포가 그것을 읽는다 — 코드를 모르는 자리에서도 살아
+        있는지는 물을 수 있어야 한다."""
+        self.assertEqual(self.client.get("/healthz").status_code, 200)
+
+    def test_a_wrong_code_does_not_open_anything(self):
+        self.client.post("/enter", {"code": "틀린것"})
+        self.assertEqual(self.client.get("/review").status_code, 302)
+
+    def test_it_locks_after_too_many_tries(self):
+        """짧은 코드를 쓰면 이것만으로 못 막는다 — 그래도 **긁어 보는 것**은
+        여기서 멎는다."""
+        from review import gate
+        for _ in range(gate.MAX_TRIES):
+            self.client.post("/enter", {"code": "틀린것"})
+        r = self.client.post("/enter", {"code": "열려라-참깨-0123456789"})
+        self.assertEqual(r.status_code, 200)          # 맞아도 안 열린다
+        self.assertIn("분 뒤에", r.content.decode())
+
+    def test_the_session_key_is_replaced_when_you_pass(self):
+        """문 앞에서 받은 키를 그대로 쓰면 **남이 미리 심어 둔 키로 안까지
+        들어오게 된다** (session fixation) — 여기서는 그 키를 흉내 낸다."""
+        s = self.client.session
+        s["심어둔것"] = 1
+        s.save()
+        planted = s.session_key
+        self.client.cookies["sessionid"] = planted
+        self.client.post("/enter", {"code": "열려라-참깨-0123456789"})
+        self.assertNotEqual(self.client.cookies["sessionid"].value, planted)
+
+    def test_no_code_no_door(self):
+        """m710q 의 개발·시험 자리는 그대로 둔다."""
+        with self.settings(FIN_ACCESS_CODE=""):
+            self.assertEqual(self.client.get("/review").status_code, 200)
+
+
+@override_settings(FIN_ACCESS_CODE="열려라-참깨-0123456789")
+class HealthzOutsideTheDoorTests(TestCase):
+    def test_it_answers_but_does_not_count_out_loud(self):
+        """`/healthz` 는 smoke 가 읽어야 해서 문 밖에 있다. 그 김에 상자·개체가
+        몇인지까지 알려 주면 **문을 세운 뜻이 절반 없어진다.**"""
+        d = self.client.get("/healthz").json()
+        self.assertEqual(d["status"], "ok")
+        self.assertIn("role", d)
+        self.assertIn("reid_items", d)          # 자료가 왔는지는 밖에서도 봐야 한다
+        for hidden in ("box", "individual", "identification", "db"):
+            self.assertNotIn(hidden, d)
+
+    def test_inside_it_tells_everything(self):
+        self.client.post("/enter", {"code": "열려라-참깨-0123456789"})
+        d = self.client.get("/healthz").json()
+        self.assertIn("box", d)
+        self.assertIn("db", d)

@@ -18,6 +18,8 @@ from . import views
 # 떴는지**를 확인하는 자리다 — 배포가 뒤바뀐 것을 그것으로 잡는다.
 common = [
     path("healthz", views.healthz, name="healthz"),
+    # 문 (`review/gate.py`). 코드가 없는 자리에서는 `/` 로 돌려보낸다.
+    path("enter", views.enter, name="enter"),
 ]
 
 # 검출·분할·밑동 — 사람이 마스크와 밑동을 보는 쪽

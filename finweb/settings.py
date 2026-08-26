@@ -39,6 +39,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # **세션 뒤에 온다** — 세션을 읽어야 문을 지난 적이 있는지 안다.
+    "review.gate.AccessCodeMiddleware",
 ]
 
 ROOT_URLCONF = "finweb.urls"
@@ -117,6 +119,26 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # 화면(컨테이너)이 같은 파일을 본다 (`deploy/host/backup_db.py`).
 FIN_SENTINEL = Path(os.environ.get(
     "FIN_SENTINEL", Path(DATABASES["default"]["NAME"]).parent / "INTEGRITY_FAIL"))
+
+# ---- 접속 코드 -------------------------------------------------------------
+# **이 앱에는 사람마다의 인증이 없다.** `login_required` 도 없고 쓰기 경로가
+# 그대로 열려 있어, 주소를 아는 사람은 누구나 판정을 써 넣을 수 있다 — 그리고
+# 그것은 다시 만들 수 없는 자료다. 코드 하나로 문을 막는다.
+#
+# **이것이 인증의 대신이지 인증은 아니다.** 다음 셋을 알고 쓴다:
+#   · 누가 했는지가 안 남는다 (`Review.reviewer` 가 NULL 이다)
+#   · 한 사람만 뺄 수 없다 — 코드를 바꾸면 다 같이 나간다
+#   · **TLS 없이 공개 주소로 열면 코드도 세션 쿠키도 평문으로 간다.**
+#     지금 GCP 는 tailnet 에만 열려 있고 그 구간은 암호화된다
+#
+# 빈 값이면 문이 없다 — m710q 의 개발·시험 자리는 그대로 둔다.
+FIN_ACCESS_CODE = os.environ.get("FIN_ACCESS_CODE", "")
+# 코드를 맞힌 뒤 얼마나 유지되나. 분류하는 일은 며칠씩 이어지므로 길게 둔다.
+SESSION_COOKIE_AGE = int(os.environ.get("FIN_SESSION_DAYS", "30")) * 86400
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+# 공개 주소로 열 때 켠다 — 켜면 http 로는 쿠키가 아예 안 간다.
+SESSION_COOKIE_SECURE = os.environ.get("FIN_COOKIE_SECURE", "0") == "1"
 
 FIN_ROLE = os.environ.get("FIN_ROLE", "work")
 if FIN_ROLE not in ("work", "reid"):

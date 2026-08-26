@@ -1,0 +1,45 @@
+{% comment %}
+문 앞. **여기서는 자료를 하나도 안 보인다** — 상자가 몇 개인지, 개체가 몇
+마리인지도 코드를 지난 뒤의 이야기다. 문 밖에서 세는 수가 보이면 그것만으로도
+이 자리가 무엇을 들고 있는지 알려 주게 된다.
+{% endcomment %}<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>돌고래</title>
+  <style>
+    :root { --ink:#e6edf3; --dim:#8b98a5; --line:#26303c; --bad:#ff8f9a; }
+    * { box-sizing:border-box }
+    body { margin:0; min-height:100vh; display:flex; align-items:center;
+           justify-content:center; background:#0d131a; color:var(--ink);
+           font:15px/1.6 "IBM Plex Sans KR", system-ui, sans-serif }
+    form { width:min(24rem, 92vw); padding:1.6rem 1.5rem;
+           border:1px solid var(--line); border-radius:12px; background:#111922 }
+    h1 { font-size:1rem; margin:0 0 .3rem; font-weight:600 }
+    p  { margin:0 0 1.1rem; color:var(--dim); font-size:.85rem }
+    input { width:100%; padding:.6rem .7rem; font:inherit; letter-spacing:.08em;
+            color:var(--ink); background:#0d131a; border:1px solid var(--line);
+            border-radius:8px }
+    input:focus { outline:none; border-color:#4a9eff }
+    button { width:100%; margin-top:.7rem; padding:.6rem; font:inherit;
+             font-weight:600; color:#0d131a; background:#4a9eff; border:0;
+             border-radius:8px; cursor:pointer }
+    button[disabled] { background:#2a3947; color:var(--dim); cursor:default }
+    .msg { margin:.8rem 0 0; color:var(--bad); font-size:.85rem }
+  </style>
+</head>
+<body>
+  <form method="post" action="/enter">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <h1>돌고래 개체 분류</h1>
+    <p>접속 코드를 넣으세요.</p>
+    <input name="code" type="password" autocomplete="off" autofocus
+           {% if locked %}disabled{% endif %}>
+    <button type="submit" {% if locked %}disabled{% endif %}>들어가기</button>
+    {% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
+  </form>
+</body>
+</html>

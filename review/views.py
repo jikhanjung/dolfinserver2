@@ -21,7 +21,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -1100,8 +1100,14 @@ def healthz(request):
         ok = False
         counts = {}
         body["db_error"] = str(e)[:200]
-    body.update(counts)
-    body["db"] = str(db)
+    # **문이 있는 자리에서는 문 밖에 수를 안 낸다.** `/healthz` 는 smoke 가
+    # 읽어야 해서 문 밖에 두었는데(`review/gate.py` 의 `OPEN`), 그 김에
+    # 상자·개체가 몇인지까지 알려 주면 문을 세운 뜻이 절반 없어진다.
+    # 안에서 부르면 그대로 다 낸다 — 자료가 덜 왔는지 볼 자리가 필요하다.
+    inside = not settings.FIN_ACCESS_CODE or request.session.get("fin_ok")
+    if inside:
+        body.update(counts)
+        body["db"] = str(db)
     # **격자는 역할에 따라 뜻이 다르다.** `reid` 자리에서 비어 있으면 그 자리는
     # 제 일을 못 하므로 성치 않다고 말하고, `work` 자리에서는 안 봐도 된다.
     n = 0
@@ -1132,3 +1138,42 @@ def healthz(request):
     body["status"] = ("unhealthy" if not ok else
                       "degraded" if degraded else "ok")
     return JsonResponse(body, status=200 if ok else 503)
+
+
+@ensure_csrf_cookie
+def enter(request):
+    """문. 코드를 맞히면 세션에 표를 남긴다 (`review/gate.py`).
+
+    **틀린 이유를 자세히 말하지 않는다** — "코드가 몇 자다" 나 "앞은 맞았다" 는
+    맞히려는 쪽에만 값이 있다. 잠겼을 때만 언제 풀리는지 알려 준다. 그것은
+    맞게 아는 사람이 기다릴지 물어볼지 정하는 데 필요하다.
+    """
+    from review import gate
+
+    if not settings.FIN_ACCESS_CODE:
+        return redirect("/")                     # 문이 없는 자리다
+    nxt = request.GET.get("next") or request.POST.get("next") or "/"
+    # **아무 데로나 돌려보내지 않는다.** `next=//남의집` 같은 것을 그대로 받으면
+    # 이 화면이 남의 자리로 보내는 발판이 된다.
+    if not nxt.startswith("/") or nxt.startswith("//"):
+        nxt = "/"
+
+    left = gate.locked_for(request)
+    msg = ""
+    if request.method == "POST" and not left:
+        if gate.matches(request.POST.get("code")):
+            request.session["fin_ok"] = True
+            # **세션 키를 새로 뽑는다** — 문 앞에서 받은 키를 그대로 쓰면,
+            # 남이 미리 심어 둔 키로 안까지 들어오게 된다(session fixation).
+            request.session.cycle_key()
+            gate.clear_failures(request)
+            return redirect(nxt)
+        n = gate.note_failure(request)
+        left = gate.locked_for(request)
+        msg = "코드가 다르다." if not left else ""
+        if n >= gate.MAX_TRIES - 3 and not left:
+            msg += f" ({gate.MAX_TRIES - n}번 더 틀리면 잠긴다)"
+    if left:
+        msg = f"너무 여러 번 틀렸다. {left // 60 + 1}분 뒤에 다시."
+    return render(request, "review/enter.html",
+                  {"msg": msg, "next": nxt, "locked": bool(left)}, status=200)
