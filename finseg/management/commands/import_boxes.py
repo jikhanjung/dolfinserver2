@@ -27,6 +27,7 @@ SQLite 는 쓰기가 하나다.
 """
 import random
 import sqlite3
+from datetime import datetime, timezone as dt_timezone
 from collections import defaultdict
 
 from django.conf import settings
@@ -93,6 +94,19 @@ def iou(a, b):
     ua = (a[2] - a[0]) * (a[3] - a[1])
     ub = (b[2] - b[0]) * (b[3] - b[1])
     return inter / (ua + ub - inter)
+
+
+def _utc(v):
+    """옛 DB 의 `exifdatetime` → 시간대가 붙은 값. 없으면 `None`.
+
+    **거기 든 것은 UTC 다** (옛 dolfinserver 도 `USE_TZ` 였다). 시간대를
+    붙여 주지 않으면 Django 가 그것을 이 자리의 시각으로 읽는다.
+    """
+    if not v:
+        return None
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    return v if v.tzinfo else v.replace(tzinfo=dt_timezone.utc)
 
 
 class Command(BaseCommand):
@@ -276,7 +290,12 @@ class Command(BaseCommand):
                 img, created = Image.objects.get_or_create(
                     path=rel, defaults=dict(
                         src_id=r["dolfin_image_id"], obsdate=r["obsdate"],
-                        exifdatetime=r["exifdatetime"] or None,
+                        # **옛 DB 의 것은 이미 UTC 다.** 그냥 넘기면 Django 가
+                        # 순진한 값으로 보고 `TIME_ZONE`(Asia/Seoul)로 읽어
+                        # **한 번 더 UTC 로 바꾼다** — 9시간이 밀린다.
+                        # 2026-08-27 에 사진 7,927장이 그렇게 밀려 있었고,
+                        # 원본 EXIF(14:48)와 대 보고서야 드러났다.
+                        exifdatetime=_utc(r["exifdatetime"]),
                         width=size[0], height=size[1]))
                 n_img += int(created)
                 seen[rel] = img

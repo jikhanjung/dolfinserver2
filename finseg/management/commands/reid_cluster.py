@@ -1,4 +1,4 @@
-"""뒷날 결각으로 **닮은 것끼리 묶는다** — re-ID 의 첫 걸음.
+"""뒷날 notch으로 **닮은 것끼리 묶는다** — re-ID 의 첫 걸음.
 
     python manage.py reid_cluster --dry-run
     python manage.py reid_cluster --out reid/v1 --thres 0.08

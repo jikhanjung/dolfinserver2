@@ -115,7 +115,7 @@ class ResolveTests(SimpleTestCase):
         """**어느 삽입점이 짐작인지가 남는다.**
 
         참/거짓 하나로 두면 re-ID 에서 앞만 짐작인 것과 뒤만 짐작인 것을 한꺼번에
-        버리거나 한꺼번에 쓰는 수밖에 없다 — 뒷날 결각으로 개체를 가리므로 그
+        버리거나 한꺼번에 쓰는 수밖에 없다 — 뒷날 notch으로 개체를 가리므로 그
         둘은 값이 다르다 (`models.py` 의 BASE_PARTIAL 주석).
         """
         for want in ("front", "rear", "both", "unknown", ""):

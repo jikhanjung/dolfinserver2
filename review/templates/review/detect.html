@@ -102,7 +102,7 @@ import * as ort from "{% static 'vendor/ort/ort.webgpu.bundle.min.mjs' %}";
 // 좌표 0.26px 안쪽으로 ultralytics 와 일치하는 것을 확인해 두었다.
 const IMGSZ = {{ imgsz }}, PAD = {{ pad }}, IOU = {{ iou }};
 // 분할은 2단이다 — 1280 으로 상자를 찾고, 상자마다 크롭을 떠서 640 으로 나눈다.
-// 원본을 640 으로 줄이면 지느러미가 16px 이 되고 결각은 그 그림에 아예 없다
+// 원본을 640 으로 줄이면 지느러미가 16px 이 되고 notch 는 그 그림에 아예 없다
 const SEG = {{ seg_ok|yesno:"true,false" }};
 const SEGSZ = {{ seg_imgsz }}, SEG_NC = {{ seg_nc }};
 const CROP_PAD = {{ crop_pad }}, MASK_T = {{ mask_thres }};
