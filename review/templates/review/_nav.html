@@ -2,15 +2,28 @@
 **어느 화면에서나 같은 자리에 같은 차림표.** 화면마다 따로 만들다 보니 서로
 오갈 길이 없어, 주소를 외워 치고 다녔다. 이 저장소가 무엇을 만드는지 —
 검출·분할·밑동·개체 넷을 한 벌로 — 를 차림표가 스스로 말해야 한다.
+
+**이 자리에 없는 길은 안 그린다** (`fin_role`). 개체 분류와 나머지를 갈라
+둔 것은 화면을 정리하려는 것이 아니라 `Individual`·`Identification` 의 주인을
+하나로 두려는 것이다 (`HANDOFF.md` 의 `## 서버를 둘로 나눈다`). 차림표가
+없는 길을 내밀면 누른 사람은 화면이 깨진 줄 알지, 이 자리가 그 일을 안 하기로
+한 줄 모른다.
 {% endcomment %}
 <nav class="topnav">
-  <a href="/" class="brand">돌고래</a>
-  <a href="/review" {% if here == "review" %}class="on"{% endif %}>검토</a>
-  <a href="/reid" {% if here == "reid" %}class="on"{% endif %}>개체 분류</a>
-  <a href="/catalog" {% if here == "catalog" %}class="on"{% endif %}>카탈로그</a>
+  {% if fin_role == "reid" %}
+    <a href="/reid" class="brand">돌고래</a>
+    <a href="/reid" {% if here == "reid" %}class="on"{% endif %}>개체 분류</a>
+    <a href="/catalog" {% if here == "catalog" %}class="on"{% endif %}>카탈로그</a>
+  {% else %}
+    <a href="/" class="brand">돌고래</a>
+    <a href="/review" {% if here == "review" %}class="on"{% endif %}>검토</a>
+    <span class="sp"></span>
+    <a href="/compare" {% if here == "compare" %}class="on"{% endif %}>엔진 비교</a>
+    <a href="/detect" {% if here == "detect" %}class="on"{% endif %}>검출 시연</a>
+  {% endif %}
   <span class="sp"></span>
-  <a href="/compare" {% if here == "compare" %}class="on"{% endif %}>엔진 비교</a>
-  <a href="/detect" {% if here == "detect" %}class="on"{% endif %}>검출 시연</a>
+  {# 어느 역할로 떴는지 늘 보인다 — 배포가 뒤바뀐 것을 여기서 먼저 알아챈다 #}
+  <span class="role" title="FIN_ROLE={{ fin_role }}">{% if fin_role == "reid" %}re-ID 자리{% else %}작업 자리{% endif %}</span>
 </nav>
 <style>
   .topnav { display:flex; gap:2px; align-items:center; padding:5px 12px;
@@ -23,4 +36,6 @@
   .topnav .brand { color:var(--ink, #e6edf3); font-weight:600; margin-right:8px;
                    padding-left:0 }
   .topnav .sp { flex:1 }
+  .topnav .role { color:var(--dim, #8b98a5); font-size:11px; padding:2px 8px;
+                  border:1px solid var(--line, #26303c); border-radius:999px }
 </style>

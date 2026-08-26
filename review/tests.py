@@ -13,9 +13,15 @@ from pathlib import Path
 
 import numpy as np
 
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from finseg import baseline, geometry, onnxdet, reid, rules
+from review.urls import patterns_for
+
+# **이 모듈이 re-ID 자리의 URLconf 노릇을 한다.** `/reid` 는 기본 역할(`work`)
+# 에서 아예 안 걸리므로(`finweb/settings.py` 의 `FIN_ROLE`), 그 화면을 재는
+# 시험은 그 자리로 옮겨 앉아야 한다 — `@override_settings(ROOT_URLCONF=...)`.
+urlpatterns = patterns_for("reid")
 from finseg.models import (Box, Crop, Identification, Image, Individual,
                            Mask, Review, Run)
 
@@ -694,6 +700,7 @@ class ImportDetectionsTests(TestCase):
         self.assertIn("이미 아는 상자를 못 걸러낸다", out)
 
 
+@override_settings(ROOT_URLCONF="review.tests", FIN_ROLE="reid")
 class ReidTests(TestCase):
     """**개체 판정은 쌓인다, 덮어쓰지 않는다** — `Review` 와 같은 규칙이다.
 
@@ -1468,3 +1475,74 @@ class BackupTests(TestCase):
         self.assertEqual(
             c.execute("select count(*) from finseg_individual").fetchone()[0], 3)
         c.close()
+
+
+class RoleTests(SimpleTestCase):
+    """**어느 길이 걸리는지는 `FIN_ROLE` 이 정한다.**
+
+    화면을 정리하려는 것이 아니다. 개체를 만들고 지느러미를 넣는 일이 두
+    자리에서 일어나면 `Individual`·`Identification` 의 번호가 겹치고, 그러면
+    합치는 길이 없다 (`HANDOFF.md` 의 `## 서버를 둘로 나눈다`).
+
+    **미들웨어가 아니라 URLconf 에서 뺀다** — 경로가 없으면 실수로 도는 길이
+    없다. 그래서 시험도 "403 이 나오나" 가 아니라 **"길이 아예 없나"** 를 묻는다.
+    """
+    # 이 다섯이 `Identification`·`Individual` 에 쓰는 전부다. 하나라도 `work`
+    # 쪽에 새면 그 자리가 조용히 두 번째 주인이 된다.
+    WRITES_INDIVIDUALS = {"reid", "reid_box", "reid_assign", "reid_cls_set", "catalog"}
+
+    def names(self, role):
+        from review.urls import patterns_for
+        return {p.name for p in patterns_for(role)}
+
+    def test_reid_role_has_only_the_reid_screens(self):
+        got = self.names("reid")
+        self.assertTrue(self.WRITES_INDIVIDUALS <= got)
+        for gone in ("index", "edit", "photo", "compare", "detect", "save", "batch"):
+            self.assertNotIn(gone, got)
+
+    def test_work_role_cannot_reach_anything_that_writes_individuals(self):
+        """**이 시험이 이 갈래의 이유다.** `/reid` 는 열기만 해도 보류함
+        `Individual` 을 하나 만든다 (`views.reid` 의 `get_or_create`) — 구경도
+        쓰기라, 링크를 숨기는 것으로는 안 막힌다."""
+        got = self.names("work")
+        self.assertEqual(self.WRITES_INDIVIDUALS & got, set())
+        self.assertIn("index", got)
+        self.assertIn("edit", got)
+
+    def test_healthz_is_in_both(self):
+        """**배포가 뒤바뀐 것을 밖에서 잡는 자리**라 역할을 안 탄다."""
+        for role in ("work", "reid"):
+            self.assertIn("healthz", self.names(role))
+
+    def test_an_unknown_role_stops_the_process(self):
+        """조용히 `work` 로 떨어지면 **개체 판정을 받을 자리가 안 받는다.**"""
+        with self.assertRaises(ValueError):
+            import os
+            from importlib import reload
+            old = os.environ.get("FIN_ROLE")
+            os.environ["FIN_ROLE"] = "reid-collector"      # 오타를 흉내낸다
+            try:
+                import finweb.settings
+                reload(finweb.settings)
+            finally:
+                if old is None:
+                    os.environ.pop("FIN_ROLE", None)
+                else:
+                    os.environ["FIN_ROLE"] = old
+                import finweb.settings
+                reload(finweb.settings)
+
+
+class HealthzTests(TestCase):
+    """`/healthz` 는 **살아 있나** 만 묻는 자리가 아니다 — 무엇으로 떴는지와
+    안전망이 막혔는지를 함께 말한다 (`.guides/web/data-safety.md` §2)."""
+
+    def test_it_says_which_role_it_came_up_as(self):
+        """**배포가 뒤바뀐 것을 여기서 잡는다.** 개체 분류를 받을 자리가
+        `work` 로 떠 있으면 화면은 멀쩡히 200 을 내면서 그날 판정을 한 건도
+        못 받는다."""
+        d = self.client.get("/healthz").json()
+        self.assertEqual(d["role"], "work")
+        self.assertEqual(d["status"], "ok")
+        self.assertIn("version", d)

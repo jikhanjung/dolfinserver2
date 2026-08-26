@@ -52,6 +52,8 @@ TEMPLATES = [{
         "django.template.context_processors.request",
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
+        # 차림표가 이 자리의 역할을 알아야 없는 링크를 안 그린다
+        "review.context.role",
     ]},
 }]
 
@@ -110,6 +112,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # (`review.views.reid` 의 `get_or_create`). URLconf 에서 아예 빼면 그 길이 없다.
 #
 # 기본은 `work` — 여기 습관을 안 바꾼다. GCP 쪽 `.env` 에만 `reid` 를 적는다.
+# 시간별 백업이 `integrity_check` 에 걸리면 여기 센티넬을 세운다. **DB 옆에
+# 둔다** — 호스트의 `db/` 가 그대로 컨테이너에 마운트되므로 cron(호스트)과
+# 화면(컨테이너)이 같은 파일을 본다 (`deploy/host/backup_db.py`).
+FIN_SENTINEL = Path(os.environ.get(
+    "FIN_SENTINEL", Path(DATABASES["default"]["NAME"]).parent / "INTEGRITY_FAIL"))
+
+FIN_ROLE = os.environ.get("FIN_ROLE", "work")
+if FIN_ROLE not in ("work", "reid"):
+    raise ValueError(f"FIN_ROLE 은 work 아니면 reid 다: {FIN_ROLE!r}")
+
 LOGIN_URL = "/admin/login/"
 LOGIN_REDIRECT_URL = "/"
 

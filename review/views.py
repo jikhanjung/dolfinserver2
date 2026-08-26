@@ -190,7 +190,7 @@ def batch(request):
     # 격자가 뜨고 쪽수도 어긋난다. 여기서 빼면 `total`·`pages` 가 곧바로 맞는다.
     #
     # 어디에도 저장하지 않는다. 보류는 **아무 말도 안 한 것**(`rules.PENDING`)
-    # 이고 그것이 이미 정확한 상태다 — 표를 만들면 "모른다" 가 판정인 척
+    # 이고 그것이 이미 정확한 상태다 — 테이블을 만들면 "모른다" 가 판정인 척
     # 남는다. 화면이 이번 판(sessionStorage)만 기억하고, 새로 열면 다시 만난다.
     hold = {int(v) for v in request.GET.get("hold", "").split(",")
             if v.strip().isdigit()}
@@ -700,7 +700,7 @@ def reid_cls_set(request):
 
     판정은 `Review` 로 남는다 — 검토 화면이 쓰는 바로 그 표다. 그래야
     `rules.resolve` 가 그 분류를 내고 `reid.usable` 이 다음 격자에서 걸러낸다.
-    **여기서 따로 표를 만들지 않는다** — 두 곳에 두면 화면이 거른 것과 자료로
+    **여기서 따로 테이블을 만들지 않는다** — 두 곳에 두면 화면이 거른 것과 자료로
     나가는 것이 갈린다.
 
     `verdict` 는 안 적는다. 그것은 "이 마스크가 맞나" 를 묻는 말이라 분류와
@@ -1065,3 +1065,56 @@ def photo(request, box_id):
 @require_GET
 def progress(request):
     return JsonResponse(dict(rules.progress()))
+
+
+@require_GET
+def healthz(request):
+    """이 자리가 살아 있나, 그리고 **어느 역할로 떴나**.
+
+    역할을 싣는 것이 이 자리의 값이다. `FIN_ROLE` 은 환경변수라 눈에 안 보이고,
+    잘못 뜨면 **화면이 멀쩡히 200 을 내면서** 있어야 할 길이 없다 — 개체 분류를
+    받을 자리가 `work` 로 떠 있으면 그날 판정을 한 건도 못 받는다. 밖에서
+    확인할 자리가 있어야 그것을 배포 직후에 잡는다.
+
+    격자도 함께 센다. **조각이 덜 와도 오류가 아니라 빈 격자로 나타나서**,
+    화면만 봐서는 자료가 덜 온 것인지 분류가 안 된 것인지 갈리지 않는다.
+    """
+    from finseg.models import Box, Identification, Individual
+
+    db = settings.DATABASES["default"]["NAME"]
+    reid_dir = Path(settings.FIN_REID)
+    items = reid_dir / "items.json"
+    ok = True
+    body = {
+        "status": "ok",
+        "version": __import__("finweb.version", fromlist=["__version__"]).__version__,
+        "role": settings.FIN_ROLE,
+    }
+    try:
+        counts = {
+            "box": Box.objects.count(),
+            "individual": Individual.objects.filter(holding=False).count(),
+            "identification": Identification.objects.count(),
+        }
+    except Exception as e:                       # DB 가 안 붙었다
+        ok = False
+        counts = {}
+        body["db_error"] = str(e)[:200]
+    body.update(counts)
+    body["db"] = str(db)
+    # **격자는 역할에 따라 뜻이 다르다.** `reid` 자리에서 비어 있으면 그 자리는
+    # 제 일을 못 하므로 성치 않다고 말하고, `work` 자리에서는 안 봐도 된다.
+    n = 0
+    if items.exists():
+        try:
+            n = len(json.loads(items.read_text(encoding="utf-8"))["items"])
+        except Exception:
+            n = -1
+    body["reid_dir"] = str(reid_dir)
+    body["reid_items"] = n
+    if settings.FIN_ROLE == "reid" and n <= 0:
+        ok = False
+        body["reid_error"] = "격자가 비었다 — 조각이 안 왔거나 FIN_REID 가 딴 곳이다"
+
+    body["status"] = "ok" if ok else "unhealthy"
+    return JsonResponse(body, status=200 if ok else 503)
