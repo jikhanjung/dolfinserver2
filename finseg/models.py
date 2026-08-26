@@ -368,7 +368,19 @@ class Individual(models.Model):
     좌현·우현을 한 개체 아래 함께 둔다. 같은 동물이니 그것이 옳고, 다만
     **닮음을 잴 때는 절대 섞지 않는다** (`reid.frame` 의 부호 주석).
     """
-    name = models.CharField(max_length=50, unique=True)
+    # **개체를 가리키는 것은 이것 하나다** — `JTA001` 같은 카탈로그 번호.
+    # 판정도 성적도 분류기도 전부 `id` 로 묶으므로 이 값을 고쳐도 자료가
+    # 안 흔들린다 (`catalog()` · `reid_cls` · `Identification`).
+    name = models.CharField(max_length=50, unique=True, help_text="카탈로그 번호")
+    # **별명은 있을 수도 없을 수도 있다** (`제돌이`·`춘삼이`). 번호와 한 칸에
+    # 섞지 않는 이유는 — `JTA001 (제돌이)` 로 두면 정렬도 중복 검사도 옛
+    # 카탈로그와 맞춰 보는 일도 전부 그 괄호를 파싱하게 되고, 별명이 붙거나
+    # 바뀔 때마다 **번호가 든 문자열을 건드리게 된다.**
+    #
+    # **UNIQUE 를 안 건다.** 겹치는 별명은 사람이 알아보는 문제이지 자료가
+    # 깨지는 문제가 아니다 — 개체를 가리키는 것은 번호다.
+    nickname = models.CharField(max_length=50, blank=True, default="",
+                                help_text="별명 — 있는 개체만")
     note = models.TextField(blank=True, default="")
     # 옛 DB 의 이름과 이어졌다면 적어 둔다. 믿어서가 아니라 **되짚으려고** 다
     src_name = models.CharField(max_length=50, blank=True, default="",

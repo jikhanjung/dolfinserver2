@@ -217,8 +217,15 @@
          background:var(--panel) }
   .box.over { border-color:var(--ok); background:#16302b }
   .box .hd { display:flex; gap:6px; align-items:center; padding:6px 8px }
-  .box .nm { flex:1; font-weight:600; font-size:13px; outline:none }
+  /* **번호가 먼저다.** 개체를 가리키는 것은 번호이고 별명은 있는 것만 있다 —
+     번호 자리를 별명이 밀어내면 목록을 훑을 때 눈이 두 종류를 오간다 */
+  .box .nm { font-weight:600; font-size:13px; outline:none; flex:none }
   .box .nm:focus { color:var(--ok) }
+  .box .nick { flex:1; font-size:12px; color:var(--dim); outline:none;
+               min-width:2em }
+  .box .nick:focus { color:var(--ok) }
+  /* 비어 있으면 자리가 있는지조차 안 보인다 — 눌러 넣을 곳임을 흐리게 말한다 */
+  .box .nick:empty::before { content:attr(data-ph); color:#3d4a58 }
   .box .cnt { color:var(--dim); font-size:12px;
               font-family:"IBM Plex Mono",monospace }
   .box .look { padding:1px 8px; font-size:12px; line-height:1.5 }
@@ -539,6 +546,8 @@ function boxHtml(b, mine) {
         <div class="hd">
           <span class="nm"${b.hold ? "" : ' contenteditable="plaintext-only"'}
                 data-id="${b.id}">${b.name}</span>
+          ${b.hold ? "" : `<span class="nick" contenteditable="plaintext-only"
+                data-nick="${b.id}" data-ph="별명">${b.nick || ""}</span>`}
           <span class="cnt">${has.length}</span>
           <button class="look" data-look="${b.id}"
                   title="이 상자만 격자에 크게 편다">보기</button>
@@ -557,8 +566,17 @@ function drawBoxes() {
   const hold = BOXES.filter(b => b.hold);
   document.getElementById("holdbox").innerHTML =
     hold.map(b => boxHtml(b, mine)).join("");
+  // **이름순 — 다만 숫자를 숫자로 읽는다.** 그냥 글자로 견주면 `상자 11` 이
+  // `상자 2` 앞에 오고, `JTA010` 다음이 `JTA100` 이 된다. `numeric` 이 그것을
+  // 자릿수가 아니라 값으로 읽게 한다.
+  //
+  // 전에는 만든 순서(id)로 냈다 — 이름을 고치면 목록에서 튀어 다녀서였다.
+  // **번호를 붙이기 시작하면 그 튀어 다님이 곧 제자리 찾아가는 일이다.**
   document.getElementById("boxes").innerHTML =
-    BOXES.filter(b => !b.hold).map(b => boxHtml(b, mine)).join("");
+    BOXES.filter(b => !b.hold)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined,
+                       {numeric: true, sensitivity: "base"}))
+      .map(b => boxHtml(b, mine)).join("");
   bindBoxes();
 }
 
@@ -683,8 +701,8 @@ function dropTarget(el) {
     if (el.id === "newbox") {
       const r = await post("/api/reid/box", {});
       if (!r) return;
-      BOXES.push({id: r.id, name: r.name, n: 0, rep: null});
-      tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, kind: "", n: 0}});
+      BOXES.push({id: r.id, name: r.name, nick: "", n: 0, rep: null});
+      tell({t: "box", box: {id: r.id, name: r.name, nick: "", rep: null, hold: false, kind: "", n: 0}});
       await assign(r.id, ids);
       document.getElementById("boxes").scrollTop = 1e9;
       return;
@@ -729,6 +747,13 @@ function bindBoxes() {
       if (ev.key === "Enter") { ev.preventDefault(); el.blur(); }
     };
     el.onblur = () => rename(+el.dataset.id, el.textContent.trim());
+  });
+  // **별명은 비울 수 있다** — 번호와 달리 없어도 되는 것이라 빈 값이 곧 답이다
+  document.querySelectorAll(".box .nick").forEach(el => {
+    el.onkeydown = ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); el.blur(); }
+    };
+    el.onblur = () => setNick(+el.dataset.nick, el.textContent.trim());
   });
   // **상자 안의 것도 끌 수 있어야 한다.** 넣은 것은 격자에서 숨겨져 있어
   // 거기서는 끌 수가 없었고, 그래서 `상자에서 뺀다` 도 옮기기도 할 방법이
@@ -850,8 +875,8 @@ document.getElementById("gnewbox").onclick = async () => {
   if (!g) return;
   const r = await post("/api/reid/box", {});
   if (!r) return;
-  BOXES.push({id: r.id, name: r.name, rep: null, hold: false, kind: "", n: 0});
-  tell({t: "box", box: {id: r.id, name: r.name, rep: null, hold: false, kind: "", n: 0}});
+  BOXES.push({id: r.id, name: r.name, nick: "", rep: null, hold: false, kind: "", n: 0});
+  tell({t: "box", box: {id: r.id, name: r.name, nick: "", rep: null, hold: false, kind: "", n: 0}});
   await groupAssign(r.id);
 };
 
@@ -871,6 +896,9 @@ if (BC) BC.onmessage = e => {
   } else if (m.t === "box") {
     if (!BOXES.some(x => x.id === m.box.id)) BOXES.push(m.box);
     draw();
+  } else if (m.t === "nick") {
+    const b = BOXES.find(x => x.id === m.id);
+    if (b) { b.nick = m.nick; drawBoxes(); }
   } else if (m.t === "thumb") {
     tsize.value = m.v;
     document.documentElement.style.setProperty("--thumb", m.v + "px");
@@ -890,6 +918,16 @@ async function assign(indId, ids) {
   ids.forEach(id => { if (byId[id]) byId[id].in = indId; });
   tell({t: "assign", ids, ind: indId});
   sel.clear();
+  draw();
+}
+
+async function setNick(id, nick) {
+  const b = BOXES.find(x => x.id === id);
+  if (!b || (b.nick || "") === nick) return;
+  const r = await post("/api/reid/box", {id, nick});
+  if (!r) return draw();
+  b.nick = r.nick;
+  tell({t: "nick", id, nick: r.nick});
   draw();
 }
 

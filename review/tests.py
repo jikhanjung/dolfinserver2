@@ -1888,3 +1888,42 @@ class FlipMarkTests(TestCase):
         """뒤집혔다는 것은 그림 자체의 성질이라 윤곽을 끄고 보아도 알아야 한다."""
         html = self.page()
         self.assertNotIn("body:not(.ovon) .fin .flip", html)
+
+
+@override_settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests")
+class NicknameTests(TestCase):
+    """**번호와 별명은 다른 칸이다.**
+
+    `JTA001 (제돌이)` 처럼 한 칸에 섞으면 정렬도 중복 검사도 옛 카탈로그와
+    맞춰 보는 일도 전부 그 괄호를 파싱하게 되고, 별명이 붙거나 바뀔 때마다
+    **번호가 든 문자열을 건드리게 된다.**
+    """
+
+    def setUp(self):
+        self.ind = Individual.objects.create(name="JTA001")
+
+    def post(self, body):
+        return self.client.post("/api/reid/box", json.dumps(body),
+                                content_type="application/json").json()
+
+    def test_a_nickname_can_be_set_and_cleared(self):
+        self.assertEqual(self.post({"id": self.ind.id, "nick": "제돌이"})["nick"], "제돌이")
+        self.assertEqual(self.post({"id": self.ind.id, "nick": ""})["nick"], "")
+
+    def test_nicknames_may_repeat(self):
+        """겹치는 별명은 사람이 알아보는 문제이지 **자료가 깨지는 문제가 아니다** —
+        개체를 가리키는 것은 번호다."""
+        other = Individual.objects.create(name="JTA002")
+        self.post({"id": self.ind.id, "nick": "제돌이"})
+        self.assertEqual(self.post({"id": other.id, "nick": "제돌이"})["nick"], "제돌이")
+
+    def test_the_number_still_may_not_repeat(self):
+        Individual.objects.create(name="JTA002")
+        self.assertIn("error", self.post({"id": self.ind.id, "name": "JTA002"}))
+
+    def test_setting_a_nickname_leaves_the_number_alone(self):
+        """별명 갈래가 이름 갈래보다 뒤에 있으면 "이름이 비었다" 를 낸다."""
+        self.post({"id": self.ind.id, "nick": "춘삼이"})
+        self.ind.refresh_from_db()
+        self.assertEqual(self.ind.name, "JTA001")
+        self.assertEqual(self.ind.nickname, "춘삼이")

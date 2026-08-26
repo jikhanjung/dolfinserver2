@@ -483,10 +483,9 @@ def reid(request):
             c = judged.get(it["id"])
             if c and c != "fin":
                 it["notfin"] = c
-        # **만든 순서로 낸다.** 기본은 이름순인데(`Individual.Meta`) 그러면
-        # `상자 10` 이 `상자 2` 앞에 오고, 무엇보다 **이름을 고치는 순간 그
-        # 상자가 목록에서 튀어 다닌다** — 방금 이름 붙인 것을 눈으로 다시
-        # 찾아야 한다. 분류는 만든 순서대로 쌓이는 일이라 그 순서가 맞다.
+        # **차례는 화면이 정한다** (`drawBoxes`) — 이름순이되 숫자를 숫자로
+        # 읽는다. 여기서 `Individual.Meta` 의 이름순을 그대로 쓰면 `상자 10` 이
+        # `상자 2` 앞에 오고, `JTA010` 다음에 `JTA100` 이 온다.
         # **개체가 아닌 자리 둘은 늘 있다** (`Individual.KINDS`).
         # `임시보관함` — 어디에 넣을지 모르겠는 것이 반드시 나오는데, 아무
         # 상자에나 넣으면 그 상자가 오염되고 미분류로 두면 다음에 또 같은
@@ -497,7 +496,7 @@ def reid(request):
     for k, nm in Individual.KINDS:
         if k:
             Individual.objects.get_or_create(kind=k, defaults={"name": nm})
-    boxes = [{"id": i.id, "name": i.name, "rep": i.rep_id,
+    boxes = [{"id": i.id, "name": i.name, "nick": i.nickname, "rep": i.rep_id,
               "hold": bool(i.kind), "kind": i.kind,
               "n": sum(1 for v in latest.values() if v == i.id)}
              for i in Individual.objects.order_by("id")]
@@ -599,6 +598,20 @@ def reid_box(request):
         ind.rep_id = int(rep) if rep else None
         ind.save(update_fields=["rep"])
         return JsonResponse({"id": ind.id, "rep": ind.rep_id})
+    if ind_id and "nick" in body:
+        # **번호와 따로 받는다.** 별명이 붙거나 바뀔 때마다 번호가 든 문자열을
+        # 건드리게 하지 않으려는 것이다. 겹쳐도 받는다 — 개체를 가리키는 것은
+        # 번호이고, 겹치는 별명은 사람이 알아보는 문제이지 자료가 깨지는
+        # 문제가 아니다.
+        #
+        # **이름 갈래보다 앞에 둔다** — 뒤에 두면 `if ind_id` 가 먼저 채 가서
+        # "이름이 비었다" 를 낸다.
+        ind = Individual.objects.filter(id=ind_id).first()
+        if ind is None:
+            return JsonResponse({"error": "그런 상자가 없다"}, status=404)
+        ind.nickname = (body.get("nick") or "").strip()[:50]
+        ind.save(update_fields=["nickname"])
+        return JsonResponse({"id": ind.id, "name": ind.name, "nick": ind.nickname})
     if ind_id:
         ind = Individual.objects.filter(id=ind_id).first()
         if ind is None:
@@ -609,14 +622,15 @@ def reid_box(request):
             return JsonResponse({"error": f"'{name}' 은 이미 있다"}, status=400)
         ind.name = name
         ind.save(update_fields=["name"])
-        return JsonResponse({"id": ind.id, "name": ind.name})
+        return JsonResponse({"id": ind.id, "name": ind.name, "nick": ind.nickname})
     if not name:
         n = Individual.objects.count() + 1
         while Individual.objects.filter(name=f"상자 {n}").exists():
             n += 1
         name = f"상자 {n}"
     ind, made = Individual.objects.get_or_create(name=name)
-    return JsonResponse({"id": ind.id, "name": ind.name, "made": made})
+    return JsonResponse({"id": ind.id, "name": ind.name,
+                         "nick": ind.nickname, "made": made})
 
 
 def _reid_pool():
