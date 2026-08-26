@@ -855,9 +855,10 @@ ssh dolfinid /srv/dolfinserver2/deploy.sh 0.4.0    # 스냅샷 → 스왑 → sm
 개체 판정의 **주인**이다 — 밀어 넣으면 그 판정이 사라진다. 스크립트가 거기
 DB 가 있으면 멈춘다.
 
-**이미지는 레지스트리를 안 거친다** (`ship.sh`, `docker save | ssh docker load`,
-150MB 에 19초). 값 때문이 아니라 **공개 레지스트리에 올릴지를 안 정했기**
-때문이다 — `build.sh --push` 하나면 형제들 방식으로 바뀐다.
+**이미지는 Docker Hub 를 거친다** — `honestjung/dolfinserver2`(공개),
+`build.sh <버전> --push`. GCP 의 `deploy.sh` 가 당겨서 뜬다. `ship.sh`
+(`docker save | ssh docker load`, 150MB 에 19초)는 **레지스트리가 막혔을 때의
+뒷문**으로 남겨 뒀다.
 
 ## 문 — 접속 코드 (2026-08-26)
 

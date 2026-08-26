@@ -60,10 +60,14 @@ cd /srv/dolfinserver2-test && docker compose up -d
 ## 그 다음부터
 
 ```bash
-deploy/build.sh 0.2.1
-sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=0.2.1/' /srv/dolfinserver2/.env
+deploy/build.sh 0.4.2 --push                 # 테스트 → 버전 → build → Docker Hub
+sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=0.4.2/' /srv/dolfinserver2/.env
 cd /srv/dolfinserver2 && docker compose up -d
+ssh dolfinid /srv/dolfinserver2/deploy.sh 0.4.2   # GCP 는 당겨서 뜬다
 ```
+
+이미지는 `honestjung/dolfinserver2`(공개)다. `deploy/gcp/ship.sh` 는
+레지스트리가 막혔을 때의 뒷문으로 남겨 뒀다.
 
 시험 자리에서 두 역할을 다 돌려 본 뒤에 운영으로 올린다:
 

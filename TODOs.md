@@ -219,11 +219,14 @@
       NAS 로 한 벌 더). 신선도 게이트 26시간. **며칠 뒤 지울 것**
 - [x] ~~**GCP 자리·배포 스크립트**~~ — `deploy/gcp/` (install·ship·seed·
       bootstrap·deploy·smoke). tailnet 전용 nginx. **며칠 뒤 지울 것**
-- [ ] **이미지를 레지스트리로 올릴지 정한다.** 지금은 `ship.sh` 가
-      `docker save | ssh docker load` 로 나른다(150MB · 19초). 형제들은 전부
-      Docker Hub 를 쓰고 `_extract_and_deploy.sh` 로 호스트 파일까지 이미지에서
-      꺼낸다 — 그쪽으로 가면 `install.sh` 가 은퇴한다. **공개 레지스트리에
-      올릴지가 정해지면 `build.sh --push` 하나면 된다**
+- [x] ~~**이미지를 레지스트리로 올릴지 정한다**~~ — 올린다 (2026-08-26).
+      `honestjung/dolfinserver2` 공개 · `build.sh --push` · GCP 는 이제
+      `deploy.sh` 가 당겨서 뜬다(`ship.sh` 는 레지스트리가 막힐 때의 뒷문으로
+      남긴다). **며칠 뒤 지울 것**
+- [ ] **호스트 파일도 이미지에서 꺼내게 한다** (`_extract_and_deploy.sh`).
+      형제들은 그렇게 해서 운영에 저장소가 아예 필요 없다 — 그쪽으로 가면
+      `deploy/gcp/install.sh` 가 은퇴한다. 이미지에 이미 `deploy/` 가 실려 있어
+      꺼내 쓰기만 하면 된다
 - [ ] **공개로 열지 정한다.** 지금 GCP 는 tailnet 전용이다. 밖에서 여러 사람이
       분류하게 하려면 **https 가 먼저다** — `FIN_ACCESS_CODE` 는 문이지만
       TLS 없이는 코드도 세션 쿠키도 평문으로 간다 (`FIN_COOKIE_SECURE=1` 도
