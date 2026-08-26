@@ -2,7 +2,7 @@
 
     python manage.py infer --weights runs/seg-v2-s/weights/best.pt --redo
 
-`segment` 와 **같은 표에 같은 모양으로** 넣는다 (`Mask`, 원본 좌표 폴리곤).
+`segment` 와 **같은 테이블에 같은 모양으로** 넣는다 (`Mask`, 원본 좌표 폴리곤).
 그래야 검토 화면도 내보내기도 엔진을 모른 채로 돌고, 두 엔진의 숫자에 같은 자를
 댈 수 있다. 마스크는 쌓이므로 (`is_current`) 같은 상자 위에서 나란히 비교할 수 있다.
 

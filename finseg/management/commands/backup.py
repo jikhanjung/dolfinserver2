@@ -214,7 +214,7 @@ class Command(BaseCommand):
             w("  integrity_check ok"
               + (f" · 판정 {n_rev:,}" if n_rev is not None else "")
               + (f" · 개체 판정 {n_id:,}" if n_id is not None else "")
-              + f" · 표 {len(have)} 개")
+              + f" · 테이블 {len(have)} 개")
 
         # 오래된 것 지우기. **제 갈래만 본다** — 다른 기계가 뜬 것을 이쪽
         # `--keep` 으로 지우면, 그 기계는 제가 몇 벌 갖고 있는지 모르는 채

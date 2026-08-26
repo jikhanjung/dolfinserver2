@@ -55,6 +55,9 @@ finseg/management/commands/  import_boxes · crops · segment · export_yolo ·
                              train · infer · eval_masks
 finweb/            Django 프로젝트 (settings · urls). 자료 경로는 settings 에 있다
 review/            격자 검토 앱 — 기본값으로 두고 예외만 누른다
+                   **`FIN_ROLE` 이 어느 길을 거는지 정한다** (`urls.patterns_for`)
+                   `work` 검출·분할·밑동·검토 / `reid` 개체 분류만 —
+                   개체의 주인을 한 자리로 두려는 것이다 (`HANDOFF`)
                    `/` 검토 · `/photo/<box>` 원본 · `/edit/<box>` 윤곽·밑동
                    `/compare?runs=5,16` 엔진 비교
                    대기열 다섯: 검토할 것 · 검토한 것 · 교정 대기 · 엔진 바뀜 ·
@@ -69,10 +72,14 @@ pip install -r requirements.txt -r requirements-gpu.txt    # 2080ti
 
 python manage.py migrate
 python manage.py import_boxes --dry-run     # 표본을 먼저 눈으로 본다
+#   DB 는 `/srv/dolfinserver2/db/fin.db` 다. 시험·개발은 사본을 물린다:
+#   FIN_DB=<사본> python manage.py ...
 python manage.py import_boxes
 python manage.py crops
 python manage.py segment                                   # [GPU]
-python manage.py runserver 0.0.0.0:8900                    # 검토
+python manage.py runserver 0.0.0.0:8900                    # 검토 — **시험용이다**
+#   정식 검토 화면은 컨테이너다 (m710q `work` :8085 · GCP `reid`).
+#   `deploy/README.md` · HANDOFF 의 `## 운영·시험·개발 세 자리`
 python manage.py export_yolo --out datasets/seg-v1 --group coarse --val-date <날짜>
 python manage.py train --data datasets/seg-v1                  # [GPU] 갈래는 MANIFEST 가 정한다
 python manage.py infer --weights runs/<name>/weights/best.pt --compare-only   # [GPU]
@@ -99,7 +106,11 @@ python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fi
 - **옛 DB 는 읽기 전용으로만 연다.** 운영 웹서버가 같은 파일을 쓰고 있고
   SQLite 는 쓰기가 하나다
 - **`fin.db` 를 두 기계에서 함께 열지 않는다.** 형제 프로젝트가 그것으로
-  프레임 229장을 잃었다. 운영 자리는 2080ti 한 곳이다
+  프레임 229장을 잃었다. 운영 자리는 **m710q** 한 곳이다 (한 기계 안에서
+  컨테이너와 명령이 같은 파일을 여는 것은 괜찮다 — WAL 이 그것을 받는다)
+- **개체 판정은 GCP 에서만 만든다** (`FIN_ROLE`). m710q 에서는 `/reid` 가 아예
+  안 걸린다 — **열기만 해도 보류함 `Individual` 이 생겨서**, 링크를 숨기는
+  것으로는 안 막힌다 (HANDOFF 의 `## 서버를 둘로 나눈다`)
 - **2080ti 는 Turing(sm_75) 이라 bf16 이 없다.** AMP 는 fp16 이어야 한다
   (`finseg/management/commands/segment.py:autocast_dtype()`)
 - **성적은 `val` 이 아니라 `val_date` 로 읽는다.** `val` 만 좋으면 그 날의
@@ -150,8 +161,11 @@ cd ../dolfinserver2 && ln -s ../devdocs/guides .guides
 - **본문은 무엇을 했는지보다 왜 그렇게 했고 무엇을 버렸는지를 적는다**
 - `HANDOFF.md`·`TODOs.md` 는 완료분을 며칠만 두고 지워 현행화한다
   (기록은 `devlog/` 에 영구히 남는다)
-- 사진·가중치는 저장소 밖에 둔다. **DB 는 `db/` 에** — `.gitignore` 가 그
-  디렉토리를 통째로 무시한다 (`fin.db` 와 옛 운영 DB 백업이 같이 있다)
+- 사진·가중치는 저장소 밖에 둔다. **DB 는 `/srv/dolfinserver2/db/` 에**
+  (2026-08-26 에 저장소 `db/` 에서 옮겼다) — 검토 화면이 컨테이너로 도는데
+  그것이 보는 파일과 파이프라인이 쓰는 파일이 다르면 **판정이 한쪽에만 쌓인다.**
+  `settings` 의 `FIN_DB` 기본값이 그 자리이고, 다른 기계·시험·개발은 `FIN_DB`
+  로 대 준다. 없는 자리를 가리키면 시스템 검사가 말한다 (`finseg/checks.py`)
 
 ### 말투
 
@@ -162,4 +176,8 @@ cd ../dolfinserver2 && ln -s ../devdocs/guides .guides
   "알아 둘 **값**이 있다"(어색) / "알아 둘 **가치**가 있다"(맞다). `값` 은
   숫자·수치를 가리킬 때만 쓴다 (`base_line` 의 값, 문턱 값). 다만 `제 값을
   한다`(제 몫을 한다)처럼 굳어진 표현은 그대로 둔다
+- **DB 의 table 은 `테이블`.** `표` 라고 하지 말 것 — 이 저장소의 문서는
+  마크다운 표를 잔뜩 쓰는데, 그 둘이 같은 말이면 "표 셋을 나른다" 가 문서의
+  표를 말하는지 DB 의 테이블을 말하는지 읽는 자리에서 갈리지 않는다.
+  `finseg_review 테이블` · `테이블 셋만 주고받는다`
 - 영어를 직역한 티가 나면 다시 쓴다. **번역이 아니라 한국어로 쓰는 것이다**

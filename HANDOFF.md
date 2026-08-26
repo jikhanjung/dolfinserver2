@@ -1,12 +1,17 @@
 # Handoff — 현재 진행 상황
 
-**2026-08-25.** 6단계(re-ID)가 **분류기를 얻었다** — 아는 개체를 맞히는
-성적이 기준선의 두 배가 됐다(top-1 25.5% → **44.5%**).
-**2026-08-25 에 2080ti 로 옮겨 앉았다** — 지금 `fin.db` 를 든 자리는 여기다.
+**2026-08-26.** 검토 화면을 **컨테이너로 싸서 시험 서버로 올렸다**
+(`http://m710q:8085`). 목적지는 여기가 아니라 **GCP 의 `dolfinid2`** 다 —
+거기서 re-ID 자료를 모으고 나머지는 이 기계에 남긴다 (`devlog/20260826_001`).
+그 앞은 분류기였다 — 아는 개체를 맞히는 성적이 기준선의 두 배가 됐다
+(top-1 25.5% → **44.5%**).
 
-> **다음 사람은 `## 이어받기` 절부터 읽을 것** — 옮겨 앉기는 끝났고, 화면을
-> 띄울 때 `FIN_REID`·`FIN_PHOTOS` 를 줘야 하는 것이 거기 적혀 있다.
-> **다음 큰 걸음은 닫힌 집합 분류기** (`TODOs.md` 첫 항목, 출발선 43%).
+> **`fin.db` 를 든 자리는 `m710q` 다.** 2026-08-26 에 세어 확인했다
+> (`## fin.db 를 든 자리` 절). 8월 25일에 2080ti(=**JikhanDesktop**, WSL)로
+> 옮겨 앉은 기록이 아래 `## 이어받기` 절에 남아 있는데, **그 뒤로 자리가
+> 여기로 돌아왔다** — 그 절은 절차로만 읽을 것.
+> **다음 큰 걸음은 서버의 역할을 나누는 것** — re-ID 는 GCP 만, 나머지는
+> 여기만 (`## 서버를 둘로 나눈다`).
 
 - **검출** `detect-v2` 완료 — 공평한 날에서 **재현율로 옛 검출기를 처음 넘었다**
 - **분할** `seg-v3-s` 로 갈아 끼웠다 — 독립 IoU 0.673 → **0.841**,
@@ -42,31 +47,36 @@
 | 3 분할 학습 | **세 바퀴** | v3 독립 IoU **0.841** · 못 내던 것 569 → 6 |
 | 4 키포인트 | 완료 | 밑동 오차 37.6 → 21.6px |
 | 5 검출기 | **한 바퀴 돌았다** | 정밀도 87.3% · 새 지느러미 **419** · 재현율 97.5% |
-| 6 re-ID | **착수** | 격자 4,059 · 개체 **42** · 날 건너뛴 개체 32 ← 지금 |
+| 6 re-ID | **착수** | 격자 **7,912**(v3) · 개체 **45** · 상자에 든 것 871 · 날 건너뛴 개체 **34** ← 지금 |
 
 ## 지금 있는 것
 
 | | |
 |---|---|
-| 표본 | 관찰일 **40일** (2016-03-15 ~ 2019-11-05) · 사진 **4,181** |
-| 상자 | **5,882** — 옛 YOLOv5 2,315 + 새 검출기 690 + **옛 DB 에서 더 길어 온 2,877** |
-| 크롭 | 5,882개 전부 · 640×640 · `crops/` |
-| 마스크 | **v3-s 2,876**(run 41) + 옛것 74 — `promote --run 41` 로 올렸다 |
-| 검토 | **3,005 / 3,005** · 판정 **6,039건** · 안 본 것 0 (그중 25건은 `/reid` 격자에서 거른 것) |
+| 표본 | 관찰일 **73일** (2016-03-15 ~ 2019-11-05) · 사진 **7,927** |
+| 상자 | **10,537** — `yolov5` 9,847(옛 검출기 + 옛 DB 에서 길어 온 것) + `yolo11` **690**(우리 검출기) |
+| 크롭 | 10,537개 전부 · 640×640 · `crops/` |
+| 마스크 | 25,655 · 지금 쓰는 것은 **`seg-v3-s` 10,247** + `sam2.1` 47 + `seg-v2-s` 23 + `seg-v1-s` 4 |
+| 검토 | 상자 **3,024** · 판정 **6,039건** (그중 25건은 `/reid` 격자에서 거른 것) |
 | **새 검출** | **690 전부 검토** — 등지느러미 **419** · 딴 부위 152 · 헛것 119 |
-| 사람이 그린 것 | 윗윤곽 **271** · 밑동 1,703 |
-| **개체 분류** | 격자 **4,059**(`reid/v2`) · 상자에 **540** · 개체 **42** · 3장 이상 37 · 날을 건너뛴 개체 **34** · 개체판정 **1,300** |
+| 사람이 그린 것 | 윗윤곽 **675** · 밑동 3,580 |
+| **개체 분류** | 격자 **7,912**(`reid/v3`) · 상자에 **871** · 개체 **45**(+보류함 1) · 3장 이상 37 · 날을 건너뛴 개체 **34** · 개체판정 **1,319** |
 
-상자 3,005개의 판정: `fin` 2,460 · **`none` 206** · `person` 110 · `body` 71 ·
-`rostrum` 55 · `fluke` 38 · `head` 26 · `bird` 19 · `pectoral` 10 · `other` 10.
-학습 자료로는 **양성 2,799 · 배경 206**.
+**안 본 상자 7,513 은 분할 검토 대기열이 아니다.** 전부 `yolov5` 출처이고
+옛 운영 DB 에서 **re-ID 후보로** 들여온 것이다 — 그중 6,174 가 격자에 있고,
+사람 판정 없이 `/reid` 로 바로 간다 (`devlog/20260824_003`). 상자 수만 보고
+"검토가 7,513개 밀렸다" 고 읽으면 안 된다.
+
+상자 3,024개의 판정(가장 늦은 것): `fin` 2,460 · **`none` 216** · `person` 110 ·
+`body` 78 · `rostrum` 55 · `fluke` 39 · `head` 27 · `bird` 19 · `pectoral` 10 ·
+`other` 10. 학습 자료로는 **양성 2,808 · 배경 216**.
 
 `마스크없음 55` 는 남은 일이 아니다 — 사람이 직접 그렸거나 `none` 이다.
 `엔진바뀜 2,876` 도 마찬가지다: v3 로 갈아 끼워 생긴 것이고 **마스크가 좋아진
 것이지 나빠진 것이 아니다.** 안 봐도 자료는 이미 v3 로 나간다.
 
 ```
-db/fin.db                                  사람의 판정 5,879건 — 다시 못 만든다
+db/fin.db                                  판정 6,039 + 개체판정 1,319 — 다시 못 만든다
 db/dolfinserver_prod_2026-08-17.sqlite3    옛 운영 DB · 사진 544,585 · 상자 999,528
 ```
 
@@ -120,7 +130,9 @@ python manage.py backup --derived      # 뜰 곳은 `finseg/nas.py` 가 안다
 ```
 
 **양쪽에서 동시에 열면 어느 쪽 판정이 이기는지 아무도 모른다.** 합치는 길이
-없다 — `Review`·`Identification` 이 둘 다 쌓이는 표라 번호가 겹친다.
+없다 — `Review`·`Identification` 이 둘 다 쌓이는 테이블이라 번호가 겹친다.
+(**GCP 와는 다르다** — 거기는 쓰는 테이블을 아예 갈라 두었다.
+`## 서버를 둘로 나눈다`.)
 
 **`m710q` 에서 `git pull` 하면 그쪽의 옛 `crops/`·`db/fin.db` 가 워킹트리에서
 지워진다** (`5d63a5c` 가 추적을 멈춘 커밋이다). **지워져도 된다** — 히스토리에
@@ -262,13 +274,15 @@ python manage.py import_detections scan.json      # 그쪽이 낸 것을 들인�
 
 # re-ID (6단계)
 python manage.py reid_cluster --dry-run           # 문턱별로 어떻게 갈리나
-python manage.py reid_eval --dir reid/v2                  # 자를 잰다
-python manage.py reid_eval --dir reid/v2 --emb reid/v2/emb-dinov2.npz
+python manage.py reid_eval                                # 자를 잰다
+python manage.py reid_eval --emb emb-dinov2.npz
 python manage.py reid_eval --as-of <개체판정 번호>          # 옛 정답에 새 자를 세운다
-python manage.py reid_probe --dir reid/v2 --loss triplet   # 배우면 나아지나
-python manage.py reid_probe --dir reid/v2 --hold-individuals 12   # **열린 판**
-python manage.py reid_chips --out reid/v2 --emb-only --backbone dinov2 \
+python manage.py reid_probe --loss triplet                # 배우면 나아지나
+python manage.py reid_probe --hold-individuals 12         # **열린 판**
+python manage.py reid_chips --out reid/v3 --emb-only --backbone dinov2 \
     --emb-name emb-dinov2.npz                            # 조각은 두고 자만 바꾼다
+#   **`--dir` 을 안 준다.** 기본값이 `FIN_REID`(화면이 보는 격자)라, 박아 두면
+#   격자를 갈아 끼울 때마다 조용히 옛것을 잰다 (`9fc484d`)
 #   조각 만들기는 아직 스크립트다 — 명령으로 뽑는 것이 남았다 (`reid_chips` 쯤)
 #   → 화면 `/reid` 에서 손으로 상자에 넣는다
 
@@ -369,8 +383,9 @@ python manage.py reid_eval --as-of 448      # 그때 정답으로 (자를 견줄
 명령이 그 판단을 화면에 적는다. 대조학습의 **출발선**이 저 32.5% 다.
 
 `ResNet18 · 실루엣만`(옛 표 29.1%)은 지금 표에 없다 — ImageNet 가중치를 새로
-통과시켜야 하는데 m710q 에 캐시가 없다. 나머지 넷은 `reid/v1` 의 저장물만으로
-계산한다.
+통과시켜야 하는데 m710q 에 캐시가 없다. 나머지 넷은 `reid/v1` 의 저장물로
+계산한 것인데, **`v1` 은 2026-08-26 에 지웠다** — 다시 내려면 NAS 사본을
+가져와야 한다 (`9fc484d`).
 
 ### **정답이 다른 두 판을 세로로 견주지 말 것**
 
@@ -411,18 +426,18 @@ python manage.py import_boxes --src <옛 DB> --only-dates 2016-08-09,… --boxes
 python manage.py crops
 python manage.py infer --weights runs/seg-v3-s/weights/best.pt        # [GPU]
 python manage.py infer_base --weights runs/pose-v1/weights/best.pt    # [GPU]
-python manage.py reid_chips --out reid/v2 --auto-facing --auto-cls --min-area 15000
-python manage.py reid_chips --out reid/v2 --emb-only --backbone dinov2 \
+python manage.py reid_chips --out reid/v3 --auto-facing --auto-cls --min-area 15000
+python manage.py reid_chips --out reid/v3 --emb-only --backbone dinov2 \
     --emb-name emb-dinov2.npz                  # 조각은 두고 자만 바꾼다
 
 # 분류 (닫힌 판) — **성적을 잴 때와 화면에 쓸 때가 다르다**
-python manage.py reid_cls --dir reid/v2 --epochs 2000            # 날로 갈라 잰다
-python manage.py reid_cls --dir reid/v2 --epochs 2000 --group    # 묶어서 잰다
-python manage.py reid_cls --dir reid/v2 --epochs 2000 \
-    --fit-all reid/v2/cls-dinov2.npz           # 아는 것을 다 써서 배운다 (화면용)
+python manage.py reid_cls --epochs 2000                          # 날로 갈라 잰다
+python manage.py reid_cls --epochs 2000 --group                  # 묶어서 잰다
+python manage.py reid_cls --epochs 2000 \
+    --fit-all reid/v3/cls-dinov2.npz           # 아는 것을 다 써서 배운다 (화면용)
 
 # 지느러미가 아닌 것 짚기
-python manage.py fin_filter --fit --score reid/v2 --write
+python manage.py fin_filter --fit --score reid/v3 --write
 ```
 
 **검토 안 된 상자에서 막는 축은 `facing` 하나였다.** `usable()` 이 판정 없으면
@@ -456,9 +471,10 @@ python manage.py fin_filter --fit --score reid/v2 --write
 ### 격자를 갈아 끼운다 — `FIN_REID`
 
 ```bash
-FIN_PHOTOS=~/dolfin-photos FIN_REID=reid/v2 python manage.py runserver 0.0.0.0:8900
-#   **지금 격자는 `reid/v2`(4,059장) 다.** `FIN_REID` 를 안 주면 옛 `reid/v1`
-#   (1,735장)을 보는데, 개체 판정은 새 조각을 가리키고 있어 격자에서 안 보인다
+cd /srv/dolfinserver2 && docker compose up -d       # 정식 화면은 컨테이너다
+#   **지금 격자는 `reid/v3`(7,912장) 다.** `v1`·`v2` 는 2026-08-26 에 지웠고
+#   (`9fc484d` — `v3` 가 `v2` 를 비트까지 포함한다), NAS 사본만 남는다.
+#   `FIN_REID` 를 안 주면 없는 자리를 보고 **격자가 조용히 빈다**
 
 FIN_DB=<사본> FIN_CROPS=<사본 크롭> FIN_REID=<시험 격자> \
   python manage.py runserver 0.0.0.0:8901     # 시험은 이렇게 따로 띄운다
@@ -469,7 +485,7 @@ FIN_DB=<사본> FIN_CROPS=<사본 크롭> FIN_REID=<시험 격자> \
 
 ### **넓이 문턱이 코드와 자료에서 갈려 있다**
 
-`reid/v1` 은 **15,000** 으로 만들어졌는데 `reid.MIN_AREA` 는 **30,000** 이다.
+격자는 **15,000** 으로 만들어졌는데(`v3/items.json` 의 `min_area`) `reid.MIN_AREA` 는 **30,000** 이다.
 모르고 다시 만들면 **사람이 이미 분류한 조각 1,034장이 격자에서 사라진다.**
 `reid_chips` 가 `--min-area` 를 받아 `items.json` 에 적고 다르면 멎지만,
 **어느 쪽이 옳은지는 아직 안 정했다** (`TODOs`).
@@ -560,10 +576,14 @@ ArcFace · 백본 마지막 블록 녹이기(이것만 GPU 몫).
 아무것도 특징적이지 않다. **자기 자신을 매끄럽게 편 것과 견주는** 쪽으로
 바꿨다(`reid.roughness`).
 
-## 이어받기 — **2080ti 로 옮겨 앉았다** (2026-08-25)
+## 이어받기 — 기계를 옮겨 앉는 절차 (2026-08-25 에 쓴 것)
 
-8월 24일 일은 **m710q** 에서 했고, 그것을 **2026-08-25 에 2080ti 로 받았다.**
-지금 `fin.db` 를 든 자리는 **2080ti** 다. `fin.db` 는 한 기계에서만 연다.
+> **여기 적힌 "지금 자리" 는 낡았다.** 8월 25일에 2080ti(JikhanDesktop)로
+> 옮겨 앉으며 쓴 글이고, **그 뒤로 자리가 m710q 로 돌아왔다** (`## fin.db 를
+> 든 자리` 절에서 세어 확인했다). **절차로만 읽을 것** — 명령과 함정은 그대로
+> 유효하다. 다만 `FIN_REID` 는 이제 `reid/v3` 다.
+
+`fin.db` 는 한 기계에서만 연다.
 
 받은 것 — 상자 **5,882** · 판정 6,014 · 개체 판정 **1,298** · 개체 **46** ·
 마스크 21,079 · 크롭 5,882장 · 조각 `v1` 3,479 + `v2` 4,064.
@@ -580,21 +600,22 @@ python manage.py backup --derived
 # 받을 기계에서
 git pull
 B=$(python -c 'from finseg import nas; print(nas.root() / "dolfinserver2_backup")')
-cp $B/db/fin.db.<날짜>.<넘긴 기계>.bak db/fin.db   # 이름에 기계가 들어간다
-sha256sum db/fin.db                                # MANIFEST 와 견준다
-rsync -a $B/derived/crops/ crops/                  # 5,882장
-rsync -a $B/derived/reid/  reid/                   # v1 3,479 + **v2 4,064**
+# **자리는 `/srv/dolfinserver2/db/` 다** — 저장소 `db/` 가 아니다 (2026-08-26)
+cp $B/db/fin.db.<날짜>.<넘긴 기계>.bak /srv/dolfinserver2/db/fin.db
+sha256sum /srv/dolfinserver2/db/fin.db             # MANIFEST 와 비교한다
+rsync -a $B/derived/crops/ crops/                  # 10,537장
+rsync -a $B/derived/reid/  reid/                   # **v3 7,912**
 python manage.py migrate
-FIN_PHOTOS=~/dolfin-photos FIN_REID=reid/v2 python manage.py runserver 0.0.0.0:8900
+cd /srv/dolfinserver2 && docker compose up -d       # 정식 화면은 컨테이너다
 ```
 
-**`cp -r` 말고 `rsync` 를 쓴다.** 조각 `look/` 이 4,059장이라 NAS 에서 몇 분씩
+**`cp -r` 말고 `rsync` 를 쓴다.** 조각 `look/` 이 7,912장이라 NAS 에서 몇 분씩
 걸리는데, 중간에 끊기면 `cp` 는 어디까지 왔는지 모른다 — 실제로 한 번 끊겨
 1,333장에서 멈췄다. `rsync` 는 있는 것을 건너뛰고 이어받는다.
 
-**`FIN_REID=reid/v2` 를 빠뜨리지 말 것.** 안 주면 화면이 옛 `reid/v1` 을 보는데
-(`settings` 의 기본값이 `v1` 이다), 개체 판정이 새 조각을 가리키고 있어
-**격자만 조용히 빈다.**
+**`FIN_REID=reid/v3` 를 빠뜨리지 말 것.** 안 주면 화면이 `settings` 기본값을
+보는데 **`v1`·`v2` 는 2026-08-26 에 지웠다** (`9fc484d`). 개체 판정이 새 조각을
+가리키고 있어 **격자만 조용히 빈다.**
 
 **`FIN_PHOTOS` 도 빠뜨리지 말 것.** 기본값 `/srv/dolfinserver/uploads` 는 이
 기계에 없다. `~/dolfin-photos/nas → /mnt/p/JikhanJung/dolfinimage` 가 걸려
@@ -616,90 +637,286 @@ FIN_PHOTOS=~/dolfin-photos FIN_REID=reid/v2 python manage.py runserver 0.0.0.0:8
 **2080ti 에만 있는 것**: `ultralytics`·GPU. m710q 에서는 CPU 로 돌려
 `infer` 13분 / `infer_base` 35분 / DINOv2 임베딩 6분이 걸렸다.
 
-## 지금 자리에 무엇이 있나 — 2026-08-25 · **2080ti**
+## fin.db 를 든 자리 — 2026-08-26 · **m710q**
 
-옮겨 앉은 직후에 세어 둔다. **다음에 이어받는 사람이 견줄 기준선이다** —
-숫자가 안 맞으면 복원이 덜 된 것이고, `reid` 는 덜 와도 오류가 아니라
-**빈 격자**로 나타난다.
+**세어서 정했다.** 문서는 2080ti(JikhanDesktop)라고 적고 있었는데 재 보니 이
+기계가 모든 축에서 앞선다. NAS 백업에도 `…2080ti.bak` 갈래가 **아예 없다** —
+새 이름 규칙(`fin.db.<날짜>.<기계>.bak`)이 생긴 뒤로 뜬 것은 `m710q` 것뿐이다.
 
-### `db/fin.db` — 다시 만들 수 없는 것
+| | 문서가 적고 있던 것 (2080ti · 08-25) | NAS 마지막 백업 (m710q · 08-25 11:27) | **여기 지금** |
+|---|---:|---:|---:|
+| `image` | 4,181 | 4,181 | **7,927** |
+| `box` | 5,882 | 5,882 | **10,537** |
+| `review` | 6,014 | 6,039 | **6,039** |
+| `identification` | 1,298 | 1,300 | **1,319** |
 
-크기 35,565,568 · 마지막 수정 **2026-08-25 08:08**(복원한 때) ·
-`integrity_check ok` · `journal_mode=wal` ·
-sha256 `391808e3…dfc0ddb96d` = `MANIFEST.2026-08-24.json` 의 것
+> **2080ti 는 확인하지 못했다.** 지금 꺼져 있다(tailnet 에서 `jikhandesktop`,
+> 9시간 전 마지막). 거기 안 뜬 채 남은 판정이 있을 가능성은 **NAS 백업이
+> 없다는 것으로만** 낮다고 말할 수 있다 — 켜지면 세어 볼 것.
 
-| 표 | 건수 | | 표 | 건수 |
+### `fin.db` — 다시 만들 수 없는 것 (`/srv/dolfinserver2/db/`)
+
+크기 35,565,568 · 마지막 수정 **2026-08-25 14:13** · `integrity_check ok` ·
+`journal_mode=wal` · sha256 `d0ea0bd4c586…`
+
+| 테이블 | 건수 | | 테이블 | 건수 |
 |---|---:|---|---|---:|
-| `image` | 4,181 | | `mask` | 21,079 |
-| `box` | 5,882 | | `review` | **6,014** |
-| `crop` | 5,882 | | `identification` | **1,298** |
-| `run` | 53 | | `individual` | **46** |
+| `image` | 7,927 | | `mask` | 25,655 |
+| `box` | 10,537 | | `review` | **6,039** |
+| `crop` | 10,537 | | `identification` | **1,319** |
+| `run` | 57 | | `individual` | **46** (개체 45 + 보류함 1) |
 
 **사람이 손댄 마지막 때** — 이 셋만 다시 만들 수 없다.
 
 | | 처음 | 마지막 | 마지막 id |
 |---|---|---|---:|
-| `review` | 2026-08-15 15:48 | **2026-08-23 02:55** | 6,051 |
-| `identification` | 2026-08-23 22:11 | **2026-08-24 14:53** | 1,298 |
+| `review` | 2026-08-15 15:48 | **2026-08-25 02:08** | 6,077 |
+| `identification` | 2026-08-23 22:11 | **2026-08-25 05:13** | 1,319 |
 | `individual` | 2026-08-23 22:11 | 2026-08-24 13:21 | 47 |
 
-`review` 의 마지막 id(6,051)가 건수(6,014)보다 큰 것은 **지운 자리가 있어서**다.
-`individual` 도 같다(47 대 46).
+`review` 의 마지막 id(6,077)가 건수(6,039)보다 큰 것은 **지운 자리가 있어서**다
+(`individual` 도 47 대 46). **번호 공간을 가를 때 보는 것은 건수가 아니라 이
+id 다** (`## 서버를 둘로 나눈다`).
 
-상자 출처 — `yolov5` 5,192 · `yolo11` **690**(우리 검출기가 새로 찾은 것).
-지금 쓰는 마스크 — `seg-v3-s` **5,671** · `sam2.1` 47 · `seg-v2-s` 23 · `seg-v1-s` 4.
-관찰일 **40일** (2016-03-15 ~ 2019-11-05).
+상자 출처 — `yolov5` **9,847** · `yolo11` **690**(우리 검출기가 새로 찾은 것).
+지금 쓰는 마스크 — `seg-v3-s` **10,247** · `sam2.1` 47 · `seg-v2-s` 23 ·
+`seg-v1-s` 4. 관찰일 **73일** (2016-03-15 ~ 2019-11-05).
 
 ### `derived/` — 다시 만들 수 있지만, 다시 만들려면 사진과 시간이 든다
 
-| | 파일 | 크기 | 마지막 수정 |
-|---|---:|---:|---|
-| `crops/` | 5,882 | 392MB | 2026-08-25 08:03 (복원) |
-| `reid/v1/` | 3,479 | 54MB | 2026-08-24 11:21 |
-| `reid/v2/` | 4,064 | 114MB | 2026-08-24 23:56 |
+| | 파일 | 크기 |
+|---|---:|---:|
+| `crops/` | 10,537 | 703MB |
+| `reid/v3/` | `look/` 7,912 | 230MB |
+| `reid/fin-filter-emb.npz` | | 13MB |
 
-- `v1` — `chips/`1,735 · `look/`1,735 · `chips.npz` · `chips_norm.npz` ·
-  `curves.npz` · `emb.npz` · `sigs.npz` · `groups.json` · `items.json` ·
-  `notches.json` · `rough.json`
-- `v2` — `look/`4,059 · `chips.npz`(17.0MB) · `curves.npz` · `emb.npz`(7.4MB) ·
-  **`emb-dinov2.npz`**(5.8MB) · `items.json`.
-  **`v2` 에는 `sigs.npz`·`chips_norm.npz`·`rough.json`·`groups.json`·
-  `notches.json` 이 없다.** 대부분 옛 스크립트가 남긴 것이라 안 읽히지만
-  **하나가 걸린다** — `reid_train` 의 `--sigs` 기본값이
-  `reid/v1/sigs.npz` 로 박혀 있다. `v2` 로 일하면서 그냥 돌리면
-  **옛 갈래의 서명을 읽고도 아무 말이 없다.** `groups.json` 은
-  `reid_cluster` 가 쓰는 쪽이라 `v2` 에 없는 것은 아직 안 돌렸다는 뜻이다
-- `v2/items.json` 머리 — `n 4059 · min_area 15000 · auto_facing · auto_cls`.
-  **`min_area` 가 15,000 이고 `reid.MIN_AREA` 는 30,000 이다** (`TODOs.md` 의
-  넓이 문턱 항목)
+**`v1`·`v2` 는 2026-08-26 에 지웠다** (`9fc484d` — 명령이 어느 격자를 읽을지
+박아 두던 것도 함께 걷었다). `v3` 안에서 **화면이 읽는 것은 넷뿐이다** —
+`items.json`(n 7,912 · `min_area` 15,000) · `emb-dinov2.npz` ·
+`cls-dinov2.npz` · `look/`. `chips.npz`(32MB) · `emb.npz`(14MB) ·
+`curves.npz`(3.5MB)는 명령이 쓴다. **GCP 에 갈 때 이 구별이 181MB 대 242MB 를
+가른다** (`devlog/20260826_001` 5절).
 
-### 가중치 — `runs/` 10 개 · 271MB
+### 가중치 — `runs/` 2 개 · 60MB
 
-`detect-v2-det`(19MB · 08-24 04:47) · `seg-v3-s`(21MB · 08-24 09:00) ·
-`seg-v3-seg`(45MB) · `pose-v1`(42MB) · `seg-v1-s`·`seg-v1-m`·`seg-v2-s` ·
-`detect-merged-det` · `detect-human-mosaic0/1`
+`seg-v3-s` · `pose-v1`. **검출·옛 분할 가중치는 이 기계에 없다** — NAS
+`dolfinserver2_backup/weights/` 에 있다.
 
 ### 로컬 `db/` — 저장소 밖(`.gitignore`)
 
 | | 크기 | 무엇 |
 |---|---:|---|
 | `fin.db` | 36MB | **지금 것** |
-| `fin.before-restore.2026-08-25.bak` | 36MB | 복원 전 이 기계 상태(개체 판정 448). **최종본의 부분집합** — 지워도 된다 |
-| `dolfinserver_prod_2026-08-17.sqlite3` | 972MB | **옛 운영 DB. 지우지 말 것** — `import_detections --src-db` 의 기본값이고 표본을 넓히는 유일한 공급원이다 (사진 544,585 · 상자 999,528) |
+| `fin.before-promote.2026-08-24.bak` | 36MB | 되돌릴 자리(옛 상자를 들이기 전). 지금 것은 이것의 상위집합 |
+| `fin-test.2026-08-24.bak` | 36MB | 승격 실험 사본. 승격이 끝났으니 지울 것 |
 
-`.bak` 옆에 `-wal`·`-shm` 이 보이면 읽기로 열었던 자국이다. 옮길 때는
-**본 파일 하나만** 옮긴다 (`backup` 이 뜰 때 `journal_mode=DELETE` 로 합친다).
+**옛 운영 DB 는 `db/` 가 아니라 형제 저장소에 있다** —
+`../dolfinserver/db.sqlite3` (927MB · 사진 544,585 · 상자 999,528).
+`FIN_SRC_DB` 의 기본값이 그 자리이고, **표본을 넓히는 유일한 공급원이다.
+지우지 말 것.**
 
 ### NAS `dolfinserver2_backup/`
 
-- `db/fin.db.2026-08-24.bak` — **지금 로컬 것의 출처**. 기계 이름이 없다
-  (붙이기 전에 뜬 것이라 `--keep` 이 일부러 안 건드린다)
-- `db/fin.before-promote.2026-08-24.bak` — **되돌릴 자리** (개체 판정 574,
-  옛 상자를 들이기 전). 되돌릴 자리는 **원래 지금 것의 부분집합이다** —
-  부분집합이라는 것이 지울 이유가 아니다
-- `db/fin-test.2026-08-24.bak` — 승격 실험 사본. 승격이 끝났으니 지울 것
-- `MANIFEST.2026-08-24.json` · `derived/`(크롭 5,882 · `v1` 3,479 · `v2` 4,064)
-- **이 기계 갈래(`…JikhanDesktop.bak`)는 아직 없다** — 옮겨 앉고 아직 안 떴다
+- `db/fin.db.2026-08-25.m710q.bak` (08-25 11:27) — **가장 최근**. 다만 지금
+  로컬 것이 이보다 앞선다(사진 +3,746 · 상자 +4,655 · 개체판정 +19).
+  **떠야 한다** (`manage.py backup --derived`)
+- `db/fin.db.2026-08-24.bak` · `db/fin.before-promote.2026-08-24.bak` ·
+  `db/fin-test.2026-08-24.bak` — 기계 이름 없는 옛 갈래
+- `MANIFEST.2026-08-25.m710q.json` · `derived/` · `weights/`
+
+## 서버를 둘로 나눈다 (2026-08-26 에 정했다)
+
+**개체를 만들고 지느러미를 개체에 넣는 일은 GCP(`dolfinid2`)에서만 한다.
+나머지는 m710q 에서만 한다.**
+
+되는 이유는 **`Identification`·`Individual` 을 쓰는 곳이 `review/views.py`
+하나뿐**이기 때문이다 (명령은 하나도 안 쓴다 — `finseg/reid.py` 는 읽기만).
+GCP 가 그 둘의 유일한 주인이면 **병합이 아니라 통째로 갈아 끼우기**가 되고,
+m710q 는 읽기 사본만 든다 (`reid_cls` 가 그것으로 배운다).
+
+| 방향 | 나르는 테이블 | 성격 |
+|---|---|---|
+| m710q → GCP | `Image` · `Box` · `Crop` (+ 최신 `Mask`) | upsert. 판정 테이블은 안 건드림 |
+| GCP → m710q | `Individual` · `Identification` | **통째로 갈아 끼움** |
+| GCP → m710q | `Review` | 붙이기만 (아래) |
+
+**`Review` 만 주인이 둘로 남는다.** `/reid` 격자의 "지느러미 아님" 이 그
+테이블에 쌓이고(6,039건 중 25건), m710q 의 분할 검토도 같은 테이블을 쓴다.
+그래서 **`Review` 에만 번호 공간을 가른다** — GCP DB 를 세울 때 한 줄이다.
+
+```sql
+UPDATE sqlite_sequence SET seq=1000000 WHERE name='finseg_review';
+```
+
+**GCP DB 를 세우는 그 자리에서 해야 한다.** 나중에 하면 재매핑이 따라온다.
+
+**막는 자리는 앱이다 — `FIN_ROLE`** (2026-08-26 에 넣었다).
+
+| | 걸리는 길 |
+|---|---|
+| `work` (기본) | `/` `/review` `/edit` `/compare` `/detect` `/photo` `/healthz` |
+| `reid` | `/reid` `/catalog` `/api/reid/*` `/reid/chip/…` `/healthz` |
+
+**nginx 로 막으면 안 된다.** 정작 새는 자리가 안 막힌다 — `runserver` 앞에는
+nginx 가 없는데 구멍이 바로 거기다: **`/reid` 는 열기만 해도 보류함
+`Individual` 이 하나 생긴다** (`review/views.py` 의 `get_or_create`). 구경도
+쓰기라 링크를 숨기는 것으로도 안 막힌다. **URLconf 에서 아예 뺀다**
+(`review/urls.py` 의 `patterns_for`) — 경로가 없으면 실수로 도는 길이 없다.
+템플릿이 `{% url %}` 를 하나도 안 써서(링크가 전부 경로다) 빼도 안 깨진다.
+
+기본은 `work` 라 **이 기계의 습관은 안 바뀐다** — `runserver` 로 띄우면
+`/reid` 만 사라진다. GCP 의 `.env` 에만 `FIN_ROLE=reid` 를 적는다. 여기서
+격자를 눈으로 봐야 하면 시험 서버(8085)가 `reid` 로 떠 있고, **그것은 DB
+사본을 본다.**
+
+`/healthz` 가 역할을 낸다 — **배포가 뒤바뀐 것을 그것으로 잡는다.** 개체 분류를
+받을 자리가 `work` 로 떠 있으면 화면은 멀쩡히 200 을 내면서 그날 판정을 한 건도
+못 받는다. 차림표에도 `작업 자리`·`re-ID 자리` 로 늘 보인다.
+nginx 막기는 버리지 않았다 — 앱이 정본이고 그것은 이중이다.
+
+**`fin.db` 를 통째로 주고받는 길은 버렸다.** 격자를 v4 로 갈면 새 상자·크롭이
+GCP DB 에도 있어야 조각이 붙는데, 그때 DB 를 통째로 보내면 GCP 가 쌓은 판정이
+날아간다.
+
+## 운영·시험·개발 세 자리 (2026-08-26)
+
+| | 무엇 | 역할 | DB |
+|---|---|---|---|
+| `/srv/dolfinserver2` · nginx **8085** | **운영** | `work` | **진짜 `fin.db`** |
+| GCP `dolfinid2` | **운영** | `reid` | 거기 `fin.db` (GCP 가 주인) |
+| `/srv/dolfinserver2-test` · nginx **8086** | 시험 | 골라 띄운다 | NAS 백업 사본 |
+| `manage.py runserver` | 개발 | 골라 띄운다 | 사본 (`FIN_DB`) |
+
+**`runserver` 는 이제 시험이다.** 정식 검토 화면은 컨테이너다.
+
+**`fin.db` 가 `/srv/dolfinserver2/db/` 로 옮겨 갔다.** 저장소 `db/` 를 안 쓴다 —
+컨테이너가 보는 파일과 파이프라인이 쓰는 파일이 다르면 **판정이 한쪽에만
+쌓인다.** 지금은 둘이 같은 inode 를 연다. `settings` 의 `FIN_DB` 기본값이 그
+자리이고, 없는 자리를 가리키면 시스템 검사가 말한다 (`finseg/checks.py` —
+**안 말하면 빈 DB 가 만들어지고 명령이 아무 말 없이 0건을 처리한다**).
+저장소에 남은 `db/fin.db.repo-retired-2026-08-26` 은 옮기던 날의 사본이다.
+
+**크롭·조각은 저장소 것을 읽기전용(`:ro`)으로 건다.** 파생물이고 파이프라인이
+계속 다시 쓰는 것이라 사본을 두면 갈아 끼울 때마다 낡는다. `/srv` 에 두었던
+945MB 사본은 걷었다.
+
+**시험 DB 는 NAS 백업에서 뜬다** (`deploy/host/test_db.sh`). 사본이라 무엇을
+해도 사람의 판정이 안 다치고, **덤으로 백업이 성한지를 잰다** — 백업에서
+복원해 화면이 도는 것을 본 적이 없으면 그것은 백업이 아니라 파일일 뿐이다.
+
+```bash
+sudo deploy/host/bootstrap.sh            # 운영 자리 · nginx 8085
+sudo deploy/host/bootstrap.sh --test     # 시험 자리 · nginx 8086
+deploy/host/test_db.sh                   # 시험 DB
+deploy/build.sh 0.2.1                    # 테스트 → 버전 → build (→ --push)
+sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=0.2.1/' /srv/dolfinserver2/.env
+cd /srv/dolfinserver2 && docker compose up -d
+```
+
+```bash
+curl -s http://m710q:8085/healthz | python3 -m json.tool
+# {"status":"ok","version":"0.2.0","role":"work","box":10537,
+#  "individual":45,"identification":1319,"reid_items":7912}
+```
+
+`/healthz` 는 **격자가 비면 `reid` 자리에서 503 을 낸다** — 조각이 덜 오면
+화면은 200 을 내면서 격자만 조용히 비어서, 화면만 봐서는 자료가 덜 온 것인지
+분류가 안 된 것인지 갈리지 않는다.
+
+**`DEBUG=0` 이면 Django 가 크롭·사진을 안 낸다** (`finweb/urls.py`). nginx 의
+`/crops`·`/photos` 가 받는다. 조각(`/reid/chip/…`)만 Django 가 낸다 — 같은
+번호로 `look/` 과 `chips/` 중 있는 것을 고르는 판단이 view 에 있어서다.
+
+## GCP(`dolfinid-2`)가 섰다 (2026-08-26)
+
+**`dolfinid-2` 는 cdGTS·ghdb·fcmanager·strati2026 이 이미 도는 GCP VM 이다**
+(2 vCPU · 3GB · 여유 26GB). ssh 별칭 `dolfinid`, sudo 무암호, tailscale
+`100.126.94.48`.
+
+| | |
+|---|---|
+| 자리 | `/srv/dolfinserver2` · 컨테이너 `127.0.0.1:8012` |
+| 화면 | **`http://100.126.94.48:8085`** — **tailnet 전용** |
+| 역할 | `reid` · 격자 7,912 · 상자 10,537 |
+| 백업 | 시간별(그쪽 cron) → m710q 가 05시에 당겨온다 → NAS |
+
+**공개하지 않았다.** nginx 가 tailscale 주소에만 바인드한다 — 이 기계는 80/443
+으로 cdGTS 를 공개하고 있지만 여기는 그 줄에 안 선다. 문(접속 코드)을 세웠어도
+**TLS 없이 공개 주소로 열면 코드도 세션 쿠키도 평문으로 간다.**
+
+```bash
+deploy/gcp/install.sh          # m710q → GCP 로 호스트 파일 + bootstrap
+deploy/gcp/ship.sh 0.4.0       # 이미지를 ssh 로 실어 나른다 (레지스트리 안 거침)
+deploy/gcp/seed.sh             # DB(검증된 스냅샷) · 조각 · 크롭  — 27초에 갔다
+ssh dolfinid /srv/dolfinserver2/deploy.sh 0.4.0    # 스냅샷 → 스왑 → smoke
+```
+
+**`seed.sh` 는 두 번째부터 `--no-db` 다.** GCP 가 뜬 뒤로 그쪽 `fin.db` 는
+개체 판정의 **주인**이다 — 밀어 넣으면 그 판정이 사라진다. 스크립트가 거기
+DB 가 있으면 멈춘다.
+
+**이미지는 레지스트리를 안 거친다** (`ship.sh`, `docker save | ssh docker load`,
+150MB 에 19초). 값 때문이 아니라 **공개 레지스트리에 올릴지를 안 정했기**
+때문이다 — `build.sh --push` 하나면 형제들 방식으로 바뀐다.
+
+## 문 — 접속 코드 (2026-08-26)
+
+**이 앱에는 사람마다의 인증이 없다.** `login_required` 도 없고 쓰기 경로가
+열려 있어 주소를 아는 사람이 판정을 지울 수 있다. `FIN_ACCESS_CODE` 로 문을
+막았다 — 처음 들어오면 `/enter`, 맞히면 세션에 표가 30일 남는다.
+**m710q 운영과 GCP 에 걸었고, 시험 자리와 `runserver` 는 안 걸었다**(사본이다).
+
+막는 자리는 미들웨어다(`review/gate.py`) — 뷰마다 붙이면 새 뷰 하나가 빠지는
+날이 온다. **기본이 막힘이고 예외만 적는다**: `/enter`·`/healthz`·`/static`.
+`/healthz` 는 **문 밖에서는 수를 안 낸다** — 밖에서 상자·개체가 몇인지까지
+알려 주면 문을 세운 뜻이 절반 없어진다.
+
+**인증의 대신이지 인증이 아니다** — 누가 했는지가 안 남고(`Review.reviewer` 가
+`NULL`), 한 사람만 뺄 수 없고, TLS 없이 공개하면 평문으로 간다.
+
+## 백업 — 시간마다 (2026-08-26)
+
+`fin.db` 가 `/srv` 로 옮겨 가면서 백업이 더 급해졌다. `.guides/web/data-safety.md`
+의 계약을 형제(`/srv/dolfinserver/scripts/backup_db.py`) 구조로 얹었다.
+
+```
+10 * * * * python3 /srv/dolfinserver2/scripts/backup_db.py >> …/logs/backup.log 2>&1
+```
+
+`/srv/dolfinserver2/backup/hourly/fin_<기계>_<날짜>_<시>.sqlite3` · **24벌**
+(`RETAIN_COUNT × 주기 ≥ 오프사이트 간격` — 튜닝값이 아니다) · 29MB × 24 = 700MB.
+**04시 회차만** NAS `dolfinserver2_backup/daily/` 로 (90일 + 매달 1일 영구).
+
+**형제들과 달리 하루가 아니라 시간마다다.** `fin.db` 가 36MB 라 24벌이 700MB
+밖에 안 되고, 사람이 판정을 넣는 화면이 하루 종일 돈다 — 하루치를 잃는 것과
+한 시간치를 잃는 것은 다르다.
+
+계약에서 지키는 것: **스냅샷을 검사하고**(라이브가 아니라) 걸리면 **정리를
+건너뛰고** 증거본과 센티넬을 남긴다(§2 — 이 규칙을 어긴 형제가 실제로 성한
+스냅샷 0개가 됐다) · 하위 트랙은 **검증된 스냅샷을 소비**한다(§4 — NAS 도
+시험 자리도) · `journal_mode=DELETE`(§5) · **검증 이후에** `django_session`
+삭제 + `VACUUM`(§7).
+
+**이름에 기계가 들어가고 정리도 제 갈래만 본다** — 곧 GCP 에도 진짜 `fin.db`
+가 생겨 같은 NAS 로 온다.
+
+막히면 `/healthz` 가 **`degraded`(200)** 다. 503 은 "트래픽 보내지 말라" 는
+뜻이라 배포의 liveness 대기를 멈춰 세워 **게이트가 아니라 배포 장애가 된다.**
+
+```bash
+python3 /srv/dolfinserver2/scripts/backup_db.py   # 손으로
+deploy/host/test_db.sh                            # 그 스냅샷으로 되돌려 본다
+```
+
+**되돌려 봤다** (2026-08-26) — 시간별 스냅샷으로 시험 자리를 세우니 상자
+10,537 · 판정 6,039 · 개체판정 1,319 로 맞았다. **"백업이 돈다" 가 아니라
+"백업이 복원된다" 여야 한다.**
+
+시험은 `finseg/tests_backup.py` 8종. **잘 도는 백업이 아니라 실패했을 때의
+행동을 잰다** — 계약이 지켜지는지는 손상됐을 때에만 드러나고 그때는 늦다.
+
+`manage.py backup` 은 다른 일이다 — 기계 사이 인계용(가중치·`--derived`).
+자리도 갈라 뒀다 (`dolfinserver2_backup/db/` 대 `…/daily/`).
 
 ## 검토 화면 (`review/`)
 
@@ -846,7 +1063,7 @@ DolfinDesktop2                폴더째 훑는 데스크톱 (연구자용 · 아
   움직였는지 재려면 그 자취가 있어야 한다
 - **2080ti 는 Turing(sm_75) 이라 bf16 이 없다.** AMP 는 fp16
 - **`fin.db` 를 두 기계에서 함께 열지 않는다.** 합치는 길이 없다 —
-  `Review`·`Identification` 이 둘 다 쌓이는 표라 번호가 겹친다. 옮겨 가서
+  `Review`·`Identification` 이 둘 다 쌓이는 테이블이라 번호가 겹친다. 옮겨 가서
   일했으면 거기서 다시 떠서 가져올 것
 - **정답이 다른 두 판의 성적을 세로로 견주지 말 것.** 정답이 늘면 `좁은 후보`
   는 후보가 함께 늘어 어려워지고 `격자 전체` 는 정답만 늘어 쉬워진다 —
