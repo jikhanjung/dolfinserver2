@@ -734,11 +734,24 @@ id 다** (`## 서버를 둘로 나눈다`).
 GCP 가 그 둘의 유일한 주인이면 **병합이 아니라 통째로 갈아 끼우기**가 되고,
 m710q 는 읽기 사본만 든다 (`reid_cls` 가 그것으로 배운다).
 
-| 방향 | 나르는 테이블 | 성격 |
-|---|---|---|
-| m710q → GCP | `Image` · `Box` · `Crop` (+ 최신 `Mask`) | upsert. 판정 테이블은 안 건드림 |
-| GCP → m710q | `Individual` · `Identification` | **통째로 갈아 끼움** |
-| GCP → m710q | `Review` | 붙이기만 (아래) |
+| 방향 | 나르는 테이블 | 성격 | |
+|---|---|---|---|
+| m710q → GCP | `Image`·`Run`·`Box`·`Crop`·`Mask`·`Review` | upsert | **섰다** (2026-08-27) |
+| GCP → m710q | `Individual` · `Identification` | 통째로 갈아 끼움 | 아직 |
+
+**보내는 길**: `deploy/gcp/from_work_to_reid.sh` — `export_from_work_to_reid`
+로 담고, 보내고, 저쪽 컨테이너 안에서 `import_from_work_to_reid` 로 넣는다
+(헛돌리기 한 번 먼저). **이름에 방향이 들어 있어** 반대 방향이 그대로 짝이 된다.
+
+**`INSERT OR REPLACE` 를 쓰면 안 된다.** SQLite 에서 그것은 부딪히는 행을
+지우고 다시 넣는데, `Identification.box` 가 `CASCADE` 라 **상자 하나를
+갱신하려다 그 상자에 달린 개체 판정이 조용히 함께 지워진다.** 참된
+upsert(`ON CONFLICT DO UPDATE`)만 쓴다 — 행을 안 지우므로 CASCADE 가 안 돈다.
+넣은 뒤에 저쪽 레인을 **다시 세서** 어긋나면 통째로 되돌린다.
+
+실측 (2026-08-27) — 27.7MB · 10초. `finseg_review` +97 이 건너갔고
+`finseg_identification` 1,323 · `finseg_individual` 46 은 **그대로**였다
+(그 4건은 GCP 에서 만든 것이다).
 
 **`Review` 도 주인이 하나다** (2026-08-26). `/reid` 격자에서 "지느러미 아님"
 을 쓰던 길(`reid_cls_set`)을 걷어냈다 — 그래서 **번호 공간을 가를 일이 없고**,

@@ -191,12 +191,16 @@
       **전부 `fin` 으로 통과**했다고 적어 두었다. 앞쪽(`p(fin)` 0.0대)만 훑어도
       격자가 눈에 띄게 깨끗해질 것이다 — **GCP 로 내보내기 전에 하는 편이
       값이 크다**(거기 격자는 여기서 만든 것을 받는다)
-- [ ] **`reid_export` / `reid_import`.** GCP → m710q 는 `Individual`·
-      `Identification` 을 **통째로 갈아 끼우고**(GCP 가 유일한 주인이다)
-      `Review` 는 붙이기만. m710q → GCP 는 `Image`·`Box`·`Crop`(+최신 `Mask`)
-      upsert — **판정 테이블은 안 건드린다.**
-      **`fin.db` 를 통째로 주고받지 않는다** — 그러면 한쪽이 다른 쪽을 지운다.
-      `Review` 는 이제 m710q 한 주인이라 **되받을 것이 아니라 보낼 것**이다
+- [x] ~~**보내는 길 (m710q → GCP)**~~ — 섰다 (2026-08-27).
+      `export_from_work_to_reid` / `import_from_work_to_reid` /
+      `deploy/gcp/from_work_to_reid.sh`. 27.7MB · 10초. **며칠 뒤 지울 것**
+- [ ] **되받는 길 (GCP → m710q).** `export_from_reid_to_work` /
+      `import_from_reid_to_work` — 이름은 짝이 정해져 있다. `Individual`·
+      `Identification` 을 **통째로 갈아 끼운다**(GCP 가 유일한 주인이라 병합이
+      아니다). **지금 GCP 에 쌓이는 개체 판정은 거기에만 있다** — 매시 백업을
+      m710q 가 당겨오지만 그것은 사본이지 병합이 아니다.
+      되받을 때 `Individual.rep` 이 가리키는 상자가 이쪽에 있어야 하는데,
+      보내는 길이 섰으니 그 조건은 이제 지켜진다
 - [x] ~~**역할을 배포에서 막는다**~~ — **배포가 아니라 앱에 넣었다** (2026-08-26).
       `FIN_ROLE`(`work`|`reid`)이 `review/urls.py` 의 `patterns_for` 로 길을
       가른다. **nginx 로 막으면 정작 새는 자리가 안 막힌다** — `runserver` 앞에는

@@ -96,6 +96,11 @@ python manage.py crops                                     # 새 상자를 자�
 #   → 검토 화면 `새 검출` 대기열에서 본다
 python manage.py eval_detect                               # 그 판정으로 문턱별 정밀도
 
+# 두 자리 사이 (작업 자리 → re-ID 자리). **이름에 방향이 들어 있다**
+deploy/gcp/from_work_to_reid.sh          # 레인 한 번 (행 + 조각·크롭)
+python manage.py export_from_work_to_reid --out <파일>   # 작업 자리가 주인인 것만
+python manage.py import_from_work_to_reid --from <파일>  # re-ID 자리에서. upsert
+
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
 python manage.py infer_base --weights runs/pose-v1/weights/best.pt
