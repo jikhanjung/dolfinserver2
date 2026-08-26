@@ -1927,3 +1927,32 @@ class NicknameTests(TestCase):
         self.ind.refresh_from_db()
         self.assertEqual(self.ind.name, "JTA001")
         self.assertEqual(self.ind.nickname, "춘삼이")
+
+
+class ContextMenuTests(TestCase):
+    """**여기서 못 하는 일은 차림표에 안 올린다.**
+
+    `원본 사진`·`윤곽 고치기` 는 `work` 자리의 길이라 `reid` 자리에서는 404 다.
+    내밀면 누른 사람은 화면이 깨진 줄 알지, **이 자리가 그 일을 안 하기로 한
+    줄 모른다.**
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "items.json").write_text('{"items": []}', encoding="utf-8")
+        (self.tmp / "look").mkdir()
+
+    def page(self, role):
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE=role,
+                           ROOT_URLCONF="review.tests" if role == "reid" else None):
+            return self.client.get("/reid" if role == "reid" else "/").content.decode()
+
+    def test_the_reid_seat_knows_its_role(self):
+        self.assertIn('const ROLE = "reid"', self.page("reid"))
+
+    def test_the_dead_entries_are_behind_the_role(self):
+        """길이 있는지를 화면이 스스로 판단하게 둔다 — 두 자리가 같은 템플릿을
+        쓰므로 지워 버리면 `work` 쪽에서 그 길이 없어진다."""
+        html = self.page("reid")
+        self.assertIn('if (ROLE !== "reid")', html)
+        self.assertIn("if (!rows.length) return false", html)

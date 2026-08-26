@@ -629,8 +629,9 @@ document.getElementById("grid").onclick = e => {
 document.getElementById("grid").oncontextmenu = e => {
   const f = e.target.closest(".fin");
   if (!f) return;
-  e.preventDefault();
-  showMenu(Number(f.dataset.id), e.clientX, e.clientY);
+  // **막고 나서 안 띄우면 아무 일도 안 일어난다.** 올릴 것이 있을 때에만
+  // 브라우저 차림표를 가로챈다 — 없으면 그냥 브라우저 것이 뜨는 편이 낫다
+  if (showMenu(Number(f.dataset.id), e.clientX, e.clientY)) e.preventDefault();
 };
 
 // ---- 우클릭 차림표 ----------------------------------------------------------
@@ -646,13 +647,21 @@ function showMenu(id, x, y) {
   const ids = menuTargets(id);
   const many = ids.length > 1 ? ` (${ids.length}장)` : "";
   const it = byId[id] || {};
-  const rows = [
-    [`원본 사진`, () => open(`/photo/${id}`, "finphoto"), "우클릭"],
-    [`윤곽 고치기`, () => open(`/edit/${id}`, "finedit"), ""],
-  ];
-  if (it.in) {
-    rows.push(null, [`상자에서 뺀다${many}`, () => assign(null, ids), ""]);
+  // **여기서 못 하는 일은 차림표에 안 올린다.** `원본 사진`·`윤곽 고치기` 는
+  // `work` 자리의 길이라 이 역할에서는 404 다 — 내밀면 누른 사람은 화면이
+  // 깨진 줄 알지, 이 자리가 그 일을 안 하기로 한 줄 모른다. 차림표·홈 카드에
+  // 이미 같은 규칙을 걸어 두었다.
+  const rows = [];
+  if (ROLE !== "reid") {
+    rows.push([`원본 사진`, () => open(`/photo/${id}`, "finphoto"), "우클릭"],
+              [`윤곽 고치기`, () => open(`/edit/${id}`, "finedit"), ""]);
   }
+  if (it.in) {
+    if (rows.length) rows.push(null);
+    rows.push([`상자에서 뺀다${many}`, () => assign(null, ids), ""]);
+  }
+  // 올릴 것이 없으면 아예 안 띄운다 — 빈 상자가 뜨는 것이 더 헷갈린다
+  if (!rows.length) return false;
   m.innerHTML = rows.map((r, n) => r === null ? "<hr>"
     : r[1] === null ? r[0]
     : `<button data-n="${n}">${r[0]}<kbd>${r[2]}</kbd></button>`).join("");
@@ -663,6 +672,7 @@ function showMenu(id, x, y) {
   const r = m.getBoundingClientRect();
   m.style.left = Math.min(x, innerWidth - r.width - 6) + "px";
   m.style.top = Math.min(y, innerHeight - r.height - 6) + "px";
+  return true;
 }
 
 function hideMenu() { document.getElementById("menu").hidden = true; }
@@ -1024,6 +1034,9 @@ document.addEventListener("keydown", e => {
   }
 });
 
+// **이 자리가 무슨 일을 하나** (`FIN_ROLE`). 차림표가 여기서 못 하는 길을
+// 안 내밀게 하는 데 쓴다 — 화면 위쪽 차림표·홈 카드와 같은 규칙이다.
+const ROLE = "{{ fin_role }}";
 const NOTFIN_NAME = {{ notfin_names|safe }};
 // **상자만 보는 창.** 같은 화면을 쓰되 격자를 감춘다 — 끌기·놓기·저장이
 // 한 벌뿐이라야 한쪽만 고쳐지는 일이 없다
