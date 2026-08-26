@@ -109,14 +109,32 @@
   /* **`빼기`·`새 상자` 는 한 칸을 나눠 쓴다.** 늘 보이기만 하면 되는 것이라
      개체 상자만큼 자리를 차지할 이유가 없다 — 위아래로 쌓아 둘이 합쳐 상자
      하나만큼이다. 보류함은 대표 조각을 보여야 하는 진짜 상자라 그대로 둔다 */
-  .pair { display:flex; flex-direction:column; gap:6px; min-width:0 }
+  /* **넷이 같은 규칙으로 앉는다.** `빼기`·`새 상자` 는 늘 보이기만 하면 되는
+     자리이고, `임시보관함`·`지느러미 아님` 은 대표 조각을 보이는 진짜 상자다.
+     자리가 좁을수록 넷을 반 칸씩 나눠 쓰고, 넓어지면 하나씩 온 칸을 받는다.
+     `display:contents` 로 짝을 풀면 그 안의 둘이 각자 한 칸을 차지한다. */
+  .pair, #holdbox { display:flex; flex-direction:column; gap:6px; min-width:0 }
+  /* 한 칸  : 넷을 세로로, 각각 반 칸 */
   #pinned[data-cols="1"] { grid-template-columns:1fr }
+  #pinned[data-cols="1"] .pair, #pinned[data-cols="1"] #holdbox { display:contents }
+  /* 두 칸  : 왼쪽 빼기·새 상자, 오른쪽 임시보관함·지느러미 아님 — 넷 다 반 칸 */
   #pinned[data-cols="2"] { grid-template-columns:1fr 1fr }
-  /* 셋이 나란히 — `display:contents` 로 짝을 풀어 각자 한 칸을 차지한다 */
+  /* 세 칸  : 왼쪽만 짝으로 쌓고, 특수 상자 둘이 각자 온 칸 */
   #pinned[data-cols="3"] { grid-template-columns:repeat(3, 1fr) }
-  #pinned[data-cols="3"] .pair { display:contents }
-  #pinned[data-cols="3"] .box.special .thumbs.slot {
+  #pinned[data-cols="3"] #holdbox { display:contents }
+  /* 네 칸  : 넷 다 온 칸 */
+  #pinned[data-cols="4"] { grid-template-columns:repeat(4, 1fr) }
+  #pinned[data-cols="4"] .pair, #pinned[data-cols="4"] #holdbox { display:contents }
+  /* 온 칸을 받은 것만 제 높이를 갖는다 — 나머지는 짝 안에서 반씩 나눈다 */
+  #pinned[data-cols="3"] #holdbox > .box .thumbs,
+  #pinned[data-cols="4"] .box .thumbs,
+  #pinned[data-cols="4"] .box.special .thumbs.slot {
     min-height:calc(var(--thumb) * .62) }
+  /* 반 칸일 때는 대표 조각도 그만큼 낮춘다 — 안 그러면 상자가 저 혼자 커진다 */
+  #pinned[data-cols="1"] .thumbs img.rep,
+  #pinned[data-cols="2"] .thumbs img.rep,
+  #pinned[data-cols="3"] .pair .thumbs img.rep {
+    max-height:calc(var(--thumb) * .42) }
   #pinned .box { margin:0 }
   #pinned .thumbs { margin:0 5px 5px }
   #pinned .thumbs img.rep { max-height:calc(var(--thumb) * .8); width:auto }
@@ -220,20 +238,25 @@
      재서 `data-cols` 로 적어 준다 — 칸 너비가 크기 슬라이더를 따라 변해서
      `@container` 의 고정 문턱으로는 못 맞춘다.
 
-       한 칸  : 위에 빼기·새 상자(각각 반 높이), 아래에 보류함
-       두 칸  : 왼쪽에 빼기·새 상자, 오른쪽에 보류함
-       세 칸~ : 셋이 나란히, 각각 상자 하나 크기. 더 넓어져도 그대로 */
+       한 칸  : 넷을 세로로, 각각 반 칸
+       두 칸  : 왼쪽에 빼기·새 상자, 오른쪽에 임시보관함·지느러미 아님 (반 칸씩)
+       세 칸  : 왼쪽에 빼기·새 상자(반 칸씩), 가운데 임시보관함, 오른쪽 지느러미 아님
+       네 칸~ : 넷이 나란히, 각각 온 칸. 더 넓어져도 그대로 */
   #pinned { position:absolute; left:8px; bottom:8px; z-index:6;
-            width:min(calc(100% - 16px), calc(var(--thumb) * 3 + 372px));
+            width:min(calc(100% - 16px), calc(var(--thumb) * 4 + 513px));
             display:grid; gap:6px; grid-template-columns:1fr 1fr;
             padding:6px; border-radius:8px;
             background:#0d131acc; backdrop-filter:blur(6px);
             border:1px solid var(--line); box-shadow:0 6px 20px #0008 }
-  #holdbox { display:contents }
   /* 떠 있는 것에 가려 마지막 줄이 안 보이면 안 된다 */
   #boxes { padding-bottom:calc(var(--thumb) + 74px) }
   /* 끌고 있는 동안에는 또렷하게 — 놓을 자리를 찾는 순간이라 */
   body.dragging #pinned { background:#0d131af2; border-color:var(--dim) }
+  /* **둘은 같은 것이다** — 끌어 놓는 자리. 생김새가 다르면 눈이 다른 종류로
+     읽는다. 다른 것은 **뜻**뿐이라 색으로만 가른다: 빼기는 붉게, 새 상자는
+     푸르게. 테두리 모양·굵기·바탕은 둘이 같다 (한쪽만 실선으로 바뀌던 것을
+     걷었다 — 그 차이가 "이쪽이 더 진짜 같다" 로 읽혔다) */
+  .box.special { background:var(--panel) }
   .box.special .thumbs.slot { display:flex; align-items:center;
     justify-content:center; text-align:center; color:var(--dim);
     font-size:12.5px; font-weight:600; line-height:1.3;
@@ -242,8 +265,7 @@
   .box.special.over { border-color:var(--no) }
   .box.special.over .thumbs.slot { border-color:var(--no); color:var(--no) }
   .box.special.new.over { border-color:var(--ok) }
-  .box.special.new.over .thumbs.slot { border-style:solid; border-color:var(--ok);
-                                       color:var(--ok) }
+  .box.special.new.over .thumbs.slot { border-color:var(--ok); color:var(--ok) }
   .box.focus .look { background:#1b2b40; border-color:var(--sel);
                      color:var(--sel) }
   /* **한 상자만 보고 있다는 것을 화면이 크게 말해야 한다.** 안 그러면 격자가
@@ -268,14 +290,11 @@
   .drop.pin.new { margin:0 8px 8px; border-color:#2f4a3d; color:var(--dim) }
   .drop.pin.new.over { border-style:solid; border-color:var(--ok);
                        background:#16302b; color:var(--ok) }
-  /* **맨 아래 빈 상자.** 단추를 눌러 만들고 다시 끄는 것은 걸음이 둘이다 —
-     끌어 넣는 그 동작 하나로 상자가 생기게 한다. 넣고 나면 아래에 또 하나
-     빈 것이 생기므로 "다음 개체" 가 늘 준비되어 있다 */
-  .box.new { border-style:dashed; background:none }
-  .box.new .hd { color:var(--dim); font-size:12.5px; justify-content:center;
-                 padding:14px 8px }
-  .box.new.over { border-style:solid; border-color:var(--ok);
-                  background:#16302b; color:var(--ok) }
+  /* `.box.new` 셋을 걷었다 (2026-08-27). **맨 아래 빈 상자**이던 시절의
+     것인데, 그 자리는 붙박이 드롭존으로 옮겨졌다. 남아 있던 `background:none`
+     이 `.box.special` 과 **명시도가 같아서 뒤에 있다는 이유로 이겼고**,
+     그래서 `새 상자` 만 반투명했다 — 나란히 놓인 둘 중 하나만 비쳐 보이면
+     같은 일을 하는 자리로 안 읽힌다. */
   .warn { margin:14px; padding:10px 13px; background:#2a1416;
           border:1px solid #5c2a2f; border-left:3px solid var(--no);
           border-radius:6px; color:#ffc9cd; font-size:13px; max-width:74ch }
@@ -923,7 +942,8 @@ function fitPinned() {
   const col = parseInt(getComputedStyle(document.documentElement)
                        .getPropertyValue("--thumb")) + 120;
   const usable = side.clientWidth - 16;
-  pin.dataset.cols = String(Math.max(1, Math.min(3,
+  // 넷까지 — 특수 상자가 둘로 늘면서 네 칸짜리 자리가 생겼다
+  pin.dataset.cols = String(Math.max(1, Math.min(4,
     Math.floor((usable + 7) / (col + 7)))));
 }
 if ("ResizeObserver" in window) {
