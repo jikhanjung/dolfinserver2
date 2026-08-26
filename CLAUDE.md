@@ -119,6 +119,14 @@ python manage.py test          # 판정 규칙·좌표 사상·규칙 표시 (fi
 - **`fin.db` 를 두 기계에서 함께 열지 않는다.** 형제 프로젝트가 그것으로
   프레임 229장을 잃었다. 운영 자리는 **m710q** 한 곳이다 (한 기계 안에서
   컨테이너와 명령이 같은 파일을 여는 것은 괜찮다 — WAL 이 그것을 받는다)
+- **개체와 개체 이름은 GCP 가 주인이다.** m710q 에서 고쳐도 **다음 되받기(매일
+  06:30)에 통째로 갈아 끼워지며 사라진다** — `Individual`·`Identification` 은
+  병합이 아니라 갈아 끼우기다 (`import_from_reid_to_work`). 마침 `work` 역할
+  에서는 그 길이 안 걸려서 실수로 고칠 자리도 없다
+- **행을 upsert 할 때 `INSERT OR REPLACE` 를 쓰지 않는다.** SQLite 에서 그것은
+  부딪히는 행을 **지우고 다시 넣는데**, `Identification.box` 가 `CASCADE` 라
+  상자 하나를 갱신하려다 **그 상자에 달린 개체 판정이 조용히 함께 지워진다.**
+  참된 upsert(`ON CONFLICT DO UPDATE`)만 쓴다
 - **개체 판정은 GCP 에서만 만든다** (`FIN_ROLE`). m710q 에서는 `/reid` 가 아예
   안 걸린다 — **열기만 해도 보류함 `Individual` 이 생겨서**, 링크를 숨기는
   것으로는 안 막힌다 (HANDOFF 의 `## 서버를 둘로 나눈다`)
