@@ -29,6 +29,8 @@
 맞추면 서로 다른 두 면을 같은 것으로 배운다. `facing` 이 그것을 가른다.
 **임베딩을 배울 때 `fliplr` 을 쓰면 안 되는 것도 같은 이유다** (`TODOs`).
 """
+from pathlib import Path
+
 import numpy as np
 
 from finseg import baseline, geometry
@@ -700,6 +702,116 @@ def effective_id(box):
     멀티유저의 갈림길이고, 사람이 늘면 사람마다 최신을 고른 뒤 합의로 간다.
     """
     return box.identifications.order_by("-id").first()
+
+
+# ---- 1차 목표 ---------------------------------------------------------------
+#
+# **왜 이 숫자인가.** 넷 다 재어 둔 것에서 나왔지 정해 놓고 시작한 것이 아니다.
+#
+# `per_individual` = 10 — 개체당 조각 수와 top-1 의 관계를 재 보면 **문턱이
+# 10 에 있다**: 4~9장 11.1% · 10~19장 30.6% · 20장 이상 33.8%. 10 을 넘길 때
+# +19.5pp 이고 그 뒤로는 +3.2pp 다. **몇 마리를 40장으로 만드는 것보다 모두를
+# 10장으로 올리는 편이 훨씬 세다.**
+#
+# `days_per_individual` = 2 — `reid_cls` 가 **관찰일을 통째로 갈라** 배우는 날과
+# 재는 날을 안 겹치게 한다. 그래서 하루에만 찍힌 개체는 배우는 쪽이나 재는 쪽
+# **한 곳에만 들어가고 다른 쪽에서는 아예 안 쓰인다.** 조각 수와 달리 이건
+# 많고 적음이 아니라 **되나 안 되나**다.
+#
+# `individuals` = 60 — 제주 남방큰돌고래 개체군이 100~120 이다. 절반은 넘겨야
+# 카탈로그라 부를 수 있다. (Kim et al. 2024 의 reference 는 79개체였다.)
+#
+# `chips` = 1,200 — 위 셋을 채우면 그 언저리다. 덤으로, 그 논문이 fine-tuning
+# 에 쓴 실사진이 35개체 × 22장 = **770장**이라 1,200 은 그것을 넘긴다 —
+# 백본 마지막 블록을 녹이는 일이 "자료가 모자라서 안 된다" 가 아니게 되는
+# 첫 지점이다.
+#
+# **성적으로 검수하지 말 것.** 개체가 42 → 60 이 되면 문제 자체가 어려워져서
+# top-1 이 안 오르거나 내릴 수 있다. 그것은 뒷걸음이 아니다
+# (`HANDOFF` 의 `정답이 다른 두 판을 세로로 견주지 말 것`).
+GOAL = {
+    "individuals": 60,
+    "chips": 1200,
+    "per_individual": 10,
+    "days_per_individual": 2,
+}
+
+
+def dataset_state(goal=None):
+    """지금 자료가 목표 어디쯤인가. **세는 자리는 여기 하나다.**
+
+    화면(`/dataset`)과 뒷날 명령이 같은 함수를 부른다 — 두 벌로 두면 한쪽만
+    고쳐지고, 그때 어느 쪽 숫자가 맞는지 아무도 모른다 (`rules.py`·
+    `evaluate.py` 를 한 곳에 둔 것과 같은 이유다).
+
+    **날은 `items.json` 이 아니라 사진에서 읽는다.** 격자는 갈아 끼우는 것이라
+    (`FIN_REID`) 거기서 읽으면 격자를 바꿀 때마다 진척이 흔들린다.
+
+    **면은 반대로 격자에서 읽는다.** 분류기가 좌현·우현을 따로 배울 때 보는
+    것이 격자의 `facing` 이고(`reid_chips --auto-facing` 이 제안한 것까지
+    들어 있다), DB 의 것은 **사람이 누른 것만**이라 절반 넘게 비어 있다.
+    "실효는 면마다 반이다" 를 말하려는 칸이니 **모델이 보는 쪽**을 세야 한다.
+    격자에 없으면 DB 로 물러서고, 그래도 모르면 `unknown` 으로 따로 센다 —
+    좌·우 합이 조각 수와 안 맞는 채로 두면 어디가 빈 것인지 안 보인다.
+    """
+    import json
+    from collections import defaultdict
+
+    from django.conf import settings
+
+    from finseg import rules
+    from finseg.models import Box, Individual
+
+    g = dict(GOAL, **(goal or {}))
+    cat = catalog()
+    ids = [b for v in cat.values() for b in v]
+    day = dict(Box.objects.filter(id__in=ids).values_list("id", "image__obsdate"))
+    facing = {}
+    items = Path(settings.FIN_REID) / "items.json"
+    if items.exists():
+        for it in json.loads(items.read_text())["items"]:
+            if it.get("facing"):
+                facing[int(it["id"])] = it["facing"]
+    rest = [b for b in ids if b not in facing]
+    if rest:
+        for b in Box.objects.filter(id__in=rest).prefetch_related("reviews", "masks"):
+            facing[b.id] = rules.resolve(b).get("facing") or ""
+    names = dict(Individual.objects.values_list("id", "name"))
+    nicks = dict(Individual.objects.values_list("id", "nickname"))
+
+    rows = []
+    for ind, boxes in cat.items():
+        days = {str(day.get(b)) for b in boxes if day.get(b)}
+        side = defaultdict(int)
+        for b in boxes:
+            side[facing.get(b, "")] += 1
+        rows.append({
+            "id": ind, "name": names.get(ind, f"#{ind}"),
+            "nick": nicks.get(ind, ""),
+            "n": len(boxes), "days": len(days),
+            "left": side["left"], "right": side["right"],
+            "unknown": len(boxes) - side["left"] - side["right"],
+            "need_chips": max(0, g["per_individual"] - len(boxes)),
+            "need_days": max(0, g["days_per_individual"] - len(days)),
+        })
+    # **아직 모자란 것 중 가장 조금 모자란 것부터.** 이 화면이 대시보드로
+    # 끝나면 보고 나서 무엇을 할지는 여전히 사람이 정해야 한다 — 문턱에
+    # 가장 가까운 개체를 위에 놓으면 그대로 다음에 할 일 목록이 된다.
+    rows.sort(key=lambda r: (
+        not (r["need_chips"] or r["need_days"]),        # 다 된 것은 아래로
+        r["need_chips"] + r["need_days"] * 3,           # 날이 더 비싸다
+        -r["n"]))
+    return {
+        "goal": g,
+        "rows": rows,
+        "n_ind": len(rows),
+        "n_chip": sum(r["n"] for r in rows),
+        "at_chips": sum(1 for r in rows if not r["need_chips"]),
+        "at_days": sum(1 for r in rows if not r["need_days"]),
+        "at_both": sum(1 for r in rows if not (r["need_chips"] or r["need_days"])),
+        "short_chips": sum(r["need_chips"] for r in rows),
+        "n_unknown": sum(r["unknown"] for r in rows),
+    }
 
 
 def catalog(as_of=None):

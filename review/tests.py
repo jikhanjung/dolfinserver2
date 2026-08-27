@@ -1958,6 +1958,91 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class DatasetStateTests(TestCase):
+    """**아직 안 붙인 것을 보는 자리.** 세는 것은 `reid.dataset_state()` 하나다 —
+    화면이 제 나름대로 세면 나중에 명령으로 잴 때 숫자가 갈리고, 그때 어느 쪽이
+    맞는지 아무도 모른다."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.boxes = []
+        for i, (d, fac) in enumerate([("2016-03-15", "left"),
+                                      ("2016-03-15", "left"),
+                                      ("2017-05-02", "right")]):
+            img = Image.objects.create(path=f"{i}.JPG", width=100, height=100,
+                                       obsdate=date.fromisoformat(d))
+            self.boxes.append(Box.objects.create(image=img, x1=0, y1=0, x2=60,
+                                                 y2=60, source="yolov5"))
+        self.ind = Individual.objects.create(name="JTA001", nickname="제돌이")
+        for b in self.boxes:
+            Identification.objects.create(box=b, individual=self.ind)
+        (self.tmp / "items.json").write_text(json.dumps({"items": [
+            {"id": b.id, "facing": f}
+            for b, f in zip(self.boxes, ["left", "left", "right"])]}),
+            encoding="utf-8")
+
+    def state(self, **goal):
+        with self.settings(FIN_REID=self.tmp):
+            return reid.dataset_state(goal or None)
+
+    def test_it_counts_what_is_there(self):
+        d = self.state()
+        self.assertEqual((d["n_ind"], d["n_chip"]), (1, 3))
+        self.assertEqual(d["rows"][0]["days"], 2)
+
+    def test_the_side_comes_from_the_grid_not_the_judgments(self):
+        """분류기가 면을 가를 때 보는 것이 격자다 — DB 의 `facing` 은 사람이
+        누른 것만이라 절반 넘게 비어 있고, 그것으로 세면 좌·우 합이 조각 수와
+        안 맞는다."""
+        r = self.state()["rows"][0]
+        self.assertEqual((r["left"], r["right"], r["unknown"]), (2, 1, 0))
+
+    def test_what_the_grid_does_not_know_is_counted_apart(self):
+        """좌·우 합이 조각 수와 안 맞는 채로 두면 **어디가 빈 것인지 안 보인다.**"""
+        (self.tmp / "items.json").write_text('{"items": []}', encoding="utf-8")
+        r = self.state()["rows"][0]
+        self.assertEqual((r["left"], r["right"], r["unknown"]), (0, 0, 3))
+
+    def test_it_says_how_far_from_the_goal(self):
+        d = self.state(per_individual=10, days_per_individual=2)
+        self.assertEqual(d["rows"][0]["need_chips"], 7)
+        self.assertEqual(d["rows"][0]["need_days"], 0)      # 2일이라 됐다
+        self.assertEqual(d["short_chips"], 7)
+
+    def test_a_one_day_individual_is_short_a_day(self):
+        """하루뿐인 개체는 날로 가르면 배우는 쪽이나 재는 쪽 **한 곳에만**
+        들어간다 — 많고 적음이 아니라 되나 안 되나다."""
+        other = Individual.objects.create(name="JTA002")
+        Identification.objects.create(box=self.boxes[0], individual=other)
+        row = [r for r in self.state()["rows"] if r["name"] == "JTA002"][0]
+        self.assertEqual(row["need_days"], 1)
+
+    def test_the_ones_still_short_come_first(self):
+        """보고 나서 무엇을 할지 사람이 또 정해야 하면 대시보드로 끝난다."""
+        done = Individual.objects.create(name="JTA009")
+        for i in range(10):
+            img = Image.objects.create(path=f"d{i}.JPG", width=10, height=10,
+                                       obsdate=date(2018, 1, 1 + i % 2))
+            b = Box.objects.create(image=img, x1=0, y1=0, x2=9, y2=9,
+                                   source="yolov5")
+            Identification.objects.create(box=b, individual=done)
+        names = [r["name"] for r in self.state()["rows"]]
+        self.assertEqual(names, ["JTA001", "JTA009"])   # 모자란 것이 위
+
+    def test_the_page_is_only_on_the_reid_seat(self):
+        """`Identification` 의 주인이 하나라 그것을 보는 자리도 거기다."""
+        from review.urls import patterns_for
+        self.assertIn("dataset", {p.name for p in patterns_for("reid")})
+        self.assertNotIn("dataset", {p.name for p in patterns_for("work")})
+
+    def test_the_menu_offers_it(self):
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            html = self.client.get("/dataset").content.decode()
+        self.assertIn('href="/dataset"', html)
+        self.assertIn("자료 상태", html)
+
+
 class ClientIpTests(TestCase):
     """**클라이언트가 적어 보낸 값을 믿지 않는다.**
 
@@ -2038,6 +2123,41 @@ class IdentificationStampTests(TestCase):
     def test_the_time_was_already_there(self):
         """`at` 은 `auto_now_add` 다 — 새로 붙인 것은 자리뿐이다."""
         self.assertIsNotNone(self.assign(REMOTE_ADDR="10.0.0.7").at)
+
+
+class ReviewStampTests(TestCase):
+    """검토 판정에도 같은 것을 남긴다. `Review` 의 주인은 **작업 자리**인데,
+    그렇지 않은 데서 들어온 줄이 있으면 여기서 보인다."""
+
+    def setUp(self):
+        img = Image.objects.create(path="a.JPG", obsdate=date(2016, 3, 15),
+                                   width=100, height=100)
+        self.box = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                      source="yolov5")
+
+    def post(self, n=1, **meta):
+        self.client.post("/api/review", json.dumps({"items": [
+            {"box_id": self.box.id, "cls": "fin", "verdict": "ok",
+             "edges": "both", "facing": "left"} for _ in range(n)]}),
+            content_type="application/json", **meta)
+
+    def test_it_writes_down_where_it_came_from(self):
+        self.post(HTTP_X_REAL_IP="203.0.113.9")
+        self.assertEqual(Review.objects.latest("id").ip, "203.0.113.9")
+
+    def test_a_spoofed_chain_does_not_get_written_down(self):
+        self.post(HTTP_X_FORWARDED_FOR="1.2.3.4, 203.0.113.9")
+        self.assertEqual(Review.objects.latest("id").ip, "203.0.113.9")
+
+    def test_one_save_is_one_place_and_one_moment(self):
+        """한 번의 저장이 판정 여럿을 만드는데, 그 여럿은 같은 사람이 같은
+        자리에서 같은 순간에 누른 것이다 — 줄마다 다시 읽을 것이 아니다."""
+        self.post(n=3, HTTP_X_REAL_IP="203.0.113.9")
+        self.assertEqual({r.ip for r in Review.objects.all()}, {"203.0.113.9"})
+
+    def test_an_unknown_place_is_left_empty(self):
+        self.post(REMOTE_ADDR="?")
+        self.assertIsNone(Review.objects.latest("id").ip)
 
 
 class CatalogTests(TestCase):

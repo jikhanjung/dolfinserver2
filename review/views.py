@@ -361,6 +361,10 @@ def save(request):
     valid_facing = {f for f, _ in FACING}
     ids = [it["box_id"] for it in body.get("items", [])]
     crops = {c.box_id: c for c in Crop.objects.filter(box_id__in=ids)}
+    # **한 번만 읽는다** — 한 번의 저장이 판정 여럿을 만드는데, 그 여럿은 같은
+    # 사람이 같은 자리에서 같은 순간에 누른 것이다. 때(`at`)는 모델이 찍는다.
+    from review import gate
+    ip = gate.recordable_ip(request)
     # **마스크가 없는 상자에는 `verdict` 를 안 적는다.** "이 마스크가 맞나" 는
     # 마스크가 있어야 물을 수 있는 말이다 (`models.py` 의 "엔진에 딸린 판정").
     # 새 검출기가 들인 상자는 아직 윤곽이 없고, 거기서 사람이 답한 것은
@@ -414,7 +418,8 @@ def save(request):
             box_id=it["box_id"], mask_id=it.get("mask_id"), cls=cls,
             verdict=verdict, edges=edges, base_line=base_str, polygon=poly_str,
             base_partial=partial, facing=facing,
-            reviewer=request.user if request.user.is_authenticated else None)
+            reviewer=request.user if request.user.is_authenticated else None,
+            ip=ip)
         n += 1
     return JsonResponse({"saved": n, "progress": dict(rules.progress())})
 
@@ -580,6 +585,42 @@ def catalog(request):
         "n_ind": len(rows),
         "n_fin": sum(r["n"] for r in rows),
         "n_cross": sum(1 for r in rows if r["days"] >= 2),
+    })
+
+
+def dataset(request):
+    """**자료가 목표 어디쯤인가, 그리고 다음에 무엇을 할까.**
+
+    `/catalog` 은 이미 붙인 것을 보는 자리이고 여기는 **아직 안 붙인 것을 보는
+    자리**다. 둘 다 같은 자료를 보지만 묻는 것이 반대다.
+
+    세는 것은 `reid.dataset_state()` 한 곳이다 — 화면이 제 나름대로 세면
+    나중에 명령으로 잴 때 숫자가 갈리고, 그때 어느 쪽이 맞는지 아무도 모른다.
+
+    **목록이 다음에 할 일 순서로 선다.** 문턱에 가장 가까운 개체가 위다 —
+    보고 나서 무엇을 할지 사람이 또 정해야 하면 대시보드로 끝난다.
+    """
+    from finseg import reid
+
+    d = reid.dataset_state()
+    g = d["goal"]
+
+    def bar(now, want):
+        return {"now": now, "want": want,
+                "pct": min(100, round(100 * now / want)) if want else 100}
+
+    return render(request, "review/dataset.html", {
+        **d,
+        "bars": [
+            ("개체", bar(d["n_ind"], g["individuals"]),
+             "개체군 100~120의 절반은 넘겨야 카탈로그다"),
+            ("조각", bar(d["n_chip"], g["chips"]),
+             "아래 둘을 채우면 그 언저리다 — 논문이 fine-tuning 에 쓴 실사진이 770장"),
+            (f"{g['per_individual']}장 이상인 개체", bar(d["at_chips"], d["n_ind"]),
+             "4~9장 11.1% → 10~19장 30.6% — 문턱이 10에 있다"),
+            (f"{g['days_per_individual']}일 이상인 개체", bar(d["at_days"], d["n_ind"]),
+             "하루뿐인 개체는 날로 가르면 한쪽에만 들어가 안 쓰인다"),
+        ],
     })
 
 

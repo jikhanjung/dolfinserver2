@@ -350,6 +350,15 @@ class Review(models.Model):
     reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
                                  null=True, blank=True, related_name="reviews")
     at = models.DateTimeField(auto_now_add=True)
+    # **어디서 눌렀나.** `Identification.ip` 와 같은 규칙이다 — `reviewer` 는
+    # 늘 비어 있고(로그인이 없다) 문은 코드 하나라, 판정에 사람을 가리키는
+    # 것이 이것뿐이다. 이쪽은 자리도 함께 말한다: `Review` 의 주인은 작업
+    # 자리(m710q)인데, 그렇지 않은 데서 들어온 줄이 있으면 여기서 보인다.
+    #
+    # 믿을 수 있는 값만 넣고(`gate.recordable_ip`) 못 알아내면 비운다 —
+    # 빈 칸이 곧 "못 알아냈다" 다.
+    ip = models.GenericIPAddressField(null=True, blank=True,
+                                      help_text="판정을 넣은 자리 (`gate.client_ip`)")
 
     class Meta:
         ordering = ["-id"]

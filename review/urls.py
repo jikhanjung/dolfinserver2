@@ -41,6 +41,7 @@ reid = [
     path("", views.reid, name="home"),
     path("reid", views.reid, name="reid"),
     path("catalog", views.catalog, name="catalog"),
+    path("dataset", views.dataset, name="dataset"),
     path("api/reid/box", views.reid_box, name="reid_box"),
     path("api/reid/groups", views.reid_groups, name="reid_groups"),
     path("api/reid/suggest", views.reid_suggest, name="reid_suggest"),

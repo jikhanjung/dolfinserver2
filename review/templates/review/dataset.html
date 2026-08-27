@@ -1,0 +1,118 @@
+{% comment %}
+**아직 안 붙인 것을 보는 자리.** `/catalog` 은 이미 붙인 것을 보고 여기는 그
+반대를 본다 — 같은 자료인데 묻는 것이 반대다.
+
+세는 것은 `reid.dataset_state()` 한 곳이다. 화면이 제 나름대로 세면 나중에
+명령으로 잴 때 숫자가 갈리고, 그때 어느 쪽이 맞는지 아무도 모른다.
+{% endcomment %}<!doctype html>
+<meta charset="utf-8">
+<title>자료 상태</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
+          --dim:#8b98a5; --ok:#4ade80; --warn:#fbbf24; --sel:#60a5fa; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.6 "IBM Plex Sans KR", system-ui, sans-serif }
+  header { position:sticky; top:0; z-index:5; background:var(--bg);
+           border-bottom:1px solid var(--line); padding:9px 14px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap }
+  h1 { font-size:15px; margin:0; font-weight:600 }
+  a { color:var(--sel) }
+  .stat { color:var(--dim); font-size:12.5px }
+  .stat b { color:var(--ink) }
+  main { padding:14px; max-width:1100px }
+  h2 { font-size:13.5px; margin:22px 0 9px; font-weight:600 }
+  h2 .sub { color:var(--dim); font-size:12px; font-weight:400; margin-left:8px }
+
+  /* 진척 넷 */
+  .bars { display:grid; gap:10px }
+  .b { border:1px solid var(--line); border-radius:8px; background:var(--panel);
+       padding:9px 12px }
+  .b .top { display:flex; gap:10px; align-items:baseline }
+  .b .nm { font-weight:600; font-size:13px }
+  .b .num { margin-left:auto; font:12.5px "IBM Plex Mono", monospace;
+            color:var(--dim) }
+  .b .num b { color:var(--ink); font-size:14px }
+  .track { height:7px; background:#0a0e13; border-radius:999px; margin-top:7px;
+           overflow:hidden }
+  .fill { height:100%; background:var(--sel); border-radius:999px }
+  .b.done .fill { background:var(--ok) }
+  .b .why { color:var(--dim); font-size:11.5px; margin-top:5px }
+
+  /* 다음에 할 일 */
+  table { border-collapse:collapse; width:100%; font-size:12.5px }
+  th, td { text-align:left; padding:4px 9px; border-bottom:1px solid var(--line) }
+  th { color:var(--dim); font-weight:400; font-size:11.5px }
+  td.num, th.num { text-align:right; font-family:"IBM Plex Mono", monospace }
+  tr.done { opacity:.45 }
+  .need { color:var(--warn) }
+  .need.day { color:#ff9a9a }          /* 날은 많고 적음이 아니라 되나 안 되나 */
+  .nick { color:var(--dim) }
+  .note { color:var(--dim); font-size:12px; margin:8px 0 0 }
+  .note b { color:var(--ink) }
+</style>
+
+{% include "review/_nav.html" with here="dataset" %}
+<header>
+  <h1>자료 상태</h1>
+  <span class="stat">개체 <b>{{ n_ind }}</b> / {{ goal.individuals }} ·
+    조각 <b>{{ n_chip }}</b> / {{ goal.chips }} ·
+    둘 다 채운 개체 <b>{{ at_both }}</b></span>
+  <span style="flex:1"></span>
+  <span class="stat"><a href="/reid">분류하러 가기</a> · <a href="/catalog">카탈로그</a></span>
+</header>
+
+<main>
+<h2>1차 목표<span class="sub">넷 다 재어 둔 것에서 나왔다 — 정해 놓고 시작한 것이 아니다</span></h2>
+<div class="bars">
+  {% for nm, b, why in bars %}
+    <div class="b {% if b.pct >= 100 %}done{% endif %}">
+      <div class="top">
+        <span class="nm">{{ nm }}</span>
+        <span class="num"><b>{{ b.now }}</b> / {{ b.want }}</span>
+      </div>
+      <div class="track"><div class="fill" style="width:{{ b.pct }}%"></div></div>
+      <div class="why">{{ why }}</div>
+    </div>
+  {% endfor %}
+</div>
+
+<p class="note">지금 개체마다 {{ goal.per_individual }}장을 채우는 데
+  <b>조각 {{ short_chips }}장</b>이 모자란다.
+  <b>성적으로 검수하지 않는다</b> — 개체가 늘면 문제 자체가 어려워져 top-1 이
+  안 오르거나 내릴 수 있고, 그것은 뒷걸음이 아니다.</p>
+
+<h2>다음에 할 일<span class="sub">문턱에 가장 가까운 개체부터. 다 채운 것은 아래로</span></h2>
+<table>
+  <tr>
+    <th>개체</th><th class="num">조각</th><th class="num">날</th>
+    <th class="num">좌</th><th class="num">우</th><th class="num">면 모름</th>
+    <th>모자란 것</th>
+  </tr>
+  {% for r in rows %}
+    <tr class="{% if not r.need_chips and not r.need_days %}done{% endif %}">
+      <td>{{ r.name }}{% if r.nick %} <span class="nick">{{ r.nick }}</span>{% endif %}</td>
+      <td class="num">{{ r.n }}</td>
+      <td class="num">{{ r.days }}</td>
+      <td class="num">{{ r.left }}</td>
+      <td class="num">{{ r.right }}</td>
+      <td class="num">{% if r.unknown %}<span class="need">{{ r.unknown }}</span>{% else %}·{% endif %}</td>
+      <td>
+        {% if r.need_days %}<span class="need day">다른 날 {{ r.need_days }}일</span>{% endif %}
+        {% if r.need_chips %}<span class="need">조각 {{ r.need_chips }}장</span>{% endif %}
+        {% if not r.need_chips and not r.need_days %}—{% endif %}
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="stat">아직 상자에 든 지느러미가 없다 —
+      <a href="/reid">/reid</a> 에서 넣을 것.</td></tr>
+  {% endfor %}
+</table>
+
+<p class="note"><b>좌·우를 함께 본다</b> — 분류기가 면마다 따로 배우므로
+  (`reid.normalize` 가 한쪽을 거울처럼 뒤집는다) 한 개체에서 한쪽만 모으면
+  실효는 그 한쪽뿐이다. 새 조각을 붙일 때는 그 개체의 <b>주된 면</b>을 채우는
+  쪽이 값이 크다. 면은 <b>격자에서 읽는다</b> — 분류기가 면을 가를 때 보는
+  것이 그것이고(`--auto-facing` 의 제안까지 든다), DB 의 것은 사람이 누른
+  것만이라 절반 넘게 비어 있다. 그래도 모르는 것이 {{ n_unknown }}장 있다.</p>
+</main>
