@@ -800,9 +800,16 @@ def reid_assign(request):
     if not box_ids:
         return JsonResponse({"error": "고른 것이 없다"}, status=400)
     user = request.user if request.user.is_authenticated else None
+    # **어디서 붙였나를 함께 남긴다.** `reviewer` 는 늘 비어 있다 — 이 앱에
+    # `login_required` 가 하나도 없고 문은 코드 하나다(`review/gate.py`).
+    # 그래서 **누가 했는지를 가리키는 것이 이것뿐**이고, 자리가 둘로 갈린
+    # 뒤로는 "이 판정이 정말 re-ID 자리에서 나왔나" 를 되짚을 자도 이것뿐이다.
+    # 때(`at`)는 모델이 `auto_now_add` 로 이미 찍는다.
+    from review import gate
+    ip = gate.recordable_ip(request)
     Identification.objects.bulk_create([
         Identification(box_id=b, individual=ind, source=body.get("source", "hand"),
-                       reviewer=user) for b in box_ids])
+                       reviewer=user, ip=ip) for b in box_ids])
     n = Identification.objects.filter(individual=ind).values("box").distinct().count() \
         if ind else 0
     return JsonResponse({"saved": len(box_ids),

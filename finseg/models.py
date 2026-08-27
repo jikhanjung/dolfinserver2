@@ -445,6 +445,18 @@ class Identification(models.Model):
                                  on_delete=models.PROTECT, null=True, blank=True,
                                  related_name="identifications")
     at = models.DateTimeField(auto_now_add=True)
+    # **어디서 붙였나.** `reviewer` 가 늘 비어 있어서(이 앱에는 `login_required`
+    # 가 하나도 없고 문은 코드 하나다 — `review/gate.py`) **누가 했는지를
+    # 가리키는 것이 지금 이것뿐**이다. 자리가 둘로 갈린 뒤로는 특히 그렇다:
+    # 개체 판정은 GCP 에서만 만들어지는데, 그것이 정말 그랬는지를 되짚을 자가
+    # 없었다.
+    #
+    # **믿을 수 있는 값만 넣는다** (`gate.client_ip`) — 클라이언트가 적어 보내는
+    # `X-Forwarded-For` 의 앞쪽이 아니라 nginx 가 적은 자리를 읽는다.
+    # 못 알아내면 비운다. **`?` 같은 자리표시를 넣지 않는다** — 그러면 "모른다"
+    # 와 "알아냈는데 이 값이다" 가 한 칸에서 섞인다.
+    ip = models.GenericIPAddressField(null=True, blank=True,
+                                      help_text="판정을 넣은 자리 (`gate.client_ip`)")
 
     class Meta:
         ordering = ["-id"]

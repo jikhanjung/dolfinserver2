@@ -28,9 +28,48 @@ LOCK_SECONDS = 15 * 60
 
 
 def client_ip(request):
+    """누가 두드렸나. **클라이언트가 적어 보낸 값을 믿지 않는다.**
+
+    앞에 nginx 가 있어서 `REMOTE_ADDR` 은 도커 브리지 주소(`172.x`)다. 그래서
+    헤더를 보아야 하는데, `X-Forwarded-For` 는 **클라이언트가 먼저 적어 보낼 수
+    있는 자리**다. 전에 그 **맨 앞**을 썼는데 거기가 바로 그 적어 보낸 값이라,
+    헤더 한 줄로 잠금(`note_failure`)을 피하고 기록에 아무 주소나 남길 수 있었다.
+
+    - `X-Real-IP` — nginx 가 `$remote_addr` 로 **덮어쓴다**(`proxy_set_header`).
+      클라이언트가 적어 보내도 지워지므로 이것이 가장 믿을 만하다
+    - `X-Forwarded-For` 의 **맨 뒤** — nginx 가 `$proxy_add_x_forwarded_for` 로
+      제가 본 주소를 **뒤에 덧붙인다.** 앞쪽은 남이 적은 것일 수 있어도
+      맨 뒤 하나는 nginx 가 적은 것이다
+    - `REMOTE_ADDR` — nginx 가 없는 자리(`runserver`)에서는 이것이 맞다
+
+    **두 nginx.conf 가 둘 다 저 두 헤더를 건다** (`deploy/nginx.conf` ·
+    `deploy/gcp/nginx.conf`). 앞에 프록시를 하나 더 놓게 되면 여기를 함께 볼 것.
+    """
+    real = (request.META.get("HTTP_X_REAL_IP") or "").strip()
+    if real:
+        return real
     fwd = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    return (fwd.split(",")[0].strip() if fwd
-            else request.META.get("REMOTE_ADDR", "?"))
+    if fwd:
+        return fwd.rsplit(",", 1)[-1].strip()
+    return request.META.get("REMOTE_ADDR", "?")
+
+
+def recordable_ip(request):
+    """자료에 남길 주소. **말이 되는 것만 남기고 아니면 `None`.**
+
+    `client_ip` 은 잠금에 쓰려고 못 알아내면 `"?"` 를 낸다 — 캐시 열쇠로는
+    그것으로 충분하지만 **자료에 넣을 값은 아니다.** `GenericIPAddressField`
+    가 그런 값을 SQLite 에서는 그대로 받아 버려서(검사는 `full_clean` 때만
+    돈다), 나중에 세는 쪽이 `"?"` 를 주소 하나로 센다.
+
+    빈 칸이 곧 **"못 알아냈다"** 이고, 그것이 자리표시를 넣는 것보다 낫다.
+    """
+    import ipaddress
+    v = client_ip(request)
+    try:
+        return str(ipaddress.ip_address(v))
+    except ValueError:
+        return None
 
 
 def locked_for(request):

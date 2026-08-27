@@ -1958,6 +1958,88 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class ClientIpTests(TestCase):
+    """**클라이언트가 적어 보낸 값을 믿지 않는다.**
+
+    앞에 nginx 가 있어 `REMOTE_ADDR` 은 도커 브리지 주소다. 그래서 헤더를
+    읽어야 하는데 `X-Forwarded-For` 는 **누구나 먼저 적어 보낼 수 있는 자리**라,
+    전에 그 맨 앞을 쓰던 것은 헤더 한 줄로 잠금을 피하고 기록에 아무 주소나
+    남길 수 있다는 뜻이었다.
+    """
+
+    def req(self, **meta):
+        from django.test import RequestFactory
+        return RequestFactory().get("/", **meta)
+
+    def test_the_header_nginx_overwrites_wins(self):
+        """nginx 는 `X-Real-IP` 를 `$remote_addr` 로 **덮어쓴다** — 클라이언트가
+        적어 보낸 것은 거기서 지워진다."""
+        from review import gate
+        r = self.req(HTTP_X_REAL_IP="203.0.113.9",
+                     HTTP_X_FORWARDED_FOR="1.2.3.4", REMOTE_ADDR="172.18.0.5")
+        self.assertEqual(gate.client_ip(r), "203.0.113.9")
+
+    def test_the_forwarded_chain_is_read_from_the_back(self):
+        """`$proxy_add_x_forwarded_for` 는 제가 본 주소를 **뒤에 덧붙인다.**
+        앞쪽은 남이 적은 것일 수 있어도 맨 뒤 하나는 nginx 가 적은 것이다."""
+        from review import gate
+        r = self.req(HTTP_X_FORWARDED_FOR="9.9.9.9, 203.0.113.9",
+                     REMOTE_ADDR="172.18.0.5")
+        self.assertEqual(gate.client_ip(r), "203.0.113.9")
+
+    def test_without_a_proxy_the_peer_is_the_answer(self):
+        """`runserver` 앞에는 nginx 가 없다."""
+        from review import gate
+        self.assertEqual(gate.client_ip(self.req(REMOTE_ADDR="10.0.0.7")), "10.0.0.7")
+
+    def test_what_goes_into_the_data_must_be_an_address(self):
+        """빈 칸이 곧 **"못 알아냈다"** 다 — 자리표시를 넣으면 "모른다" 와
+        "알아냈는데 이 값이다" 가 한 칸에서 섞인다."""
+        from review import gate
+        # `client_ip` 이 잠금용으로 내는 `"?"` — 캐시 열쇠로는 되지만
+        # 자료 칸에는 못 넣는다. SQLite 는 검사 없이 받아 버린다
+        self.assertIsNone(gate.recordable_ip(self.req(REMOTE_ADDR="?")))
+        self.assertIsNone(gate.recordable_ip(self.req(HTTP_X_REAL_IP="어디선가")))
+        self.assertEqual(gate.recordable_ip(self.req(REMOTE_ADDR="10.0.0.7")),
+                         "10.0.0.7")
+
+
+class IdentificationStampTests(TestCase):
+    """판정에 **때와 자리**를 남긴다. `reviewer` 가 늘 비어 있어서(로그인이
+    없다) 누가 했는지를 가리키는 것이 이 둘뿐이다."""
+
+    def setUp(self):
+        img = Image.objects.create(path="a.JPG", obsdate=date(2016, 3, 15),
+                                   width=100, height=100)
+        self.box = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                      source="yolov5", conf=0.9)
+        self.ind = Individual.objects.create(name="JTA001")
+
+    def assign(self, **meta):
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            self.client.post("/api/reid/assign",
+                             json.dumps({"individual": self.ind.id,
+                                         "boxes": [self.box.id]}),
+                             content_type="application/json", **meta)
+        return Identification.objects.latest("id")
+
+    def test_it_writes_down_where_it_came_from(self):
+        self.assertEqual(self.assign(HTTP_X_REAL_IP="203.0.113.9").ip, "203.0.113.9")
+
+    def test_a_spoofed_chain_does_not_get_written_down(self):
+        """맨 앞을 읽던 때라면 `1.2.3.4` 가 남았다."""
+        self.assertEqual(
+            self.assign(HTTP_X_FORWARDED_FOR="1.2.3.4, 203.0.113.9").ip,
+            "203.0.113.9")
+
+    def test_an_unknown_place_is_left_empty(self):
+        self.assertIsNone(self.assign(REMOTE_ADDR="?").ip)
+
+    def test_the_time_was_already_there(self):
+        """`at` 은 `auto_now_add` 다 — 새로 붙인 것은 자리뿐이다."""
+        self.assertIsNotNone(self.assign(REMOTE_ADDR="10.0.0.7").at)
+
+
 class CatalogTests(TestCase):
     """카탈로그도 **여기서 못 가는 길은 안 낸다.**
 
