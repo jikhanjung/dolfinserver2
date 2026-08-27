@@ -2310,6 +2310,35 @@ class ReviewStampTests(TestCase):
         self.assertIsNone(Review.objects.latest("id").ip)
 
 
+class ReidGridDefaultsTests(TestCase):
+    """격자가 **찍힌 차례로** 열린다.
+
+    분류에 유리해서가 아니라 **가장 기본적인 정렬**이어서다 — 자료가 원래 그
+    순서로 있고, 무엇을 어디까지 봤는지 알 수 있는 순서도 이것뿐이다.
+
+    **기본값은 근거가 필요 없는 쪽이어야 한다.** `닮은 것끼리` 는 모델이 만든
+    순서라 그것을 기본으로 두면 화면이 말없이 그 순서를 믿으라고 하는 셈인데,
+    지금 그 근거가 없다.
+    """
+
+    def page(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "items.json").write_text('{"items": []}', encoding="utf-8")
+        with self.settings(FIN_REID=tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            return self.client.get("/reid").content.decode()
+
+    def test_the_first_choice_is_the_default(self):
+        html = self.page()
+        opts = re.findall(r'<option value="(\w+)">', html)
+        self.assertEqual(opts[0], "day", "첫 갈래가 곧 기본값이다")
+
+    def test_the_choice_is_remembered(self):
+        """볼 때마다 다시 고르게 하면 그것이 곧 안 쓰게 되는 이유가 된다 —
+        크기 슬라이더를 기억하는 것과 같다."""
+        self.assertIn('"finReid_" + id', self.page())
+
+
 class CatalogTests(TestCase):
     """카탈로그도 **여기서 못 가는 길은 안 낸다.**
 
