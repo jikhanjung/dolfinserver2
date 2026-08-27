@@ -19,6 +19,8 @@
   .stat { color:var(--dim); font-size:12.5px }
   .stat b { color:var(--ink) }
   input[type=range] { width:130px; vertical-align:middle }
+  select { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+           border-radius:5px; padding:2px 5px; font:12.5px inherit }
   main { padding:12px 14px 60px }
 
   .ind { border:1px solid var(--line); border-radius:8px; background:var(--panel);
@@ -34,7 +36,7 @@
   figure { margin:0; width:var(--fin) }
   figure img { display:block; width:100%; border-radius:5px;
                background:#070a0e; border:1px solid var(--line) }
-  figure img:hover { border-color:var(--sel) }
+  figure a[href] img:hover { border-color:var(--sel) }
   figcaption { font:11px "IBM Plex Mono", monospace; color:var(--dim);
                text-align:center; padding-top:2px }
   /* 날이 바뀌는 자리에 금을 긋는다 — 같은 날 연속 프레임이 한 덩이로 읽힌다 */
@@ -50,13 +52,23 @@
     <b>날을 건너뛴 개체 {{ n_cross }}</b></span>
   <span class="stat">크기
     <input type="range" id="sz" min="80" max="360" step="10" value="150"></span>
+  <span class="stat">정렬
+    <select id="sort">
+      <option value="days">날을 건너뛴 것부터</option>
+      <option value="n">장수가 많은 것부터</option>
+      <option value="name">이름순</option>
+      <option value="last">최근에 본 것부터</option>
+    </select></span>
   <span style="flex:1"></span>
-  <span class="stat"><a href="/reid">분류하러 가기</a> · 조각을 누르면 원본 사진</span>
+  <span class="stat"><a href="/reid">분류하러 가기</a>{% if fin_role != "reid" %} ·
+    조각을 누르면 원본 사진{% endif %}</span>
 </header>
 
 <main>
 {% for r in rows %}
-  <section class="ind {% if r.days < 2 %}one{% endif %}">
+  <section class="ind {% if r.days < 2 %}one{% endif %}"
+           data-n="{{ r.n }}" data-days="{{ r.days }}"
+           data-name="{{ r.name }}" data-last="{{ r.last }}">
     <h2>{{ r.name }}
       <span class="meta">{{ r.n }}장 ·
         <span class="days">날 {{ r.days }}</span>{% if r.span %} · {{ r.span }}{% endif %}</span>
@@ -65,7 +77,16 @@
       {% for f in r.fins %}
         <figure class="{% if f.id == r.rep %}rep{% endif %} {% if f.facing == 'right' %}side-r{% endif %}"
                 data-day="{{ f.day }}">
-          <a href="/photo/{{ f.id }}" title="상자 {{ f.id }} · {{ f.day }}">
+          {# **여기서 못 가는 길은 안 낸다** (`fin_role`). `/photo` 는 `work`
+             자리의 길이고 이 화면은 `reid` 자리에만 걸려 있어(`urls.py`)
+             **누르면 전부 404** 였다 — 누른 사람은 화면이 깨진 줄 알지, 이
+             자리가 그 일을 안 하기로 한 줄 모른다.
+
+             지우지 않고 역할로 가르는 것은, 뒷날 `/catalog` 이 `work` 에도
+             걸리면 그때 이 길이 **저절로 되살아나야** 하기 때문이다.
+             `href` 없는 `<a>` 는 링크가 아니라 그냥 글이다 — 손 모양 커서도
+             안 나오고 눌리지도 않으면서 `title` 은 그대로 뜬다. #}
+          <a {% if fin_role != "reid" %}href="/photo/{{ f.id }}" {% endif %}title="상자 {{ f.id }} · {{ f.day }}">
             <img loading="lazy" src="/reid/chip/{{ f.id }}.png" alt="{{ f.id }}"></a>
           <figcaption>{{ f.day }}</figcaption>
         </figure>
@@ -89,4 +110,50 @@
   const sz = document.getElementById('sz');
   sz.oninput = () => document.documentElement.style.setProperty(
       '--fin', sz.value + 'px');
+
+  // ---- 고쳐 세우기 --------------------------------------------------------
+  //
+  // **서버로 다시 안 간다.** 같은 구획을 자리만 바꿔 다시 붙이면 이미 받은
+  // 조각 그림이 그대로 있다 — `?sort=` 로 다시 그리면 수백 장을 통째로 다시
+  // 받고, 카탈로그가 자랄수록 그것이 커진다.
+  //
+  // **이름 견주는 식은 `reid.html` 의 상자 목록과 같아야 한다.** 두 화면이
+  // 같은 개체를 다른 순서로 늘어놓으면 둘을 오갈 때마다 눈이 다시 찾는다.
+  // 거기 주석에 왜 로케일을 박고 갈래를 값으로 가르는지 적어 두었다.
+  const later = s => (/^[가-힣]/.test(s) ? 1 : 0);
+  const byName = (x, y) =>
+      later(x) - later(y) ||
+      x.localeCompare(y, 'ko', {numeric: true, sensitivity: 'base'});
+
+  // 둘째 자리를 늘 두는 이유 — 장수가 같은 개체가 흔한데(1장짜리가 여럿)
+  // 그때 순서가 아무렇게나 되면 고쳐 세울 때마다 목록이 흔들린다.
+  const HOW = {
+    days: (a, b) => b.days - a.days || b.n - a.n || byName(a.name, b.name),
+    n:    (a, b) => b.n - a.n || b.days - a.days || byName(a.name, b.name),
+    name: (a, b) => byName(a.name, b.name),
+    // **없는 날은 맨 뒤로.** 빈 문자열이 그냥 견주면 제일 앞에 온다
+    last: (a, b) => (b.last || '').localeCompare(a.last || '') ||
+                    b.days - a.days || byName(a.name, b.name),
+  };
+
+  const main = document.querySelector('main');
+  const sort = document.getElementById('sort');
+  const applySort = () => {
+    const how = HOW[sort.value] || HOW.days;
+    const rows = [...main.querySelectorAll('section.ind')].map(el => ({
+      el, n: +el.dataset.n, days: +el.dataset.days,
+      name: el.dataset.name || '', last: el.dataset.last || '',
+    }));
+    rows.sort(how);
+    // 한 번에 옮긴다 — 하나씩 붙이면 그때마다 배치가 다시 계산된다
+    const frag = document.createDocumentFragment();
+    rows.forEach(r => frag.appendChild(r.el));
+    main.appendChild(frag);
+    localStorage.setItem('finCatSort', sort.value);
+  };
+  // **기억해 둔다** — 크기 슬라이더와 같은 이유다. 볼 때마다 다시 고르게
+  // 하면 그것이 곧 안 쓰게 되는 이유가 된다.
+  const saved = localStorage.getItem('finCatSort');
+  if (saved && HOW[saved]) { sort.value = saved; applySort(); }
+  sort.onchange = applySort;
 </script>

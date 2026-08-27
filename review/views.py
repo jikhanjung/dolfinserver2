@@ -559,13 +559,21 @@ def catalog(request):
         rows.append({
             "id": ind, "name": names.get(ind, f"#{ind}"), "rep": reps.get(ind),
             "n": len(fins), "days": len(days),
+            # **마지막으로 본 날.** 화면이 `최근에 본 것부터` 로 고쳐 세울 때
+            # 쓴다 — `span` 에서 잘라 쓰게 두면 한 날짜뿐인 개체에서 갈린다
+            # (그때는 `~` 가 없다).
+            "last": days[-1] if days else "",
             "span": f"{days[0]} ~ {days[-1]}" if len(days) > 1 else
                     (days[0] if days else ""),
             "fins": [{"id": b, "day": str(day.get(b) or ""),
                       "facing": facing.get(b, "")} for b in fins],
         })
     # **날을 건너뛴 개체부터.** 그것이 re-ID 에 값을 하는 쪽이고, 한 날짜뿐인
-    # 개체는 아직 "그 날 그 무리" 이지 개체의 증거가 아니다
+    # 개체는 아직 "그 날 그 무리" 이지 개체의 증거가 아니다.
+    #
+    # 화면이 이것을 다른 순서로 고쳐 세울 수 있는데(`catalog.html` 의 `#sort`)
+    # **첫 그림은 서버가 이 순서로 낸다** — JS 가 늦거나 막혀도 뜻이 있는
+    # 순서로 보이고, 고쳐 세우는 것은 조각을 다시 받지 않는다.
     rows.sort(key=lambda r: (-r["days"], -r["n"]))
     return render(request, "review/catalog.html", {
         "rows": rows,

@@ -1958,6 +1958,46 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class CatalogTests(TestCase):
+    """카탈로그도 **여기서 못 가는 길은 안 낸다.**
+
+    `/photo` 는 `work` 자리의 길인데 `/catalog` 은 `reid` 자리에만 걸려 있어
+    (`urls.patterns_for`) 조각을 누르면 **전부 404** 였다. `_nav.html`·홈 카드·
+    우클릭 차림표에 이미 건 규칙을 **네 번째 자리에서 또 빠뜨린 것**이다.
+    """
+
+    def setUp(self):
+        img = Image.objects.create(path="a.JPG", obsdate=date(2016, 3, 15),
+                                   width=100, height=100)
+        self.box = Box.objects.create(image=img, x1=0, y1=0, x2=60, y2=60,
+                                      source="yolov5", conf=0.9)
+        ind = Individual.objects.create(name="JTA001")
+        Identification.objects.create(box=self.box, individual=ind)
+
+    def page(self, role):
+        with self.settings(FIN_ROLE=role, ROOT_URLCONF="review.tests"):
+            return self.client.get("/catalog").content.decode()
+
+    def test_the_reid_seat_does_not_offer_the_photo_road(self):
+        self.assertNotIn(f'href="/photo/{self.box.id}"', self.page("reid"))
+
+    def test_it_still_says_which_box_and_which_day(self):
+        """길은 없어도 **무엇인지는 말한다** — 링크가 아니라 `title` 이 하던 일이다."""
+        self.assertIn(f'title="상자 {self.box.id} · 2016-03-15"', self.page("reid"))
+
+    def test_the_road_comes_back_where_it_exists(self):
+        """지우지 않고 역할로 가른 값 — 뒷날 `/catalog` 이 `work` 에도 걸리면
+        **저절로 되살아난다.**"""
+        self.assertIn(f'href="/photo/{self.box.id}"', self.page("work"))
+
+    def test_it_carries_the_last_day_for_the_screen_to_sort_by(self):
+        """화면이 `최근에 본 것부터` 로 고쳐 세울 때 쓴다. `span` 에서 잘라
+        쓰게 두면 한 날짜뿐인 개체에서 갈린다 — 그때는 `~` 가 없다."""
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            rows = self.client.get("/catalog").context["rows"]
+        self.assertEqual(rows[0]["last"], "2016-03-15")
+
+
 class TileStampTests(TestCase):
     """조각에 **찍힌 때**를 적는다. `날짜·시간순` 으로 세워 놓고도 **어디서
     끊기는지는 눈으로 못 본다** — 잇달아 찍은 것이 같은 개체인 자리가 많다."""
