@@ -104,7 +104,8 @@
       {% for f in r.fins %}
         <figure class="{% if f.id == r.rep %}rep{% endif %} {% if f.facing == 'right' %}side-r{% endif %}"
                 data-day="{{ f.day }}">
-          {# **여기서 못 가는 길은 안 낸다** (`fin_role`). `/photo` 는 `work`
+          {% comment %}
+             **여기서 못 가는 길은 안 낸다** (`fin_role`). `/photo` 는 `work`
              자리의 길이고 이 화면은 `reid` 자리에만 걸려 있어(`urls.py`)
              **누르면 전부 404** 였다 — 누른 사람은 화면이 깨진 줄 알지, 이
              자리가 그 일을 안 하기로 한 줄 모른다.
@@ -112,7 +113,8 @@
              지우지 않고 역할로 가르는 것은, 뒷날 `/catalog` 이 `work` 에도
              걸리면 그때 이 길이 **저절로 되살아나야** 하기 때문이다.
              `href` 없는 `<a>` 는 링크가 아니라 그냥 글이다 — 손 모양 커서도
-             안 나오고 눌리지도 않으면서 `title` 은 그대로 뜬다. #}
+             안 나오고 눌리지도 않으면서 `title` 은 그대로 뜬다.
+          {% endcomment %}
           <a {% if fin_role != "reid" %}href="/photo/{{ f.id }}" {% endif %}title="상자 {{ f.id }} · {{ f.day }}">
             <img loading="lazy" src="/reid/chip/{{ f.id }}.png" alt="{{ f.id }}"></a>
           <figcaption>{{ f.day }}</figcaption>

@@ -1958,6 +1958,34 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class TemplateCommentTests(SimpleTestCase):
+    """**Django 에서 `{# … #}` 는 한 줄짜리만 주석이다.**
+
+    템플릿 토크나이저의 `tag_re` 에 `re.DOTALL` 이 없어서 `.` 이 줄바꿈을 안
+    문다 — 여러 줄로 쓰면 주석으로 안 잡히고 **글자 그대로 페이지에 찍힌다.**
+    여러 줄은 `{% comment %}` 여야 한다.
+
+    이 저장소가 이것을 **두 번** 밟았다(`devlog/20260827_001` 8절, 그리고
+    `/catalog` 의 조각 주석 — 반복문 안이라 **563번** 찍혔고 페이지의 절반이
+    그것이었다). 눈으로는 잘 안 걸린다 — 편집기에서는 멀쩡한 주석으로 보이고
+    화면에서도 그냥 글자가 하나 더 있는 것처럼 보인다. **세어서 잡는다.**
+    """
+
+    def test_no_hash_comment_spans_lines(self):
+        import re
+        from pathlib import Path as P
+        bad = []
+        for p in sorted(P("review/templates").rglob("*.html")):
+            t = p.read_text(encoding="utf-8")
+            for m in re.finditer(r"\{#", t):
+                end = t.find("\n", m.start())
+                seg = t[m.start(): end if end != -1 else len(t)]
+                if "#}" not in seg:
+                    bad.append(f"{p}:{t[:m.start()].count(chr(10)) + 1}")
+        self.assertEqual(bad, [], "여러 줄 주석은 `{% comment %}` 로 쓸 것: "
+                                 + ", ".join(bad))
+
+
 class NewBoxRaceTests(TestCase):
     """**둘이 동시에 `새 상자` 를 눌러도 한 상자를 나눠 쓰지 않는다.**
 
