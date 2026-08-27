@@ -867,6 +867,85 @@ def decided(box_ids):
 # 차이다 — 파인 자리가 곧 notch 가고, 그 깊이가 곧 특징의 크기다.
 
 
+# ---- 밝기 경계로 스냅 --------------------------------------------------------
+#
+# **마스크는 넓이는 맞는데 경계가 notch 크기에서 어긋난다.** 분할 모델의 마스크는
+# prototype 격자(입력의 1/4 — 640 크롭이면 한 칸이 4px)에서 나오는데 진짜 notch 는
+# 크롭 6~16px 이라 **한 칸 반에서 네 칸**이다. `retina_masks` 가 640 으로 늘려
+# 저장하지만 **늘린다고 정보가 생기지 않는다.**
+#
+# 640 크롭에는 원본 화소가 다 들어 있으니(원본 ~286px 영역을 640으로 편 것),
+# 그 격자를 벗어나 **밝기 기울기가 가장 센 자리로 옮겨 붙인다.** 학습이 없다 —
+# 지느러미는 물 위의 검은 형체라 경계 대비가 세다.
+#
+# 실측(`devlog/20260827_003`): 뒷날 벡터가 되풀이되는 정도(AUC, 날을 건너뛴 짝)가
+# **0.527 → 0.625**. 그리고 이것으로 다시 잰 거칢으로 "notch 있는 것" 을 고르면
+# 날을 건너뛴 성적이 **단조롭게 오른다**(0.643 → 0.676) — 모델 마스크의 거칢으로
+# 고르면 같은 날만 오르고 날을 건너뛰면 안 오른다. **그 거칢은 notch 가 아니라
+# 마스크 잡음을 재고 있었다.**
+
+SNAP_SEARCH = 4.0     # 법선으로 훑을 거리(크롭 px). ±10 은 파도·반사로 뛰어 되레 나빠진다
+SNAP_STEP = 1.5       # 다시 샘플할 간격. 성기면 옮겨 봐야 notch 모양이 안 생긴다
+SNAP_MED = 3          # 튐을 거르는 중앙값 창(점 수)
+
+
+def snap_to_edge(pts, gray, search=SNAP_SEARCH, step=SNAP_STEP, med=SNAP_MED):
+    """폴리곤(크롭 좌표) → **밝기 경계에 붙인 폴리곤.**
+
+    각 점을 제 법선으로 훑어 밝기 기울기가 가장 센 자리로 옮긴다.
+
+    **먼저 촘촘히 다시 샘플한다.** 꼭짓점 간격이 크롭 15px 인데 notch 는
+    6~16px 이라, 점이 성기면 옮겨 봐야 notch 모양이 안 생긴다.
+
+    **평균이 아니라 중앙값으로 튐을 거른다.** 물보라·파도 마루·반사가 진짜
+    경계보다 센 자리가 있어 한 점만 튀는데, 그 튐은 모양으로는 notch 와
+    똑같다 — notch 를 재려는 판에 가짜 notch 를 만드는 셈이다. 그런데 5칸
+    **평균**(창 7.5px)을 쓰면 창이 notch 폭(6~16px)과 같은 크기라 **진짜
+    notch 도 함께 뭉갠다.** 중앙값은 한 점짜리 튐만 없애고 여러 점이 함께
+    들어간 계단은 남긴다 — notch 가 그 계단이다.
+    """
+    import cv2
+
+    p = np.asarray(pts, float)
+    if len(p) < 4 or gray is None:
+        return pts
+    # 고르게 다시 샘플 (닫힌 고리)
+    q = np.vstack([p, p[:1]])
+    t = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(q, axis=0).T))])
+    if t[-1] < 1e-6:
+        return pts
+    want = np.arange(0, t[-1], step)
+    p = np.stack([np.interp(want, t, q[:, 0]), np.interp(want, t, q[:, 1])], 1)
+
+    g = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.2)
+    gm = np.hypot(cv2.Sobel(g, cv2.CV_32F, 1, 0, 3), cv2.Sobel(g, cv2.CV_32F, 0, 1, 3))
+    H, W = gm.shape
+    d = np.roll(p, -1, 0) - np.roll(p, 1, 0)
+    L = np.hypot(*d.T)[:, None]
+    L[L < 1e-6] = 1.0
+    nrm = np.stack([-d[:, 1], d[:, 0]], 1) / L
+    best = np.zeros(len(p))
+    mx = None
+    for k, off in enumerate(np.arange(-search, search + 1e-6, 0.5)):
+        z = p + nrm * off
+        v = cv2.remap(gm, np.clip(z[:, 0], 0, W - 1).astype(np.float32)[None],
+                      np.clip(z[:, 1], 0, H - 1).astype(np.float32)[None],
+                      cv2.INTER_LINEAR)[0]
+        if mx is None:
+            mx = v.copy()
+            best[:] = off
+        else:
+            hit = v > mx
+            mx[hit] = v[hit]
+            best[hit] = off
+    if med >= 3:
+        h = med // 2
+        pad = np.r_[best[-h:], best, best[:h]]
+        best = np.median(np.stack([pad[i:i + len(best)] for i in range(med)]), 0)
+    out = p + nrm * best[:, None]
+    return [(float(x), float(y)) for x, y in out]
+
+
 def roughness(state, crop, n=256, smooth=0.08):
     """윤곽이 얼마나 **울퉁불퉁한가** → dict. 길이는 밑동 현 기준이다.
 

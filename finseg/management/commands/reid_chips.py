@@ -56,6 +56,22 @@ BACKBONES = {
 }
 
 
+def _gray(crops_dir, crop):
+    """크롭 한 장의 회색조. 없거나 못 읽으면 `None` — 부르는 쪽이 스냅을 건너뛴다.
+
+    **`reid.chip` 이 제 안에서 또 읽는다.** 한 상자에 두 번 읽는 셈인데, 거기는
+    PIL 로 색까지 읽고 여기는 회색조 하나라 합치려면 두 함수의 인자를 다 바꿔야
+    한다. 2,290상자에 크롭 읽기가 몇 분이라 **지금은 두 번 읽는 값이 그 얽힘보다
+    싸다** — 격자를 만 장 넘게 만들 때 다시 볼 것.
+    """
+    import cv2
+
+    f = Path(crops_dir) / crop.path
+    if not f.exists():
+        return None
+    return cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
+
+
 def _pca(E, d, fit=None):
     """주성분 d 개에 사영한다. `fit` 을 주면 **그 조각들로만 축을 잡고** 전부를
     사영한다.
@@ -95,6 +111,12 @@ class Command(BaseCommand):
                             "30,000 이 되었다 — 그대로 다시 만들면 사람이 이미 "
                             "분류한 조각 1,034장이 격자에서 사라진다")
         p.add_argument("--boxes", nargs="+", type=int, help="이 상자들만")
+        p.add_argument("--no-snap", dest="snap", action="store_false",
+                       help="**거칢(`rough`)을 스냅한 윤곽이 아니라 모델 마스크 "
+                            "그대로에서 잰다.** 옛 격자와 값을 맞춰 봐야 할 때만. "
+                            "기본은 스냅이다 — 마스크 그대로 재면 notch 가 아니라 "
+                            "마스크 잡음을 재고, 그 값으로 고르면 같은 날만 오르고 "
+                            "날을 건너뛰면 안 오른다 (`devlog/20260827_003`)")
         p.add_argument("--no-emb", action="store_true",
                        help="임베딩을 건너뛴다 (torch 가 없을 때)")
         p.add_argument("--backbone",
@@ -126,6 +148,11 @@ class Command(BaseCommand):
                             "77.1 → 75.3 으로 되레 내렸다). 화면에 쓸 것을 만들 "
                             "때는 안 줘도 된다 — 그때는 격자가 고정이라 전부로 "
                             "잡는 것이 맞다")
+        p.add_argument("--rough-only", action="store_true",
+                       help="**조각은 그대로 두고 거칢(`rough`)만 다시 잰다.** "
+                            "격자를 통째로 다시 만들 이유가 없다 — 고치는 것은 "
+                            "숫자 하나다. 화면의 `notch 깊은 것부터` 정렬이 "
+                            "그것으로 선다")
         p.add_argument("--overlay-only", action="store_true",
                        help="조각은 그대로 두고 **윤곽·밑동 좌표만** items.json 에 "
                             "덧쓴다 — 화면이 조각 위에 얹어 켜고 끈다")
@@ -146,6 +173,8 @@ class Command(BaseCommand):
             return self._emb_only(o, out, w)
         if o["overlay_only"]:
             return self._overlay_only(out, w)
+        if o["rough_only"]:
+            return self._rough_only(o, out, w)
         crops = {c.box_id: c for c in Crop.objects.all()}
         qs = Box.objects.prefetch_related("reviews", "masks").select_related("image")
         if o["boxes"]:
@@ -159,6 +188,8 @@ class Command(BaseCommand):
         reid.MIN_AREA = o["min_area"]
 
         why = Counter()
+        n_snap = 0
+        crops_dir = Path(o["crops"]) if o.get("crops") else Path(settings.FIN_CROPS)
         rows, chips, looks, curves = [], [], [], []
         for b in sorted(boxes, key=lambda x: x.id):
             st = rules.resolve(b)
@@ -186,9 +217,26 @@ class Command(BaseCommand):
             if c is None or look is None or not len(curve):
                 why["조각·곡선을 못 만들었다"] += 1
                 continue
+            # **거칢은 스냅한 윤곽에서 잰다.** 모델 마스크 그대로 재면 notch 가
+            # 아니라 마스크 잡음을 재게 된다 — 실측으로 그 값으로 "notch 있는
+            # 것" 을 고르면 **같은 날만 오르고 날을 건너뛰면 안 오른다**
+            # (`reid.snap_to_edge` 머리말 · `devlog/20260827_003`).
+            #
+            # **조각·곡선은 안 건드린다.** 그쪽까지 바꾸면 격자를 통째로 다시
+            # 만들어야 하고 화면이 쓰는 임베딩·분류기가 함께 흔들린다. 여기서
+            # 고치는 것은 `rough` 하나다.
+            r_st = st
+            if o["snap"]:
+                gray = _gray(crops_dir, crop)
+                if gray is not None:
+                    sp = reid.snap_to_edge(
+                        geometry.to_crop(geometry.loads(st["polygon"]), crop), gray)
+                    r_st = {**st,
+                            "polygon": geometry.dumps(geometry.to_orig(sp, crop))}
+                    n_snap += 1
             # `roughness` 는 못 재면 **None 을 돌려준다** — 0 으로 적으면
             # "매끈하다" 로 읽혀 정렬 맨 끝에 조용히 쌓인다
-            rough = reid.roughness(st, crop)
+            rough = reid.roughness(r_st, crop)
             # **윤곽과 밑동을 좌표로 함께 적는다** — 화면이 조각 위에 얹어
             # 켜고 끌 수 있게. 그림에 구우면 `chips/` 에도 선이 들어가 모델이
             # 그것을 배운다 (`reid.overlay` 머리말).
@@ -203,6 +251,11 @@ class Command(BaseCommand):
             chips.append(c); looks.append(look); curves.append(curve)
 
         w(f"\n조각 {len(rows):,} 개")
+        if o["snap"]:
+            w(f"  거칢을 **밝기 경계로 스냅한 윤곽**에서 쟀다 ({n_snap:,} 개)")
+        else:
+            w("  거칢을 **모델 마스크 그대로**에서 쟀다 (`--no-snap`) — "
+              "그 값은 notch 보다 마스크 잡음을 잰다")
         if why:
             w(f"  {'왜 빠졌나':<28}{'수':>7}")
             for k, v in why.most_common():
@@ -255,6 +308,75 @@ class Command(BaseCommand):
             np.savez_compressed(out / o["emb_name"], box_id=ids, facing=fac, emb=emb)
             w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
             self._chain(out, ids, fac, emb, rows, w)
+
+    def _rough_only(self, o, out, w):
+        """조각은 그대로 두고 **거칢(`rough`)만 다시 잰다.**
+
+        격자를 통째로 다시 만들 이유가 없다 — 고치는 것은 숫자 하나이고,
+        조각·곡선·임베딩은 그대로 쓴다. `--overlay-only` 와 같은 이유다.
+
+        **`facing` 은 격자가 적어 둔 것을 쓴다.** 거칢은 앞날/뒷날을 갈라 내는데
+        그 판단이 `facing` 을 타고, 그림은 그때 그 값으로 구워졌다. 여기서
+        `rules.resolve` 만 믿으면 `--auto-facing` 으로 짐작했던 것이 빈 값으로
+        돌아와 **앞뒤가 뒤바뀐 거칢을 적는다** (`_overlay_only` 가 같은 자리에서
+        격자 45%를 어긋나게 했다).
+        """
+        f = out / "items.json"
+        if not f.exists():
+            raise CommandError(f"{f} 가 없다 — 먼저 조각을 만들 것")
+        d = json.loads(f.read_text(encoding="utf-8"))
+        crops = {c.box_id: c for c in Crop.objects.all()}
+        crops_dir = Path(o["crops"]) if o.get("crops") else Path(settings.FIN_CROPS)
+        ids = [it["id"] for it in d["items"]]
+        boxes = {b.id: b for b in Box.objects.filter(id__in=ids)
+                 .prefetch_related("reviews", "masks")}
+        got = miss = moved = 0
+        was = []
+        for it in d["items"]:
+            b, crop = boxes.get(it["id"]), crops.get(it["id"])
+            r = None
+            if b and crop:
+                st = dict(rules.resolve(b))
+                st["facing"] = it.get("facing") or st.get("facing")
+                if st.get("polygon") and st.get("facing"):
+                    if o["snap"]:
+                        gray = _gray(crops_dir, crop)
+                        if gray is not None:
+                            sp = reid.snap_to_edge(
+                                geometry.to_crop(geometry.loads(st["polygon"]), crop),
+                                gray)
+                            st["polygon"] = geometry.dumps(
+                                geometry.to_orig(sp, crop))
+                    r = reid.roughness(st, crop)
+            old_v = it.get("rough")
+            new_v = round(float(r["rear_max"]), 4) if r else None
+            if old_v is not None and new_v is not None:
+                was.append((old_v, new_v))
+                moved += abs(new_v - old_v) > 1e-4
+            it["rough"] = new_v
+            got += r is not None
+            miss += r is None
+        f.write_text(json.dumps(d, ensure_ascii=False))
+        w(f"{f}  거칢을 {got:,}개 적었다" + (f" · 못 낸 것 {miss:,}" if miss else ""))
+        if was:
+            import numpy as np
+            a = np.array(was)
+            w(f"  중앙값 {np.median(a[:, 0]):.4f} → **{np.median(a[:, 1]):.4f}**"
+              f" · 값이 바뀐 것 {moved:,}/{len(was):,}")
+            # **정렬이 얼마나 뒤집히나를 함께 낸다.** 화면의 `notch 깊은 것부터`
+            # 가 이 값으로 서므로, 중앙값만 보고 "조금 바뀌었네" 하면 목록이
+            # 실제로 얼마나 다시 서는지를 못 본다.
+            #
+            # **등수 상관으로 낸다.** 처음에 "등수가 절반 넘게 움직인 것" 을
+            # 셌는데 7,910 중 126개라 안 바뀐 것처럼 보였다 — 문턱이 너무 세서
+            # 아무 말도 안 하는 자였다. 같은 자료에서 등수 상관은 0.79 이고,
+            # **위 25% 로 고르면 3분의 1이 갈린다.**
+            r1 = a[:, 0].argsort().argsort(); r2 = a[:, 1].argsort().argsort()
+            rho = float(np.corrcoef(r1, r2)[0, 1])
+            top = int(len(a) * 0.25)
+            A = set(np.argsort(-a[:, 0])[:top]); B = set(np.argsort(-a[:, 1])[:top])
+            w(f"  등수 상관 **{rho:.3f}** · 위 25% 가 겹치는 것 "
+              f"{len(A & B):,}/{top:,} ({len(A & B) / max(top, 1):.0%})")
 
     def _overlay_only(self, out, w):
         """조각은 그대로 두고 **윤곽·밑동 좌표만 덧쓴다.**
