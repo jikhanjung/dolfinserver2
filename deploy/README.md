@@ -77,6 +77,29 @@ cd /srv/dolfinserver2-test && docker compose up -d
 curl -s http://m710q:8086/healthz | python3 -m json.tool
 ```
 
+## 격자(`reid/<판>`)를 GCP 와 맞추기
+
+두 자리가 **같은 격자를 봐야 한다** — 조각·임베딩·분류기가 전부 `items.json` 의
+**차례**로 묶여 있어서다. 레인이 그것을 통째로 나른다.
+
+```bash
+deploy/gcp/from_work_to_reid.sh --derived     # `reid/` 를 rsync (`--delete`)
+```
+
+**값 하나만 고쳤을 때는 파일만 옮겨도 된다.** 차례가 안 바뀌었으면 임베딩과
+어긋날 일이 없다. 다만 **옮기기 전에 두 파일이 그 밖에는 같은지 확인한다** —
+칸별로 견줘서 달라진 칸이 고친 것 하나뿐이어야 한다.
+
+```bash
+ssh dolfinid 'cp /srv/dolfinserver2/reid/v3/items.json \
+                 /srv/dolfinserver2/reid/v3/items.before-<무엇>.json'   # 먼저 뜬다
+scp reid/v3/items.json dolfinid:/srv/dolfinserver2/reid/v3/items.json
+```
+
+2026-08-27 에 `rough` 를 스냅한 윤곽에서 다시 재고 이렇게 옮겼다 (중앙값
+0.0440 → 0.0468, 두 자리 다). **배포는 필요 없다** — 자료 파일이지 코드가
+아니고, 화면이 뜰 때 읽으므로 다음에 여는 사람부터 새 순서를 본다.
+
 ## 안내 화면 — `502` 도 받는다 (2026-08-27)
 
 `.guides/web/deployment.md` §6 이 정본이다. **깃발 파일 → 503 → 안내 화면**.
