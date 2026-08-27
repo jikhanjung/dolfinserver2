@@ -105,6 +105,8 @@ python manage.py import_from_work_to_reid --from <파일>  # re-ID 자리에서.
 deploy/gcp/from_reid_to_work.sh          # 되받기 (개체·개체판정을 갈아 끼운다)
 python manage.py reid_chips --out reid/v3 --overlay-only  # 윤곽·밑동 좌표만 덧쓴다
 
+python manage.py reid_cls --folds 5 --seeds 3   # **자를 돌려서 잰다** (질의 137 → 493)
+
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
 python manage.py infer_base --weights runs/pose-v1/weights/best.pt

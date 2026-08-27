@@ -1958,6 +1958,41 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class FoldSplitTests(SimpleTestCase):
+    """**재는 날을 돌린다.** 고정 갈래는 가장 큰 8일만 재고 나머지 41일
+    361조각은 성적에 한 번도 안 들어간다 — 질의 137이면 한 문제가 0.73%p 라
+    앞으로 잴 것들(백본·조각 해상도·2층 MLP·ArcFace)이 전부 그 눈금 아래다.
+    """
+
+    def days(self, sizes):
+        return [f"d{i}" for i in range(len(sizes))], \
+               {f"d{i}": n for i, n in enumerate(sizes)}
+
+    def test_every_day_is_measured_exactly_once(self):
+        """**이것이 폴드의 전부다** — 모든 관찰일이 한 번씩 잼 쪽에 선다."""
+        from finseg.management.commands.reid_cls import split_days
+        days, cnt = self.days([33, 30, 26, 26, 25, 21, 21, 20, 5, 1, 1])
+        fold = split_days(days, cnt, 5)
+        seen = [d for f in fold for d in f]
+        self.assertEqual(sorted(seen), sorted(days))
+        self.assertEqual(len(seen), len(set(seen)))
+
+    def test_the_big_days_are_spread_out(self):
+        """무작위로 담으면 큰 날이 한 폴드에 몰려 그 폴드만 잼이 두꺼워진다.
+        큰 날부터 번갈아 담으면 폴드 크기가 비슷해진다."""
+        from finseg.management.commands.reid_cls import split_days
+        days, cnt = self.days([33, 30, 26, 26, 25, 21, 21, 20, 19, 17])
+        loads = [sum(cnt[d] for d in f) for f in split_days(days, cnt, 5)]
+        self.assertLess(max(loads) - min(loads), 10)
+
+    def test_the_split_does_not_move(self):
+        """**씨앗을 안 탄다.** 두 자를 견줄 때 같은 문제를 풀어야 차이가 자
+        때문인지 문제 때문인지 갈린다."""
+        from finseg.management.commands.reid_cls import split_days
+        days, cnt = self.days([9, 8, 7, 6, 5, 4, 3, 2, 1])
+        self.assertEqual(split_days(days, cnt, 3), split_days(days, cnt, 3))
+
+
 class TemplateCommentTests(SimpleTestCase):
     """**Django 에서 `{# … #}` 는 한 줄짜리만 주석이다.**
 

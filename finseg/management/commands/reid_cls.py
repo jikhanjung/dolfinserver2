@@ -43,6 +43,29 @@ from django.core.management.base import BaseCommand, CommandError
 from finseg import reid
 
 
+def split_days(days, cnt, k):
+    """관찰일을 k벌로 나눈다. **큰 날부터 번갈아 담는다.**
+
+    무작위로 담으면 33장짜리 날 여럿이 한 폴드에 몰려 그 폴드만 잼이 두꺼워진다.
+    번갈아 담으면 폴드마다 크기가 비슷해지고, **씨앗을 안 타므로** 두 자를
+    견줄 때 같은 문제를 푼다.
+
+    번갈아 담기(`j % k`)로는 덜 고르다 — 큰 날 열 개를 5벌로 번갈아 담으면
+    가장 무거운 폴드와 가벼운 폴드가 조각 12장 차이가 났다. **그때그때 가장
+    가벼운 폴드에 담으면** 4장으로 준다. 폴드마다 잼이 비슷해야 폴드별 성적을
+    나란히 읽을 수 있다.
+
+    빈 폴드를 안 만든다 — 부르는 쪽이 `k <= len(days)` 를 이미 막는다.
+    """
+    fold = [[] for _ in range(k)]
+    load = [0] * k
+    for d in sorted(days, key=lambda d: (-cnt[d], d)):
+        j = min(range(k), key=lambda i: (load[i], i))
+        fold[j].append(d)
+        load[j] += cnt[d]
+    return fold
+
+
 class Command(BaseCommand):
     help = "카탈로그를 클래스로 놓고 닫힌 집합 분류기를 배운다"
 
@@ -60,6 +83,16 @@ class Command(BaseCommand):
                        help="**재지 않고 배워서 저장한다** — 화면이 쓸 것이라 "
                             "날을 가르지 않고 아는 것을 전부 쓴다. 성적을 볼 때는 "
                             "이것을 쓰면 안 된다 (배운 것으로 배운 것을 잰다)")
+        p.add_argument("--folds", type=int, default=0, metavar="K",
+                       help="**재는 날을 고정하지 말고 돌린다.** 관찰일을 K벌로 "
+                            "나눠 한 벌씩 빼면서 K번 배우고 잰다 — 모든 날이 한 "
+                            "번씩 잼 쪽에 서므로 질의가 137 → 510 이 되고 눈금이 "
+                            "0.73%p → 0.20%p 가 된다. 0 이면 `--test-days` 대로 "
+                            "한 번만 (기본)")
+        p.add_argument("--seeds", type=int, default=1, metavar="N",
+                       help="씨앗을 N 번 흔들어 폭을 함께 낸다. **폴드 배정은 "
+                            "안 흔든다** — 두 자를 견줄 때 같은 문제를 풀어야 "
+                            "차이가 자 때문인지 문제 때문인지 갈린다")
         p.add_argument("--group", action="store_true",
                        help="**묶어서 묻는다** — 같은 날·같은 쪽의 한 개체 조각을 "
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
@@ -123,7 +156,19 @@ class Command(BaseCommand):
         if set(day[is_test]) & set(day[~is_test]):
             raise CommandError("배우는 날과 재는 날이 겹친다 — 이 성적은 못 쓴다")
 
-        torch.manual_seed(o["seed"])
+        if o["folds"]:
+            return self._folds(o, X, lab, fac, day, days, cnt, w)
+
+        tot = self._score(o, X, lab, fac, day, is_test, o["seed"], w)
+        self._report(tot, w)
+
+    def _score(self, o, X, lab, fac, day, is_test, seed, w):
+        """한 갈래를 배우고 잰다. **자를 한 곳에 둔다** — 고정 갈래와 폴드가
+        다른 식으로 채점하면 둘을 견줄 수 없다."""
+        import numpy as np
+        import torch
+
+        torch.manual_seed(seed)
         tot = {"cls1": 0, "cls5": 0, "knn1": 0, "knn5": 0, "n": 0}
         for side in ("left", "right"):
             m = (fac == side) & (lab >= 0)
@@ -134,12 +179,13 @@ class Command(BaseCommand):
             # `reid_probe --hold-individuals` 가 재는 열린 판의 몫이다
             te = np.array([i for i in te if lab[i] in classes])
             if len(tr) < 10 or not len(te) or len(classes) < 2:
-                w(f"  {side}: 잴 것이 모자란다 (배움 {len(tr)} · 잼 {len(te)} "
-                  f"· 개체 {len(classes)})")
+                if w:
+                    w(f"  {side}: 잴 것이 모자란다 (배움 {len(tr)} · 잼 {len(te)} "
+                      f"· 개체 {len(classes)})")
                 continue
             k = {c: i for i, c in enumerate(classes)}
             W, B = self._fit(X[tr], [k[int(v)] for v in lab[tr]], len(classes),
-                             o["epochs"], o["lr"], o["wd"], o["seed"])
+                             o["epochs"], o["lr"], o["wd"], seed)
             logit = X[te] @ W.T + B
 
             # 기준선 — **배우는 날의 조각만** 후보로 둔다. 분류기가 본 것과
@@ -167,12 +213,15 @@ class Command(BaseCommand):
                 te = np.array(idx, dtype=object)
             c1, c5 = hits(logit)
             n1, n5 = hits(knn)
-            w(f"  {side:<6} 개체 {len(classes):>2} · 배움 {len(tr):>3} · 잼 {len(te):>3}"
-              f"   기준선(kNN) {n1/len(te):>6.1%} / {n5/len(te):>6.1%}"
-              f"   **분류기 {c1/len(te):>6.1%} / {c5/len(te):>6.1%}**")
+            if w:
+                w(f"  {side:<6} 개체 {len(classes):>2} · 배움 {len(tr):>3} · 잼 {len(te):>3}"
+                  f"   기준선(kNN) {n1/len(te):>6.1%} / {n5/len(te):>6.1%}"
+                  f"   **분류기 {c1/len(te):>6.1%} / {c5/len(te):>6.1%}**")
             tot["cls1"] += c1; tot["cls5"] += c5
             tot["knn1"] += n1; tot["knn5"] += n5; tot["n"] += len(te)
+        return tot
 
+    def _report(self, tot, w):
         if not tot["n"]:
             raise CommandError("잴 것이 없다 — `--test-days` 를 줄일 것")
         n = tot["n"]
@@ -182,6 +231,82 @@ class Command(BaseCommand):
         if tot["cls1"] <= tot["knn1"]:
             w("\n** 기준선을 못 넘었다 — 배운 것이 없다. 개체당 조각이 모자라거나"
               " 규제가 세거나 날 갈래가 너무 좁다.")
+
+    def _folds(self, o, X, lab, fac, day, days, cnt, w):
+        """**재는 날을 돌린다** — 관찰일 K벌, 한 벌씩 빼면서 K번.
+
+        ## 왜 조각이 아니라 날로 나누나
+
+        `--test-days` 갈래와 같은 이유다. 같은 날 사진은 몇 초 사이에 연달아
+        찍은 것이라 거의 같은 그림이고(정답 조각의 62%가 같은 날 3장 이상인
+        묶음에 들어 있다), 그중 몇 장이 배움에 몇 장이 잼에 들어가면 모델은
+        개체가 아니라 **그 날을 외운 것**이 된다.
+
+        ## 왜 돌리나
+
+        고정 갈래는 **가장 큰 8일**만 재고 나머지 41일 361조각은 성적에 한 번도
+        안 들어간다. 질의가 137이면 **한 문제가 0.73%p** 라, 앞으로 잴 것들
+        (백본 키우기·조각 해상도·2층 MLP·ArcFace)이 전부 몇 %p 짜리라 하나도
+        못 가른다. 돌리면 510문항이 되어 눈금이 0.20%p 다.
+
+        ## 폴드 배정은 씨앗을 안 탄다
+
+        큰 날부터 번갈아 담아 폴드 크기를 맞추고, **그 배정을 고정한다.**
+        두 자를 견줄 때 **같은 문제를 풀어야** 차이가 자 때문인지 문제 때문인지
+        갈린다 — 씨앗은 머리의 초기값만 흔든다.
+
+        ## 못 묻는 조각이 남는다
+
+        관찰일이 하루뿐인 개체(8마리·21조각)는 어느 폴드에서도 질의가 못 된다 —
+        그 날이 잼 쪽이면 배운 적이 없고 배움 쪽이면 물을 것이 없다.
+        `/dataset` 의 `2일 이상` 축이 재는 것이 바로 이것이다.
+        """
+        import numpy as np
+
+        K = o["folds"]
+        if K < 2:
+            raise CommandError("`--folds` 는 2 이상이라야 한다")
+        if K > len(days):
+            raise CommandError(f"관찰일이 {len(days)}일뿐이라 {K}벌로 못 나눈다")
+        fold = split_days(days, cnt, K)
+
+        w(f"**재는 날을 {K}벌로 돌린다** · 씨앗 {o['seeds']}개 "
+          f"— 관찰일 {len(days)}일이 한 번씩 잼 쪽에 선다")
+        runs = []
+        for si in range(o["seeds"]):
+            seed = o["seed"] + si
+            tot = {"cls1": 0, "cls5": 0, "knn1": 0, "knn5": 0, "n": 0}
+            first = si == 0
+            if first:
+                w(f"\n  {'폴드':<5}{'재는날':>6}{'잼':>6}"
+                  f"{'기준선 1/5':>16}{'분류기 1/5':>16}")
+            for fi, ds in enumerate(fold):
+                is_test = np.array([d in set(ds) for d in day])
+                t = self._score(o, X, lab, fac, day, is_test, seed, None)
+                for k2 in tot:
+                    tot[k2] += t[k2]
+                if first:
+                    n = t["n"] or 1
+                    w(f"  {fi + 1:<5}{len(ds):>6}{t['n']:>6}"
+                      f"{t['knn1'] / n:>8.1%}{t['knn5'] / n:>8.1%}"
+                      f"{t['cls1'] / n:>8.1%}{t['cls5'] / n:>8.1%}")
+            runs.append(tot)
+
+        n = runs[0]["n"]
+        if not n:
+            raise CommandError("잴 것이 없다")
+        w(f"\n  {'합':<5}{len(days):>6}{n:>6}"
+          f"{runs[0]['knn1'] / n:>8.1%}{runs[0]['knn5'] / n:>8.1%}"
+          f"{runs[0]['cls1'] / n:>8.1%}{runs[0]['cls5'] / n:>8.1%}")
+        w(f"\n  **질의 {n}** — 한 문제가 {100 / n:.2f}%p "
+          f"(고정 갈래 137문항이면 {100 / 137:.2f}%p 였다)")
+        if o["seeds"] > 1:
+            for key, nm in (("cls1", "분류기 top-1"), ("cls5", "분류기 top-5")):
+                v = np.array([r[key] / r["n"] for r in runs]) * 100
+                w(f"  {nm:<12} 씨앗별 {' '.join(f'{x:.1f}' for x in v)}"
+                  f"  →  **{v.mean():.1f} ± {v.std(ddof=0):.1f}**")
+            w("  **폭이 씨앗 때문에 생긴 것이다** — 자료도 폴드도 같았다. "
+              "두 자의 차이가 이 폭보다 작으면 그것은 아직 차이가 아니다.")
 
     def _save(self, o, X, ids, fac, lab, cat, w):
         """**화면이 쓸 분류기를 저장한다.** 날을 안 가르고 아는 것을 전부 쓴다 —
