@@ -501,8 +501,8 @@ def reid(request):
     for k, nm in Individual.KINDS:
         if k:
             Individual.objects.get_or_create(kind=k, defaults={"name": nm})
-    boxes = [{"id": i.id, "name": i.name, "nick": i.nickname, "rep": i.rep_id,
-              "hold": bool(i.kind), "kind": i.kind,
+    boxes = [{"id": i.id, "name": i.name, "nick": i.nickname, "note": i.note,
+              "rep": i.rep_id, "hold": bool(i.kind), "kind": i.kind,
               "n": sum(1 for v in latest.values() if v == i.id)}
              for i in Individual.objects.order_by("id")]
     # **키는 검토 화면과 같은 것을 쓴다** (`models.CLASS_KEYS`) — 두 화면에서
