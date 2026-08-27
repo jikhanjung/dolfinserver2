@@ -106,6 +106,9 @@ deploy/gcp/from_reid_to_work.sh          # 되받기 (개체·개체판정을 �
 python manage.py reid_chips --out reid/v3 --overlay-only  # 윤곽·밑동 좌표만 덧쓴다
 
 python manage.py reid_cls --folds 5 --seeds 3   # **자를 돌려서 잰다** (질의 137 → 493)
+python manage.py reid_chips --out reid/v3 --pca 256 --pca-src emb-dinov2.npz \
+    --pca-unlabeled --emb-name emb-s256-clean.npz   # **재는 자리에서는 정답을 빼고 축을 잡는다**
+python manage.py reid_cls --emb emb-s256-clean.npz --folds 5 --seeds 3 --l1 1e-5
 
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
