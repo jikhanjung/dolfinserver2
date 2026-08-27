@@ -45,6 +45,39 @@ from finseg.models import Box, Crop
 LOOK = 320          # 사람이 보는 그림 한 변
 
 
+# **자를 바꿔 볼 자리.** 값이 `torch.hub` 의 이름이고, `None` 이면 torchvision.
+# 키우면 차원이 함께 커지고(384 → 768 → 1024) **선형 머리의 파라미터도 그만큼
+# 는다** — 그래서 `--pca` 통제줄이 필요하다.
+BACKBONES = {
+    "resnet18": None,          # ImageNet 지도학습 · 512차원
+    "dinov2": "dinov2_vits14",   # ViT-S/14 ·  384
+    "dinov2b": "dinov2_vitb14",  # ViT-B/14 ·  768
+    "dinov2l": "dinov2_vitl14",  # ViT-L/14 · 1024
+}
+
+
+def _pca(E, d, fit=None):
+    """주성분 d 개에 사영한다. `fit` 을 주면 **그 조각들로만 축을 잡고** 전부를
+    사영한다.
+
+    처음에는 통제줄로 넣었다 — 큰 백본이 이긴 것이 특징 때문인지 선형 머리가
+    커진 덕인지 차원을 맞춰 봐야 갈리므로. **그런데 통제줄이 원본을 이겼다**
+    (ViT-S 384 → 256 에서 top-1 44.9 → 47.3). 백본을 키우는 것보다 **줄이는
+    것**이 이 자료에서 셌다.
+
+    평균만 빼고 SVD 로 사영한다. 백색화는 안 한다 — 코사인으로 견주는 자리라
+    분산 크기가 뜻을 갖는다.
+    """
+    import numpy as np
+
+    if d >= E.shape[1]:
+        return E
+    src = E if fit is None else E[fit]
+    mu = src.mean(0, keepdims=True)
+    _, _, Vt = np.linalg.svd(src - mu, full_matrices=False)
+    return (E - mu) @ Vt[:d].T
+
+
 class Command(BaseCommand):
     help = "상자에서 re-ID 조각·곡선·임베딩을 만든다"
 
@@ -64,11 +97,35 @@ class Command(BaseCommand):
         p.add_argument("--boxes", nargs="+", type=int, help="이 상자들만")
         p.add_argument("--no-emb", action="store_true",
                        help="임베딩을 건너뛴다 (torch 가 없을 때)")
-        p.add_argument("--backbone", choices=("resnet18", "dinov2"),
+        p.add_argument("--backbone",
+                       choices=tuple(BACKBONES),
                        default="resnet18",
                        help="**조각은 그대로 두고 자만 바꾼다.** `resnet18` 은 "
-                            "ImageNet 지도학습(512차원), `dinov2` 는 자기지도 "
-                            "ViT-S/14(384차원)")
+                            "ImageNet 지도학습(512차원), `dinov2*` 는 자기지도 "
+                            "ViT — `dinov2` S/14(384) · `dinov2b` B/14(768) · "
+                            "`dinov2l` L/14(1024). **키우면 선형 머리도 함께 "
+                            "커진다** — 특징이 좋아진 것과 머리가 커진 것을 "
+                            "가르려면 `--pca 384` 로 한 줄 더 낼 것")
+        p.add_argument("--pca", type=int, metavar="D",
+                       help="**이미 뽑아 둔 임베딩을 D차원으로 줄여 저장한다.** "
+                            "백본을 다시 안 돌린다(`--pca-src` 를 읽는다) — "
+                            "ViT-B 한 벌이 CPU 로 27분이라 통제줄 때문에 그것을 "
+                            "또 돌릴 이유가 없다.\n"
+                            "**왜 필요한가**: 백본을 키우면 차원이 커지고 "
+                            "(384 → 768 → 1024) **선형 머리의 파라미터도 그만큼 "
+                            "는다.** 큰 쪽이 이겨도 특징이 좋아서인지 머리가 "
+                            "커져서인지 갈리지 않는다. 차원을 맞춰 한 줄 더 내야 "
+                            "갈린다")
+        p.add_argument("--pca-src", metavar="파일",
+                       help="`--pca` 가 읽을 임베딩 (`--dir` 안의 이름)")
+        p.add_argument("--pca-unlabeled", action="store_true",
+                       help="**축을 정답 없는 조각으로만 잡는다 — 성적을 잴 "
+                            "때는 이것을 쓸 것.** PCA 는 라벨을 안 쓰지만 "
+                            "전부로 잡으면 **재는 날 조각의 분산이 축에 든다.** "
+                            "실측으로 top-1 이 47.3 → 48.5 로 부풀었다(top-5 는 "
+                            "77.1 → 75.3 으로 되레 내렸다). 화면에 쓸 것을 만들 "
+                            "때는 안 줘도 된다 — 그때는 격자가 고정이라 전부로 "
+                            "잡는 것이 맞다")
         p.add_argument("--overlay-only", action="store_true",
                        help="조각은 그대로 두고 **윤곽·밑동 좌표만** items.json 에 "
                             "덧쓴다 — 화면이 조각 위에 얹어 켜고 끈다")
@@ -83,6 +140,8 @@ class Command(BaseCommand):
     def handle(self, **o):
         w = self.stdout.write
         out = Path(o["out"])
+        if o["pca"]:
+            return self._pca_only(o, out, w)
         if o["emb_only"]:
             return self._emb_only(o, out, w)
         if o["overlay_only"]:
@@ -271,6 +330,45 @@ class Command(BaseCommand):
         f.write_text(json.dumps(d, ensure_ascii=False))
         w(f"  `sim` 을 {n:,}개에 적었다 (좌·우 각각 · 가장 외딴 것부터)")
 
+    def _pca_only(self, o, out, w):
+        """**통제줄을 낸다** — 백본을 다시 안 돌린다.
+
+        큰 백본이 이긴 것이 특징이 좋아서인지 **선형 머리가 커져서**인지는
+        차원을 맞춰 봐야 갈린다(384 → 768 → 1024 면 머리도 그만큼 커진다).
+        ViT-B 한 벌이 CPU 로 27분이라 그것 때문에 또 돌릴 이유가 없다.
+
+        **`box_id`·`facing` 을 그대로 나른다** — `reid_cls` 가 `items.json` 과
+        차례를 견주고 다르면 멎는다.
+        """
+        import numpy as np
+
+        if not o["pca_src"]:
+            raise CommandError("`--pca-src` 로 줄일 임베딩을 줄 것")
+        src = out / o["pca_src"]
+        if not src.exists():
+            raise CommandError(f"{src} 가 없다")
+        z = np.load(src)
+        E = z["emb"]
+        if o["pca_unlabeled"]:
+            from finseg import reid as _r
+            cat = _r.catalog()
+            lab = {b for v in cat.values() for b in v}
+            free = np.array([int(b) not in lab for b in z["box_id"]])
+            if free.sum() < o["pca"]:
+                raise CommandError("정답 없는 조각이 차원보다 적다")
+            w(f"축은 정답 없는 조각 {int(free.sum()):,}장으로 잡는다 "
+              f"(정답 {int((~free).sum()):,}장은 뺀다)")
+            E = _pca(E, o["pca"], fit=free)
+        else:
+            E = _pca(E, o["pca"])
+        dst = out / o["emb_name"]
+        np.savez_compressed(dst, emb=E.astype(np.float32),
+                            box_id=z["box_id"], facing=z["facing"])
+        w(f"{src.name} {z['emb'].shape[1]}차원 → {dst.name} {E.shape[1]}차원 "
+          f"· {len(E):,}장")
+        w("**통제줄이다** — 큰 백본과 차원을 맞춰 견주는 자리이지 "
+          "화면에 쓸 것이 아니다")
+
     def _embed(self, X, backbone="resnet18"):
         """**학습 없는 사전학습 특징.** `resnet18` 은 `reid_train` 의 기준선과
         같은 식이어야 옛 조각과 새 조각을 한 통에 놓을 수 있다 — 다르면 새것만
@@ -282,8 +380,9 @@ class Command(BaseCommand):
         """
         import torch
         import torch.nn.functional as Fn
-        if backbone == "dinov2":
-            m = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14",
+        hub = BACKBONES[backbone]
+        if hub:
+            m = torch.hub.load("facebookresearch/dinov2", hub,
                                pretrained=True, verbose=False)
         else:
             import torchvision as tv

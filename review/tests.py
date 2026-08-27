@@ -1958,6 +1958,41 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class PcaTests(SimpleTestCase):
+    """**축을 무엇으로 잡느냐가 성적을 부풀린다.** PCA 는 라벨을 안 쓰지만,
+    전부로 축을 잡으면 재는 날 조각의 분산이 축에 든다 — 실측으로 top-1 이
+    47.3 → 48.5 로 부풀었다."""
+
+    def data(self):
+        import numpy as np
+        rng = np.random.default_rng(0)
+        E = rng.normal(size=(60, 8))
+        E[:10] += 50            # 정답 조각만 딴 데로 치우쳐 둔다
+        return E, np.array([True] * 10 + [False] * 50)
+
+    def test_it_projects_to_the_asked_dimension(self):
+        from finseg.management.commands.reid_chips import _pca
+        E, _ = self.data()
+        self.assertEqual(_pca(E, 3).shape, (60, 3))
+
+    def test_asking_for_more_than_there_is_changes_nothing(self):
+        from finseg.management.commands.reid_chips import _pca
+        E, _ = self.data()
+        self.assertIs(_pca(E, 8), E)
+
+    def test_the_excluded_rows_do_not_move_the_axes(self):
+        """치우친 10장을 빼고 축을 잡으면 그 10장이 축을 못 끈다."""
+        import numpy as np
+        from finseg.management.commands.reid_chips import _pca
+        E, lab = self.data()
+        both = _pca(E, 3)
+        free = _pca(E, 3, fit=~lab)
+        # 치우친 쪽을 넣고 잡은 축은 그것을 따라간다 — 두 사영이 다르다
+        self.assertFalse(np.allclose(np.abs(both), np.abs(free), atol=1e-6))
+        # 뺀 쪽 축은 남은 50장의 분산만 본다
+        self.assertLess(abs(free[~lab].mean()), 1e-6)
+
+
 class FoldSplitTests(SimpleTestCase):
     """**재는 날을 돌린다.** 고정 갈래는 가장 큰 8일만 재고 나머지 41일
     361조각은 성적에 한 번도 안 들어간다 — 질의 137이면 한 문제가 0.73%p 라
