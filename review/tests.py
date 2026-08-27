@@ -1958,6 +1958,47 @@ class ContextMenuTests(TestCase):
         self.assertIn("if (!rows.length) return false", html)
 
 
+class NewBoxRaceTests(TestCase):
+    """**둘이 동시에 `새 상자` 를 눌러도 한 상자를 나눠 쓰지 않는다.**
+
+    전에는 이름을 `count()+1` 로 짓고 `get_or_create` 했다. 같은 `n` 이 나오면
+    뒤엣사람이 `made=False` 로 앞엣사람의 상자를 받아 든 채 **새로 만든 줄
+    안다** — 그 뒤로 둘의 조각이 한 상자에 섞이고, 섞였다는 것을 아무도 모른다.
+    """
+
+    def post(self):
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            r = self.client.post("/api/reid/box", "{}",
+                                 content_type="application/json")
+        return json.loads(r.content)
+
+    def test_two_presses_are_two_boxes(self):
+        a, b = self.post(), self.post()
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertNotEqual(a["name"], b["name"])
+        self.assertTrue(a["made"] and b["made"])
+
+    def test_a_name_taken_between_the_count_and_the_insert_is_stepped_over(self):
+        """세어서 고르는 것은 여전히 짐작이다 — **짐작이 틀렸을 때 조용히
+        넘어가지 않는다**는 것이 다르다. 이름이 UNIQUE 라 DB 가 정한다."""
+        Individual.objects.create(name="상자 1")     # count()+1 이 집을 자리
+        r = self.post()
+        self.assertTrue(r["made"])
+        self.assertNotEqual(r["name"], "상자 1")
+        self.assertEqual(Individual.objects.filter(name=r["name"]).count(), 1)
+
+    def test_a_named_box_is_still_shared(self):
+        """이름을 손으로 준 것은 `get_or_create` 그대로다 — 같은 번호를 두
+        사람이 적었으면 그것은 같은 개체를 가리킨 것이다."""
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            body = json.dumps({"name": "JTA001"})
+            a = json.loads(self.client.post("/api/reid/box", body,
+                                            content_type="application/json").content)
+            b = json.loads(self.client.post("/api/reid/box", body,
+                                            content_type="application/json").content)
+        self.assertEqual(a["id"], b["id"])
+
+
 class DatasetStateTests(TestCase):
     """**아직 안 붙인 것을 보는 자리.** 세는 것은 `reid.dataset_state()` 하나다 —
     화면이 제 나름대로 세면 나중에 명령으로 잴 때 숫자가 갈리고, 그때 어느 쪽이

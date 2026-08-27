@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -673,10 +673,33 @@ def reid_box(request):
         ind.save(update_fields=["name"])
         return JsonResponse({"id": ind.id, "name": ind.name, "nick": ind.nickname})
     if not name:
+        # **이름을 세어서 짓고 `get_or_create` 하면 둘이 동시에 누를 때 한
+        # 상자를 나눠 쓰게 된다.** 같은 `n` 이 나오고, 뒤엣사람은 `made=False`
+        # 로 앞엣사람의 상자를 받아 든 채 **새로 만든 줄 안다** — 그 뒤로 둘의
+        # 조각이 한 상자에 섞이고, 섞였다는 것을 아무도 모른다.
+        #
+        # **누가 이겼는지는 DB 가 정하게 둔다.** `name` 이 UNIQUE 이므로
+        # 부딪히면 `IntegrityError` 가 나고, 그때 다음 번호로 다시 든다.
+        # 세어서 고르는 것은 여전히 짐작이지만 **짐작이 틀렸을 때 조용히 넘어가지
+        # 않는다** 는 것이 다르다.
+        #
+        # 바깥이 `@transaction.atomic` 이라 `IntegrityError` 가 그대로 새면
+        # 그 트랜잭션 전체가 못 쓰게 된다 — 안쪽 `atomic` 이 세이브포인트를
+        # 잡아 그 한 번만 되돌린다.
         n = Individual.objects.count() + 1
-        while Individual.objects.filter(name=f"상자 {n}").exists():
-            n += 1
-        name = f"상자 {n}"
+        for _ in range(50):
+            while Individual.objects.filter(name=f"상자 {n}").exists():
+                n += 1
+            try:
+                with transaction.atomic():
+                    ind = Individual.objects.create(name=f"상자 {n}")
+            except IntegrityError:
+                n += 1
+                continue
+            return JsonResponse({"id": ind.id, "name": ind.name,
+                                 "nick": ind.nickname, "made": True})
+        return JsonResponse({"error": "빈 이름을 못 찾았다 — 손으로 지어 줄 것"},
+                            status=409)
     ind, made = Individual.objects.get_or_create(name=name)
     return JsonResponse({"id": ind.id, "name": ind.name,
                          "nick": ind.nickname, "made": made})
