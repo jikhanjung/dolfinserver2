@@ -2076,6 +2076,17 @@ class DatasetStateTests(TestCase):
         self.assertIn("dataset", {p.name for p in patterns_for("reid")})
         self.assertNotIn("dataset", {p.name for p in patterns_for("work")})
 
+    def test_the_menu_says_what_this_is_and_which_build(self):
+        """자리가 넷이라 **어느 판으로 떠 있는지가 늘 보여야 한다.** `/healthz`
+        가 이미 내지만 그건 밖에서 curl 로 물을 때이고, 화면을 보고 있는 사람은
+        `/healthz` 를 안 친다."""
+        from finweb.version import __version__
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            html = self.client.get("/dataset").content.decode()
+        self.assertIn("DolfinServer2", html)
+        self.assertIn(f"v{__version__}", html)
+
     def test_the_menu_offers_it(self):
         with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
                            ROOT_URLCONF="review.tests"):

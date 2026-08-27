@@ -11,12 +11,12 @@
 {% endcomment %}
 <nav class="topnav">
   {% if fin_role == "reid" %}
-    <a href="/reid" class="brand">돌고래</a>
+    <a href="/reid" class="brand">DolfinServer2 <span class="ver">v{{ fin_version }}</span></a>
     <a href="/reid" {% if here == "reid" %}class="on"{% endif %}>개체 분류</a>
     <a href="/catalog" {% if here == "catalog" %}class="on"{% endif %}>카탈로그</a>
     <a href="/dataset" {% if here == "dataset" %}class="on"{% endif %}>자료 상태</a>
   {% else %}
-    <a href="/" class="brand">돌고래</a>
+    <a href="/" class="brand">DolfinServer2 <span class="ver">v{{ fin_version }}</span></a>
     <a href="/review" {% if here == "review" %}class="on"{% endif %}>검토</a>
     <span class="sp"></span>
     <a href="/compare" {% if here == "compare" %}class="on"{% endif %}>엔진 비교</a>
@@ -36,6 +36,10 @@
   .topnav a.on { background:#1b2734; color:var(--ink, #e6edf3); font-weight:600 }
   .topnav .brand { color:var(--ink, #e6edf3); font-weight:600; margin-right:8px;
                    padding-left:0 }
+  /* **판은 이름보다 작게.** 늘 보여야 하지만 읽으러 오는 것은 아니다 —
+     배포가 뒤바뀐 것을 눈이 걸리게 하는 자리다 (`review/context.py`) */
+  .topnav .brand .ver { color:var(--dim, #8b98a5); font-weight:400;
+                        font-size:11.5px; font-family:"IBM Plex Mono", monospace }
   .topnav .sp { flex:1 }
   .topnav .role { color:var(--dim, #8b98a5); font-size:11px; padding:2px 8px;
                   border:1px solid var(--line, #26303c); border-radius:999px }
