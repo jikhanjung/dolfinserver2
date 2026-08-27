@@ -429,6 +429,22 @@ let sel = new Set(), lastClick = null;
 // 움직이게만** 한다.
 let focusOn = null;      // 한 상자만 볼 때 그 상자 번호
 
+// **이것도 창을 건너 실어 보내야 한다.** 상자 목록을 새 창으로 띄우면 그
+// 창은 격자가 감춰져 있어(`body.onlybox`) `보기` 를 눌러도 펼 데가 없다 —
+// 격자 창이 받아서 펴야 비로소 그 단추가 제 값을 한다. 전에는 `focusOn` 을
+// 제 창에서만 바꿔서, **상자 창에서 누르면 아무 데서도 아무 일이 안 났다.**
+//
+// **뒤집은 뒤의 값을 보낸다.** `id` 만 보내고 받는 쪽이 다시 뒤집게 하면 두
+// 창의 상태가 한 번이라도 어긋났을 때 서로 반대로 간다 — `assign`·`name` 을
+// 바뀐 값으로 싣는 것과 같은 이유다.
+function setFocus(id, quiet) {
+  focusOn = id;
+  sel.clear();
+  draw();
+  document.getElementById("grid").scrollTop = 0;
+  if (!quiet) tell({t: "look", id});
+}
+
 // 그 상자의 대표. 안 골랐으면 든 것 중 첫 번째 — 상자가 비어 보이면 안 된다
 function repOf(indId) {
   if (!indId) return null;
@@ -581,10 +597,24 @@ function drawBoxes() {
   //
   // 전에는 만든 순서(id)로 냈다 — 이름을 고치면 목록에서 튀어 다녀서였다.
   // **번호를 붙이기 시작하면 그 튀어 다님이 곧 제자리 찾아가는 일이다.**
+  //
+  // **로케일을 박는다.** `undefined` 로 두면 브라우저 언어가 순서를 정한다 —
+  // `ko-KR` 은 한글을 라틴보다 **앞**에 놓고 `en-US` 는 뒤에 놓는다. 같은
+  // 화면이 기계마다 다르게 정렬되는, 눈에 잘 안 띄는 종류다.
+  //
+  // 그리고 갈래를 **값으로** 가른다. 로케일을 `en` 으로 박기만 해도 지금은
+  // 라틴이 앞에 오지만 그것은 ICU 의 문자군 순서에 기대는 것이다. 여기서
+  // 원하는 것은 문자군이 아니라 **번호를 붙인 개체가 위, 아직 임시 이름인
+  // 것이 아래**라는 뜻이므로, 그 뜻을 적어 둔다. 한글끼리는 가나다순이라야
+  // 하니 견주는 로케일은 `ko` 로 남긴다.
+  const later = s => (/^[가-힣]/.test(s) ? 1 : 0);
   document.getElementById("boxes").innerHTML =
     BOXES.filter(b => !b.hold)
-      .sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined,
-                       {numeric: true, sensitivity: "base"}))
+      .sort((a, b) => {
+        const x = a.name || "", y = b.name || "";
+        return later(x) - later(y) ||
+               x.localeCompare(y, "ko", {numeric: true, sensitivity: "base"});
+      })
       .map(b => boxHtml(b, mine)).join("");
   bindBoxes();
 }
@@ -755,10 +785,7 @@ function bindBoxes() {
   document.querySelectorAll(".box .look").forEach(b => {
     b.onclick = () => {
       const id = +b.dataset.look;
-      focusOn = (focusOn === id) ? null : id;
-      sel.clear();
-      draw();
-      document.getElementById("grid").scrollTop = 0;
+      setFocus(focusOn === id ? null : id);
     };
   });
   document.querySelectorAll(".box .nm").forEach(el => {
@@ -928,6 +955,10 @@ if (BC) BC.onmessage = e => {
   } else if (m.t === "name") {
     const x = BOXES.find(y => y.id === m.id);
     if (x) { x.name = m.name; draw(); }
+  } else if (m.t === "look") {
+    // **다시 알리지 않는다** — 받은 것을 그대로 되쏘면 창이 셋 이상일 때
+    // 서로 튕겨 다닌다
+    setFocus(m.id, true);
   }
 };
 
@@ -1009,15 +1040,13 @@ if ("ResizeObserver" in window) {
 addEventListener("resize", fitPinned);
 fitPinned();
 
-document.getElementById("unfocus").onclick = () => {
-  focusOn = null; sel.clear(); draw();
-};
+document.getElementById("unfocus").onclick = () => setFocus(null);
 
 ["sort", "fside", "hidedone"].forEach(id =>
   document.getElementById(id).onchange = () => { sel.clear(); draw(); });
 addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    if (focusOn !== null) { focusOn = null; sel.clear(); draw(); return; }
+    if (focusOn !== null) { setFocus(null); return; }
     sel.clear(); paint();
   }
   if ((e.ctrlKey || e.metaKey) && e.key === "a") {
