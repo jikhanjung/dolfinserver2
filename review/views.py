@@ -501,7 +501,9 @@ def reid(request):
     for k, nm in Individual.KINDS:
         if k:
             Individual.objects.get_or_create(kind=k, defaults={"name": nm})
-    boxes = [{"id": i.id, "name": i.name, "nick": i.nickname, "note": i.note,
+    # **메모는 안 싣는다.** 상자 목록에서는 안 보이고(`/catalog` 에서 쓴다)
+    # 안 쓰는 것을 상자마다 실으면 4.7MB 짜리 페이지가 그만큼 더 는다.
+    boxes = [{"id": i.id, "name": i.name, "nick": i.nickname,
               "rep": i.rep_id, "hold": bool(i.kind), "kind": i.kind,
               "n": sum(1 for v in latest.values() if v == i.id)}
              for i in Individual.objects.order_by("id")]

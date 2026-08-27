@@ -231,23 +231,16 @@
   .box .hd { display:flex; gap:6px; align-items:center; padding:6px 8px }
   /* **번호가 먼저다.** 개체를 가리키는 것은 번호이고 별명은 있는 것만 있다 —
      번호 자리를 별명이 밀어내면 목록을 훑을 때 눈이 두 종류를 오간다 */
-  /* **고칠 수 있는 자리는 늘 그렇게 보인다.** 점선 밑줄이 "여기는 눌러서
-     고치는 칸" 이라고 말한다 — 떠 있지 않으면 눌러 볼 생각을 안 하고,
-     `/catalog` 과 같은 표시라 두 화면을 오갈 때 손이 안 헷갈린다 */
-  .box [contenteditable] { border-bottom:1px dashed var(--edit); outline:none }
-  .box [contenteditable]:hover { border-bottom-color:var(--ok) }
+  /* **쉬는 동안은 자리만 잡아 둔다.** `transparent` 라 안 보이지만 높이를
+     차지하므로, 손을 얹거나 고치러 들어가도 글이 안 밀린다.
+     - 올리면  흐린 초록 — "여기 눌러서 고치는 칸이다"
+     - 고치면  `--ok` — **지금 이 칸을 고치고 있다**는 표시 */
+  .box [contenteditable] { border-bottom:1px dashed transparent; outline:none }
+  .box [contenteditable]:hover { border-bottom-color:var(--edit) }
   .box [contenteditable]:focus { border-bottom-color:var(--ok); color:var(--ok) }
   .box [contenteditable]:empty::before { content:attr(data-ph); color:#3d4a58 }
   .box .nm { font-weight:600; font-size:13px; outline:none; flex:none }
   .box .nm:focus { color:var(--ok) }
-  /* **메모는 머리 아래 제 줄에.** "묶음은 맞는 것 같은데 어느 개체인지
-     모르겠다" 가 가장 잦을 말인데 이름 옆에 끼우면 한 줄이 못 된다 */
-  .box .memo { padding:2px 8px 4px; font-size:11.5px; color:var(--dim);
-               border-bottom:1px dashed var(--edit); outline:none;
-               white-space:pre-wrap; word-break:break-all }
-  .box .memo:hover, .box .memo:focus { border-bottom-color:var(--ok) }
-  .box .memo:focus { color:var(--ink) }
-  .box .memo:empty::before { content:attr(data-ph); color:#2b3644 }
   .box .nick { flex:1; font-size:12px; color:var(--dim); outline:none;
                min-width:2em }
   .box .nick:focus { color:var(--ok) }
@@ -596,8 +589,6 @@ function boxHtml(b, mine) {
           <button class="look" data-look="${b.id}"
                   title="이 상자만 격자에 크게 편다">보기</button>
         </div>
-        ${b.hold ? "" : `<div class="memo" contenteditable="plaintext-only"
-              data-note="${b.id}" data-ph="메모">${b.note || ""}</div>`}
         <div class="thumbs">${rep === undefined ? "" :
           `<img class="rep" src="/reid/chip/${rep}.png" data-id="${rep}"
                 data-from="${b.id}" draggable="true" loading="lazy"
@@ -771,8 +762,8 @@ function dropTarget(el) {
     if (el.id === "newbox") {
       const r = await post("/api/reid/box", {});
       if (!r) return;
-      BOXES.push({id: r.id, name: r.name, nick: "", note: "", n: 0, rep: null});
-      tell({t: "box", box: {id: r.id, name: r.name, nick: "", note: "", rep: null, hold: false, kind: "", n: 0}});
+      BOXES.push({id: r.id, name: r.name, nick: "", n: 0, rep: null});
+      tell({t: "box", box: {id: r.id, name: r.name, nick: "", rep: null, hold: false, kind: "", n: 0}});
       await assign(r.id, ids);
       document.getElementById("boxes").scrollTop = 1e9;
       return;
@@ -821,17 +812,6 @@ function bindBoxes() {
       if (ev.key === "Enter") { ev.preventDefault(); el.blur(); }
     };
     el.onblur = () => setNick(+el.dataset.nick, el.textContent.trim());
-  });
-  // **메모도 비울 수 있다.** `/catalog` 과 같은 규칙으로 둔다 — 두 화면이
-  // 다르게 굴면 오갈 때마다 손이 헷갈린다.
-  //
-  // **여기만 `Enter` 로 안 닫는다.** 메모는 여러 줄일 수 있고("좌현만 있다 /
-  // 2019년 것과 같은 개체일지도"), 이름·별명은 한 줄이라 `Enter` 가 곧 끝이다.
-  // `Escape` 로 닫는다.
-  document.querySelectorAll(".box .memo").forEach(el => {
-    el.onkeydown = ev => { if (ev.key === "Escape") el.blur(); };
-    el.onpointerdown = ev => ev.stopPropagation();   // 상자를 고르는 것과 안 겹치게
-    el.onblur = () => setNote(+el.dataset.note, el.textContent.trim());
   });
   // **상자 안의 것도 끌 수 있어야 한다.** 넣은 것은 격자에서 숨겨져 있어
   // 거기서는 끌 수가 없었고, 그래서 `상자에서 뺀다` 도 옮기기도 할 방법이
@@ -953,8 +933,8 @@ document.getElementById("gnewbox").onclick = async () => {
   if (!g) return;
   const r = await post("/api/reid/box", {});
   if (!r) return;
-  BOXES.push({id: r.id, name: r.name, nick: "", note: "", rep: null, hold: false, kind: "", n: 0});
-  tell({t: "box", box: {id: r.id, name: r.name, nick: "", note: "", rep: null, hold: false, kind: "", n: 0}});
+  BOXES.push({id: r.id, name: r.name, nick: "", rep: null, hold: false, kind: "", n: 0});
+  tell({t: "box", box: {id: r.id, name: r.name, nick: "", rep: null, hold: false, kind: "", n: 0}});
   await groupAssign(r.id);
 };
 
@@ -977,9 +957,7 @@ if (BC) BC.onmessage = e => {
   } else if (m.t === "nick") {
     const b = BOXES.find(x => x.id === m.id);
     if (b) { b.nick = m.nick; drawBoxes(); }
-  } else if (m.t === "note") {
-    const b = BOXES.find(x => x.id === m.id);
-    if (b) { b.note = m.note; drawBoxes(); }
+
   } else if (m.t === "thumb") {
     tsize.value = m.v;
     document.documentElement.style.setProperty("--thumb", m.v + "px");
@@ -1004,15 +982,6 @@ async function assign(indId, ids) {
   tell({t: "assign", ids, ind: indId});
   sel.clear();
   draw();
-}
-
-async function setNote(id, note) {
-  const b = BOXES.find(x => x.id === id);
-  if (!b || (b.note || "") === note) return;
-  const r = await post("/api/reid/box", {id, note});
-  if (!r) return draw();
-  b.note = r.note;
-  tell({t: "note", id, note: r.note});
 }
 
 async function setNick(id, nick) {

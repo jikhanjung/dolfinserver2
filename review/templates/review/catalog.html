@@ -35,11 +35,13 @@
   .ind .meta { color:var(--dim); font-size:12px; font-weight:400 }
   /* **고칠 수 있는 세 칸.** `/reid` 의 상자 머리와 같은 방식이라 배울 것이 없다 —
      눌러서 고치고, Enter 나 딴 데 클릭에 저장된다 */
-  /* **고칠 수 있는 자리는 늘 그렇게 보인다.** 전에는 `transparent` 로 두고
-     올려야 떴는데, 그러면 **눌러 볼 생각을 안 한다** — 번호를 붙이러 온
-     사람에게 어디를 눌러야 하는지가 이 화면의 첫 물음이다 */
-  .ind h2 [contenteditable] { outline:none; border-bottom:1px dashed var(--edit) }
-  .ind h2 [contenteditable]:hover { border-bottom-color:var(--ok) }
+  /* **쉬는 동안은 자리만 잡아 둔다.** `transparent` 라 안 보이지만 높이를
+     차지하므로, 손을 얹거나 고치러 들어가도 글이 안 밀린다.
+     - 올리면  흐린 초록 — "여기 눌러서 고치는 칸이다"
+     - 고치면  `--ok` — **지금 이 칸을 고치고 있다**는 표시 */
+  .ind h2 [contenteditable] { outline:none;
+                              border-bottom:1px dashed transparent }
+  .ind h2 [contenteditable]:hover { border-bottom-color:var(--edit) }
   .ind h2 .nm:focus { color:var(--ok); border-bottom-color:var(--ok) }
   .ind h2 .nick { color:var(--dim); font-size:12.5px; font-weight:400 }
   .ind h2 .nick:focus { color:var(--ok); border-bottom-color:var(--ok) }

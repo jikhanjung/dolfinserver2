@@ -2272,9 +2272,9 @@ class CatalogTests(TestCase):
         **저절로 되살아난다.**"""
         self.assertIn(f'href="/photo/{self.box.id}"', self.page("work"))
 
-    def test_the_box_list_carries_the_note_too(self):
-        """`/reid` 의 상자 목록도 세 칸을 다 든다 — 두 화면이 다르게 굴면
-        오갈 때마다 손이 헷갈린다."""
+    def test_the_box_list_does_not_carry_the_note(self):
+        """상자 목록에서는 메모를 안 보인다 — 쓰는 자리는 `/catalog` 이다.
+        안 쓰는 것을 상자마다 실으면 4.7MB 짜리 페이지가 그만큼 더 는다."""
         tmp = Path(tempfile.mkdtemp())
         (tmp / "items.json").write_text('{"items": []}', encoding="utf-8")
         ind = Individual.objects.get(name="JTA001")
@@ -2283,8 +2283,7 @@ class CatalogTests(TestCase):
         with self.settings(FIN_REID=tmp, FIN_ROLE="reid",
                            ROOT_URLCONF="review.tests"):
             html = self.client.get("/reid").content.decode()
-        self.assertIn("두 마리가 섞였을 수도", html)
-        self.assertIn('data-note=', html)
+        self.assertNotIn("두 마리가 섞였을 수도", html)
 
     def test_the_three_fields_are_editable_where_you_recognise_the_animal(self):
         """번호를 붙이는 사람은 조각 여러 장을 한꺼번에 봐야 하고, 그것을 펴
