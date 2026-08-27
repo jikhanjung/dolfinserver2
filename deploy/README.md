@@ -77,6 +77,51 @@ cd /srv/dolfinserver2-test && docker compose up -d
 curl -s http://m710q:8086/healthz | python3 -m json.tool
 ```
 
+## 안내 화면 — `502` 도 받는다 (2026-08-27)
+
+`.guides/web/deployment.md` §6 이 정본이다. **깃발 파일 → 503 → 안내 화면**.
+
+```nginx
+if (-f /srv/dolfinserver2/maintenance.flag) { return 503; }
+error_page 503 /maintenance.html;      # `=` 를 안 쓴다 — 쓰면 상태가 200 으로 덮인다
+error_page 502 504 /maintenance.html;  # **깃발 없이 내려가 있을 때**
+```
+
+깃발은 배포 스크립트가 건다(`deploy/gcp/deploy.sh` 의 `touch` + `trap`). 그런데
+m710q 는 손으로 `docker compose up -d` 만 하므로 **그 창에서 nginx 가 upstream
+접속 실패로 생짜 502 를 낸다.** 그래서 502·504 도 같은 화면으로 받는다 —
+가이드가 세 상태를 `200 정상 · 503 유지보수 · 502 컨테이너 내려감` 으로 갈라
+두었지만 **보는 사람에게는 뒤의 둘이 같은 일**이다.
+
+**`proxy_intercept_errors` 는 켜지 않는다.** 그것은 upstream 이 **낸** 오류까지
+가로채므로 `/healthz` 의 `unhealthy` 503 까지 안내 화면으로 덮어 버린다 —
+배포가 성한지 묻는 자가 죽는다. 받는 것은 **nginx 가 만든** 502/504 뿐이다.
+
+안내 화면은 `/healthz` 를 3초마다 물어 **살아나면 저절로 연다**(문 밖에 있는
+경로다). JS 가 막힌 자리를 위해 `meta refresh 30` 도 함께 둔다.
+
+### 설정 파일은 **복사본이다 — 저장소를 고쳐도 안 걸린다**
+
+`/etc/nginx/sites-available/*.conf` 는 심볼릭 링크가 아니라 `bootstrap.sh` 가
+떠 놓은 **복사본**이다. 저장소본을 고쳤으면 다시 깔고 reload 해야 한다.
+
+```bash
+sudo install -m 644 deploy/nginx.conf      /etc/nginx/sites-available/dolfinserver2.conf
+sudo install -m 644 deploy/nginx.test.conf /etc/nginx/sites-available/dolfinserver2-test.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**2026-08-27 에 갈려 있는 것을 찾았다** — 설치본에 `Cache-Control: no-store` 와
+시험 자리의 `$http_host`(CSRF) 고침이 안 들어가 있었다. 둘 다 며칠 전 커밋된
+것이다. 안내 화면(`/srv/<자리>/maintenance.html`)은 root 없이 갈 수 있지만
+**설정은 아니라서** 그 자리가 조용히 낡는다.
+
+### GCP 는 저장소본으로 덮으면 **TLS 가 날아간다**
+
+Certbot 이 그 파일을 다시 써서 `listen 443 ssl` 과 인증서 경로, 그리고 80 →
+443 리다이렉트 서버 블록을 넣어 두었다(`# managed by Certbot`). 저장소본에는
+그것이 없다. **거기서는 필요한 줄만 손으로 넣는다.**
+
 ## 역할 — `FIN_ROLE`
 
 **개체를 만들고 지느러미를 개체에 넣는 일은 한 자리에서만 한다.**
