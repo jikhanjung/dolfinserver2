@@ -523,6 +523,7 @@ def reid(request):
 
 
 @require_GET
+@ensure_csrf_cookie
 def catalog(request):
     """**지금까지 붙인 개체를 한 장에 편다.**
 
@@ -547,6 +548,12 @@ def catalog(request):
 
     cat = reid.catalog()
     names = dict(Individual.objects.values_list("id", "name"))
+    # **알아보는 자리에서 이름을 붙일 수 있어야 한다.** 번호를 붙이는 사람은
+    # 조각 여러 장을 한꺼번에 봐야 하는데(날이 다른 것·좌우가 다른 것·notch 가
+    # 잘 보이는 것) 그것을 펴 놓는 화면이 여기다. `/reid` 로 건너가 그 상자를
+    # 다시 찾아 치게 하면 **그 왕복이 일의 절반이 된다.**
+    nicks = dict(Individual.objects.values_list("id", "nickname"))
+    notes = dict(Individual.objects.values_list("id", "note"))
     reps = dict(Individual.objects.values_list("id", "rep_id"))
     day = dict(Box.objects.filter(id__in=[b for v in cat.values() for b in v])
                .values_list("id", "image__obsdate"))
@@ -563,6 +570,7 @@ def catalog(request):
         days = sorted({str(day.get(b)) for b in fins if day.get(b)})
         rows.append({
             "id": ind, "name": names.get(ind, f"#{ind}"), "rep": reps.get(ind),
+            "nick": nicks.get(ind, ""), "note": notes.get(ind, ""),
             "n": len(fins), "days": len(days),
             # **마지막으로 본 날.** 화면이 `최근에 본 것부터` 로 고쳐 세울 때
             # 쓴다 — `span` 에서 잘라 쓰게 두면 한 날짜뿐인 개체에서 갈린다
@@ -661,6 +669,19 @@ def reid_box(request):
         ind.nickname = (body.get("nick") or "").strip()[:50]
         ind.save(update_fields=["nickname"])
         return JsonResponse({"id": ind.id, "name": ind.name, "nick": ind.nickname})
+    if ind_id and "note" in body:
+        # **"모르겠다" 를 적을 자리.** 전문가가 번호를 붙이다 보면 가장 잦은 것이
+        # "묶음은 맞는 것 같은데 어느 개체인지 모르겠다" 인데, 그것은 보류함
+        # (조각을 빼는 것)에도 안 맞고 이름을 안 건드리는 것(안 본 것과 구별이
+        # 안 된다)에도 안 맞는다. **칸은 원래 있었고 화면이 없었다.**
+        #
+        # **비울 수 있다** — 별명과 같다. 빈 값이 곧 답이다.
+        ind = Individual.objects.filter(id=ind_id).first()
+        if ind is None:
+            return JsonResponse({"error": "그런 상자가 없다"}, status=404)
+        ind.note = (body.get("note") or "").strip()[:1000]
+        ind.save(update_fields=["note"])
+        return JsonResponse({"id": ind.id, "note": ind.note})
     if ind_id:
         ind = Individual.objects.filter(id=ind_id).first()
         if ind is None:

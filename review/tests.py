@@ -2233,6 +2233,52 @@ class CatalogTests(TestCase):
         **저절로 되살아난다.**"""
         self.assertIn(f'href="/photo/{self.box.id}"', self.page("work"))
 
+    def test_the_three_fields_are_editable_where_you_recognise_the_animal(self):
+        """번호를 붙이는 사람은 조각 여러 장을 한꺼번에 봐야 하고, 그것을 펴
+        놓는 화면이 여기다. `/reid` 로 건너가 다시 찾아 치게 하면 **그 왕복이
+        일의 절반이 된다.**"""
+        html = self.page("reid")
+        for attr in (f'data-id="', 'data-nick="', 'data-note="'):
+            self.assertIn(attr, html)
+        self.assertIn("csrftoken", html)      # POST 하려면 쿠키가 있어야 한다
+
+    def test_it_carries_the_nickname_and_the_note(self):
+        ind = Individual.objects.get(name="JTA001")
+        ind.nickname, ind.note = "제돌이", "왼쪽만 있다"
+        ind.save()
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            r = self.client.get("/catalog").context["rows"][0]
+        self.assertEqual((r["nick"], r["note"]), ("제돌이", "왼쪽만 있다"))
+
+    def test_a_note_can_be_written_and_cleared(self):
+        """**"모르겠다" 를 적을 자리다.** 가장 잦은 것이 "묶음은 맞는 것 같은데
+        어느 개체인지 모르겠다" 인데, 보류함(조각을 빼는 것)에도 이름을 안
+        건드리는 것(안 본 것과 구별이 안 된다)에도 안 맞는다."""
+        ind = Individual.objects.get(name="JTA001")
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            def put(v):
+                return self.client.post(
+                    "/api/reid/box", json.dumps({"id": ind.id, "note": v}),
+                    content_type="application/json")
+            put("두 마리가 섞였을 수도")
+            ind.refresh_from_db()
+            self.assertEqual(ind.note, "두 마리가 섞였을 수도")
+            put("")                       # 비울 수 있다 — 빈 값이 곧 답이다
+            ind.refresh_from_db()
+            self.assertEqual(ind.note, "")
+
+    def test_writing_a_note_does_not_touch_the_number(self):
+        """`if ind_id` 갈래가 먼저 채 가면 "이름이 비었다" 가 난다 — 별명을
+        이름 갈래 앞에 둔 것과 같은 이유다."""
+        ind = Individual.objects.get(name="JTA001")
+        with self.settings(FIN_ROLE="reid", ROOT_URLCONF="review.tests"):
+            r = self.client.post("/api/reid/box",
+                                 json.dumps({"id": ind.id, "note": "메모"}),
+                                 content_type="application/json")
+        self.assertEqual(r.status_code, 200)
+        ind.refresh_from_db()
+        self.assertEqual(ind.name, "JTA001")
+
     def test_it_carries_the_last_day_for_the_screen_to_sort_by(self):
         """화면이 `최근에 본 것부터` 로 고쳐 세울 때 쓴다. `span` 에서 잘라
         쓰게 두면 한 날짜뿐인 개체에서 갈린다 — 그때는 `~` 가 없다."""
