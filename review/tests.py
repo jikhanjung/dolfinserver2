@@ -2333,6 +2333,23 @@ class ReidGridDefaultsTests(TestCase):
         opts = re.findall(r'<option value="(\w+)">', html)
         self.assertEqual(opts[0], "day", "첫 갈래가 곧 기본값이다")
 
+    def test_what_another_window_assigned_leaves_the_selection(self):
+        """**창이 둘이면 `sel` 이 사는 창과 넣는 창이 다르다.**
+
+        상자 목록을 새 창으로 띄우면 격자 창은 상자 목록이 감춰지고(`popped`)
+        상자 창은 격자가 감춰진다(`onlybox`). 그래서 고르기는 격자 창에서 하고
+        넣기는 상자 창에서 하는데, `assign()` 은 **제 창의 `sel` 만** 푼다.
+
+        그러면 넣은 조각이 격자 창에서 골라진 채로 남고, `넣은 것 숨기기` 때문에
+        **화면에서는 사라져서** 사람은 선택도 풀린 줄 안다. 이 화면은 **누르면
+        쌓이므로** 다음 조각을 누르면 안 보이는 옛것이 함께 끌려간다 —
+        2026-08-27 에 조각 둘이 그렇게 `상자 44` 에서 `JTA100` 으로 옮겨 갔다.
+        """
+        html = self.page()
+        i = html.index('m.t === "assign"')
+        # 창을 건너온 배정을 받는 자리에서 `sel` 을 정리해야 한다
+        self.assertIn("sel.delete(id)", html[i:i + 900])
+
     def test_the_choice_is_remembered(self):
         """볼 때마다 다시 고르게 하면 그것이 곧 안 쓰게 되는 이유가 된다 —
         크기 슬라이더를 기억하는 것과 같다."""

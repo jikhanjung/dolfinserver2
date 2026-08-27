@@ -956,7 +956,20 @@ function tell(msg) { if (BC) BC.postMessage(msg); }
 if (BC) BC.onmessage = e => {
   const m = e.data || {};
   if (m.t === "assign") {
-    (m.ids || []).forEach(id => { if (byId[id]) byId[id].in = m.ind; });
+    // **고른 것에서도 뺀다.** 안 그러면 저쪽 창에서 넣은 조각이 이쪽 창에서는
+    // 골라진 채로 남는다 — 그리고 `넣은 것 숨기기` 때문에 **화면에서는
+    // 사라져서** 사람은 선택도 풀린 줄 안다. 그 상태로 다음 조각을 누르면
+    // (이 화면은 **누르면 쌓인다**) 안 보이는 옛것이 함께 끌려가,
+    // 방금 넣은 상자가 도로 비고 조각이 새 상자로 옮겨 간다.
+    //
+    // 2026-08-27 에 실제로 그렇게 됐다 — 조각 둘을 `상자 44` 에 넣고 19초 뒤
+    // 셋째를 `JTA100` 에 넣었는데 셋이 한 요청으로 갔다(`Identification`
+    // #1423~#1427 이 그 자취다). 두 창이 갈려 있어(`popped`/`onlybox`)
+    // **`sel` 이 사는 창과 넣는 창이 다른 것**이 이 버그의 뿌리다.
+    (m.ids || []).forEach(id => {
+      if (byId[id]) byId[id].in = m.ind;
+      sel.delete(id);
+    });
     const b = BOXES.find(x => x.id === m.ind);
     if (b) b.n = (b.n || 0) + (m.ids || []).length;
     draw();
@@ -972,7 +985,11 @@ if (BC) BC.onmessage = e => {
     document.documentElement.style.setProperty("--thumb", m.v + "px");
     localStorage.setItem("thumbSize", m.v);
   } else if (m.t === "notfin") {
-    (m.ids || []).forEach(id => { if (byId[id]) byId[id].notfin = m.cls; });
+    // 같은 이유로 여기서도 뺀다 — 지느러미가 아니라고 한 것도 격자에서 사라진다
+    (m.ids || []).forEach(id => {
+      if (byId[id]) byId[id].notfin = m.cls;
+      sel.delete(id);
+    });
     draw();
   } else if (m.t === "name") {
     const x = BOXES.find(y => y.id === m.id);
