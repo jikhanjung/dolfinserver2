@@ -109,7 +109,7 @@
      position:fixed; right:10px; bottom:10px; z-index:40; padding:5px 10px;
      background:#0d131aee; border:1px solid var(--line); border-radius:999px;
      font-size:12px; color:var(--dim) }
-  body.onlybox #grid, body.onlybox .gridonly { display:none !important }
+  body.onlybox #gcol, body.onlybox .gridonly { display:none !important }
   body.onlybox > header, body.onlybox > .topnav,
   body.onlybox #side > .top { display:none !important }
   body.onlybox #side { width:100% !important; border-left:0 }
@@ -155,8 +155,42 @@
   .box.special .hd { padding:3px 8px }
   .box.special .nm { font-size:12px }
   #main { flex:1; display:flex; min-height:0 }
-  #grid { flex:1; overflow-y:auto; padding:10px; display:flex;
+  /* 격자·날짜띠·쪽 차림이 한 기둥이다 — 격자만 구르고 위아래 둘은 붙박이다 */
+  #gcol { flex:1; display:flex; flex-direction:column; min-height:0 }
+  /* **`position:relative` 는 장식이 아니다.** 날짜띠가 `.daysep` 의
+     `offsetTop` 을 재서 지금 어느 날을 보고 있는지 알아내는데, 그 기준이
+     격자가 아니면 머리말 높이까지 섞여 들어와 한 칸씩 어긋난다 */
+  #grid { flex:1; overflow-y:auto; padding:10px; display:flex; position:relative;
           flex-wrap:wrap; gap:6px; align-content:flex-start }
+  /* **지금 보고 있는 날.** 굴리는 동안 따라 바뀐다 — `날짜·시간순` 은 하루가
+     수백 장이라 화면 안의 `찍힌 때` 배지만으로는 "지금 며칠을 보고 있나" 가
+     안 잡힌다. 정렬이 날짜순일 때만 뜬다: 다른 정렬에서는 이웃한 칸의 날이
+     제각각이라 맨 위 칸의 날을 크게 적어 봐야 뜻이 없다 */
+  #daybar { flex:none; display:none; align-items:center; gap:12px;
+            padding:5px 13px; border-bottom:1px solid var(--line);
+            background:#111820; font-size:12.5px; color:var(--dim) }
+  #daybar.on { display:flex }
+  #daybar b { color:var(--ink); font:600 15px "IBM Plex Mono",monospace;
+              letter-spacing:.01em }
+  /* 쪽 안에서 날이 바뀌는 자리에 금을 긋는다 — 띠가 언제 바뀌었는지 격자
+     안에서도 보여야 굴리다 멈춘 자리를 짚을 수 있다 */
+  .daysep { flex:0 0 100%; display:flex; align-items:center; gap:9px;
+            margin:7px 2px 0; color:#9fb0c2;
+            font:600 12.5px "IBM Plex Mono",monospace }
+  .daysep::after { content:""; flex:1; border-top:1px solid var(--line) }
+  .daysep:first-child { margin-top:0 }
+  /* **쪽 차림.** 격자 아래에 붙박이로 둔다 — 다음 쪽으로 넘기는 것은 한 쪽을
+     다 보고 나서 하는 일이라, 손이 이미 아래에 가 있다 */
+  #pager { flex:none; display:flex; gap:8px; align-items:center;
+           padding:5px 11px; border-top:1px solid var(--line);
+           background:#111820; font-size:12.5px; color:var(--dim) }
+  #pager button { padding:2px 9px; font-size:12.5px }
+  #pager button:disabled { opacity:.3; cursor:default }
+  #pager button:disabled:hover { border-color:var(--line) }
+  #pager b { color:var(--ink) }
+  #pager input { width:4em; text-align:right; font:inherit; font-size:12.5px;
+                 background:var(--panel); color:var(--ink);
+                 border:1px solid var(--line); border-radius:5px; padding:2px 6px }
   #side { width:var(--sidew); flex:none; border-left:1px solid var(--line);
           position:relative;
           display:flex; flex-direction:column; min-height:0 }
@@ -352,6 +386,18 @@
          훑어 낮은 것부터 보이면 한 번에 골라 걸러낼 수 있다 -->
     <option value="pfin">지느러미가 아닐 듯</option>
   </select>
+  <!-- **한 쪽에 몇 장.** 격자 7,912칸을 한꺼번에 들고 있으면 조각 하나를
+       상자에 넣을 때마다 그 전부를 다시 만드느라 화면이 멎는다. 칸마다
+       윤곽 폴리곤(SVG)이 딸려 있어 무게가 그림 한 장에 그치지 않는다.
+       **`전부` 는 남겨 둔다** — 한 상자만 보거나(`보기`) 많이 걸러 놓고
+       훑을 때는 쪽을 넘기는 것이 오히려 방해다 -->
+  <select id="psize" title="한 쪽에 몇 장">
+    <option value="100">100장씩</option>
+    <option value="200" selected>200장씩</option>
+    <option value="400">400장씩</option>
+    <option value="800">800장씩</option>
+    <option value="0">전부</option>
+  </select>
   <select id="fside">
     <option value="">좌·우 모두</option>
     <option value="left">왼쪽이 앞</option>
@@ -371,8 +417,10 @@
   <span class="stat" id="tsizebar">상자 <input type="range" id="tsize" min="44" max="160"
     step="4" value="88"></span>
   <span style="flex:1"></span>
-  <span class="stat"><kbd>클릭</kbd>더하기·빼기 <kbd>Shift</kbd>범위
-    <kbd>빈 곳</kbd>해제 <kbd>우클릭</kbd>원본 <kbd>끌기</kbd>상자로</span>
+  <span class="stat"><kbd>클릭</kbd>더하기·빼기 <kbd
+    title="고르기는 보이는 쪽 안에서만 — 안 보이는 것이 골라진 채 끌려가면 엉뚱한 상자로 간다">Shift</kbd>범위
+    <kbd>빈 곳</kbd>해제 <kbd>우클릭</kbd>원본 <kbd>끌기</kbd>상자로
+    <kbd>[</kbd><kbd>]</kbd>쪽</span>
 </header>
 
 {% if not ready %}
@@ -388,7 +436,11 @@
 </div>
 <div id="menu" hidden></div>
 <div id="main">
-  <div id="grid"></div>
+  <div id="gcol">
+    <div id="daybar"><b id="dbday"></b><span id="dbspan"></span></div>
+    <div id="grid"></div>
+    <div id="pager"></div>
+  </div>
   <div id="side">
     <div class="top">
       <span class="stat" id="selinfo">고른 것 0</span>
@@ -450,6 +502,67 @@ let sel = new Set(), lastClick = null;
 // 움직이게만** 한다.
 let focusOn = null;      // 한 상자만 볼 때 그 상자 번호
 
+// **쪽을 나눈다.** 격자에 7,912칸을 한꺼번에 들고 있으면 칸마다 그림 하나와
+// 윤곽 폴리곤(SVG)이 딸려 DOM 이 십만 마디를 넘는데, 조각을 상자에 넣을 때마다
+// 그 전부를 다시 만드느라 화면이 몇 초씩 멎었다. 보이는 만큼만 짓는다.
+//
+// **`sel` 은 쪽을 안 건넌다.** 쪽을 넘길 때 비운다 — 안 보이는 것이 골라진 채
+// 남아 있다가 다음에 끌 때 함께 끌려가면, 방금 넣은 상자가 도로 비고 조각이
+// 엉뚱한 상자로 간다 (2026-08-27 에 두 창 사이에서 실제로 그렇게 됐다.
+// 아래 `BroadcastChannel` 의 `assign` 주석이 그 자취다).
+let pageAt = 0;
+let VIEW = [], PAGE = [];   // 걸러 정렬한 전부 / 지금 쪽에 있는 것
+const perPage = () => +document.getElementById("psize").value || 1e9;
+const dayOf = i => String(i.at || i.day || "").slice(0, 10);
+// **한 상자만 볼 때는 날짜로 안 가른다.** 그 화면은 `view()` 가 정렬을 안 하고
+// 든 차례 그대로 내므로(그 상자를 통째로 훑는 자리다) 금을 그으면 같은 날이
+// 몇 번씩 다시 나와, 금이 날을 가르는 것이 아니라 어지럽히기만 한다.
+const dayMode = () =>
+  focusOn === null && document.getElementById("sort").value === "day";
+
+// **바뀐 것만 갈아 끼운다.** `innerHTML` 을 통째로 갈던 것을 걷었다 — 조각
+// 하나를 상자에 넣을 때 격자와 상자 목록을 **둘 다 처음부터 다시 지었고**,
+// 상자 쪽은 대표 그림 51장이 매번 새 `<img>` 라 눈에 띄게 깜박이며 멎었다.
+// 지은 글을 요소에 적어 두고(`__h`) 같으면 손대지 않는다. 자리까지 같으면
+// 옮기지도 않는다 — DOM 에서 뽑았다 꽂으면 그 순간 끌기가 끊기고 그림이
+// 다시 그려진다.
+function sync(root, list, keyOf, htmlOf) {
+  const old = new Map();
+  for (const el of [...root.children]) old.set(el.dataset.k, el);
+  const want = [];
+  for (const d of list) {
+    const k = String(keyOf(d)), h = htmlOf(d);
+    let el = old.get(k);
+    if (el) old.delete(k);
+    if (!el || el.__h !== h) {
+      const t = document.createElement("template");
+      t.innerHTML = h.trim();
+      const nel = t.content.firstElementChild;
+      nel.dataset.k = k; nel.__h = h;
+      if (el) el.replaceWith(nel);
+      el = nel;
+    }
+    want.push(el);
+  }
+  for (const el of old.values()) el.remove();
+  let cur = root.firstElementChild;
+  for (const el of want) {
+    if (el === cur) { cur = el.nextElementSibling; continue; }
+    root.insertBefore(el, cur);
+  }
+}
+
+// 그 조각이 있는 쪽으로 넘어간다. 상자에서 눌러 찾아 줄 때와 묶음을 보일 때
+// 쓴다 — **격자에 없는 것을 가리키면 아무 일도 안 일어난 것처럼 보인다.**
+function goTo(id, keepSel) {
+  const v = view();
+  const at = v.findIndex(i => i.id === id);
+  if (at < 0) return false;
+  const p = Math.floor(at / perPage());
+  if (p !== pageAt) { pageAt = p; if (!keepSel) sel.clear(); }
+  return true;
+}
+
 // **이것도 창을 건너 실어 보내야 한다.** 상자 목록을 새 창으로 띄우면 그
 // 창은 격자가 감춰져 있어(`body.onlybox`) `보기` 를 눌러도 펼 데가 없다 —
 // 격자 창이 받아서 펴야 비로소 그 단추가 제 값을 한다. 전에는 `focusOn` 을
@@ -461,6 +574,7 @@ let focusOn = null;      // 한 상자만 볼 때 그 상자 번호
 function setFocus(id, quiet) {
   focusOn = id;
   sel.clear();
+  pageAt = 0;
   draw();
   document.getElementById("grid").scrollTop = 0;
   if (!quiet) tell({t: "look", id});
@@ -504,16 +618,6 @@ function paint() {
   document.getElementById("selinfo").textContent = `고른 것 ${sel.size}`;
 }
 
-function draw() {
-  const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
-  const bar = document.getElementById("focusbar");
-  bar.classList.toggle("on", focusOn !== null);
-  document.getElementById("grid").classList.toggle("solo", focusOn !== null);
-  if (focusOn !== null) {
-    document.getElementById("fname").textContent = nm[focusOn] || "?";
-    document.getElementById("fcount").textContent =
-      `${ITEMS.filter(i => i.in === focusOn).length}장 · 끌어서 빼거나 옮길 수 있다`;
-  }
 // **0~1 좌표로 온다** — `look/`(사람이 보는 것)과 `chips/`(모델이 먹는 것)의
 // 크기가 달라 화소가 아니라 비율로 적어 두었다 (`reid.overlay`).
 // 어두운 획(`halo`)을 먼저 깔아 밝은 지느러미 위에서도 선이 보이게 한다.
@@ -553,18 +657,14 @@ const ovHtml = i => (!i.out) ? "" :
       ? `<span class="flip" title="원본은 오른쪽이 앞 — 좌우로 뒤집어 세운 것이다">⇄</span>`
       : "");
 
-  const fin = parseInt(getComputedStyle(document.documentElement)
-                       .getPropertyValue("--fin")) || 220;
-  // 한 글자를 대략 0.62배 너비로 보고 칸에 맞춘다. 위로는 칸의 절반까지
-  const fs = name => Math.max(11, Math.min(fin / 1.9,
-                       (fin - 10) / Math.max(2, name.length) / 0.62));
-  document.getElementById("grid").innerHTML = view().map(i =>
-    `<div class="fin${sel.has(i.id) ? " sel" : ""}${i.in ? " done" : ""}${
-            i.notfin ? " notfin" : ""}${
+// **고른 표시는 여기서 안 짓는다.** `paint()` 가 클래스로만 얹는데, 지어 놓은
+// 글(`__h`)에 그것이 섞이면 `sync` 가 "안 바뀌었다" 고 본 칸의 실제 클래스와
+// 어긋난다 — 골라 둔 것이 다음 그림에서 풀린 것처럼 보이는 종류의 어긋남이다.
+function finHtml(i, nm) {
+  return `<div class="fin${i.in ? " done" : ""}${i.notfin ? " notfin" : ""}${
             repOf(i.in) === i.id ? " isrep" : ""}"
-          draggable="true" data-id="${i.id}"
+          draggable="true" data-id="${i.id}" data-day="${dayOf(i)}"
           data-box-name="${i.in ? (nm[i.in] || "") : ""}"
-          style="${i.in ? `--nfs:${fs(nm[i.in] || "").toFixed(0)}px` : ""}"
           title="box ${i.id} · ${i.day} · notch ${i.rough}${
             i.facing === "right" ? " · 좌우 뒤집힘" : ""}">
        <img src="/reid/chip/${i.id}.png" loading="lazy" alt="">
@@ -576,11 +676,150 @@ const ovHtml = i => (!i.out) ? "" :
        ${i.at ? `<span class="at">${i.at.slice(0, 16)}</span>` : ""}
        ${i.notfin ? `<span class="nf">${NOTFIN_NAME[i.notfin] || i.notfin}</span>`
                   : ""}
-     </div>`).join("");
+     </div>`;
+}
+
+function draw() {
+  const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
+  const bar = document.getElementById("focusbar");
+  bar.classList.toggle("on", focusOn !== null);
+  document.getElementById("grid").classList.toggle("solo", focusOn !== null);
+  if (focusOn !== null) {
+    document.getElementById("fname").textContent = nm[focusOn] || "?";
+    document.getElementById("fcount").textContent =
+      `${ITEMS.filter(i => i.in === focusOn).length}장 · 끌어서 빼거나 옮길 수 있다`;
+  }
+  VIEW = view();
+  const per = perPage();
+  pageAt = Math.max(0, Math.min(pageAt, Math.ceil(VIEW.length / per) - 1));
+  // **상자만 보는 창에서는 격자를 아예 안 짓는다** (`body.onlybox`). 감춰
+  // 놓고 짓기만 해도 그 창에서 조각을 넣을 때마다 볼 수 없는 칸 수백 개를
+  // 새로 만든다. **`PAGE` 도 비운다** — 거기서 `Ctrl+A` 를 누르면 안 보이는
+  // 것이 골라지고, 그 창의 일은 대표 그림을 끄는 것이라 그대로 끌려간다.
+  const off = document.body.classList.contains("onlybox");
+  PAGE = off ? [] : VIEW.slice(pageAt * per, pageAt * per + per);
+
+  // **날짜순일 때만 금을 긋는다.** 다른 정렬에서는 이웃한 칸의 날이 제각각이라
+  // 두 칸마다 금이 그어져 격자가 도리어 안 읽힌다.
+  const byDay = dayMode();
+  const rows = [];
+  let last = null;
+  for (const i of PAGE) {
+    if (byDay) {
+      const d = dayOf(i);
+      if (d !== last) { last = d; rows.push({sep: d}); }
+    }
+    rows.push(i);
+  }
+  sync(document.getElementById("grid"), rows,
+       r => r.sep ? "d:" + r.sep : r.id,
+       r => r.sep ? `<div class="daysep" data-day="${r.sep}">${r.sep || "날짜 없음"}</div>`
+                  : finHtml(r, nm));
+  fitNames();
+
   document.getElementById("nleft").textContent = ITEMS.filter(i => !i.in).length;
-  document.getElementById("selinfo").textContent = `고른 것 ${sel.size}`;
+  if (!off) { drawPager(); measureDays(); }
+  paint();
   drawBoxes();
 }
+
+// **상자 이름의 글자 크기는 지은 글에 안 넣는다.** 칸 크기(`--fin`)를 따라
+// 변하는 값이라, 넣어 두면 슬라이더를 움직일 때마다 든 칸의 글이 달라져
+// `sync` 가 그 칸을 통째로 새로 만든다 — 끌던 중이면 끌기가 끊기고 그림이
+// 다시 그려진다. 지은 뒤에 스타일로만 얹는다.
+function fitNames() {
+  const fin = parseInt(getComputedStyle(document.documentElement)
+                       .getPropertyValue("--fin")) || 220;
+  // 한 글자를 대략 0.62배 너비로 보고 칸에 맞춘다. 위로는 칸의 절반까지
+  for (const el of document.querySelectorAll("#grid .fin.done")) {
+    const name = el.dataset.boxName || "";
+    el.style.setProperty("--nfs", Math.max(11, Math.min(fin / 1.9,
+      (fin - 10) / Math.max(2, name.length) / 0.62)).toFixed(0) + "px");
+  }
+}
+
+// ---- 쪽 차림 ---------------------------------------------------------------
+// **몇 번째 쪽인지보다 "몇 장 중 어디" 가 먼저다.** 쪽 번호는 한 쪽에 몇 장을
+// 두느냐에 따라 뜻이 변하는데, `1,201–1,400 / 5,318` 은 안 변한다.
+// 날짜순일 때는 그 쪽이 **어느 날부터 어느 날까지인지**를 함께 적는다.
+let pagerHtml = "";
+function drawPager() {
+  const per = perPage(), n = VIEW.length;
+  const np = Math.max(1, Math.ceil(n / per));
+  const p = document.getElementById("pager");
+  const num = x => x.toLocaleString("en-US");
+  const days = dayMode() && PAGE.length
+    ? (() => { const a = dayOf(PAGE[0]), b = dayOf(PAGE[PAGE.length - 1]);
+               return a === b ? a : `${a} ~ ${b}`; })() : "";
+  // 한 쪽뿐이면 넘길 단추를 안 낸다 — 누를 수 없는 단추 넷이 자리만 차지한다
+  const nav = np === 1 ? "" :
+      `<button data-go="0" ${pageAt ? "" : "disabled"}>«</button>
+       <button data-go="${pageAt - 1}" ${pageAt ? "" : "disabled"}>‹ 이전</button>
+       <span><input id="pnum" value="${pageAt + 1}"> / <b>${np}</b> 쪽</span>
+       <button data-go="${pageAt + 1}" ${pageAt < np - 1 ? "" : "disabled"}>다음 ›</button>
+       <button data-go="${np - 1}" ${pageAt < np - 1 ? "" : "disabled"}>»</button>`;
+  const h = nav
+     + `<span>${!n ? "빈 격자" : np === 1 ? `${num(n)}장`
+         : `<b>${num(pageAt * per + 1)}–${num(Math.min(n, (pageAt + 1) * per))}</b>`
+           + ` / ${num(n)}장`}</span>`
+     + (days ? `<span style="flex:1"></span><span>${days}</span>` : "");
+  // 값이 그대로면 안 짓는다 — 다시 지으면 쪽 번호 칸에 넣던 글이 날아간다
+  if (h === pagerHtml) return;
+  pagerHtml = h;
+  p.innerHTML = h;
+  p.querySelectorAll("button[data-go]").forEach(b => {
+    b.onclick = () => goPage(+b.dataset.go);
+  });
+  const box = document.getElementById("pnum");
+  if (box) {
+    box.onkeydown = e => {
+      if (e.key === "Enter") { e.preventDefault(); goPage(+box.value - 1); }
+    };
+    box.onblur = () => { box.value = pageAt + 1; };
+  }
+}
+
+function goPage(p) {
+  const np = Math.max(1, Math.ceil(VIEW.length / perPage()));
+  p = Math.max(0, Math.min(np - 1, p | 0));
+  if (p === pageAt) return;
+  pageAt = p;
+  sel.clear();
+  document.getElementById("grid").scrollTop = 0;
+  draw();
+}
+
+// ---- 날짜띠 ---------------------------------------------------------------
+// **지금 어느 날을 보고 있나.** 굴리는 동안 따라 바뀐다. 자리는 그릴 때 한 번만
+// 재 둔다 — 굴릴 때마다 칸 수백 개의 자리를 물으면 그 자체가 버벅인다.
+// 칸 크기가 `--fin` 으로 고정이라 그림이 늦게 와도 자리는 안 밀린다.
+let DAYTOP = [];
+function measureDays() {
+  const on = dayMode();
+  document.getElementById("daybar").classList.toggle("on", on);
+  DAYTOP = !on ? [] : [...document.querySelectorAll("#grid .daysep")]
+    .map(el => ({top: el.offsetTop, day: el.dataset.day}));
+  document.getElementById("dbspan").textContent =
+    DAYTOP.length > 1 ? `이 쪽 ${DAYTOP.length}일` : "";
+  showDay();
+}
+function showDay() {
+  if (!DAYTOP.length) return;
+  const y = document.getElementById("grid").scrollTop + 8;
+  let cur = DAYTOP[0];
+  for (const d of DAYTOP) { if (d.top <= y) cur = d; else break; }
+  const el = document.getElementById("dbday");
+  const t = cur.day || "날짜 없음";
+  if (el.textContent !== t) el.textContent = t;
+}
+let dayRaf = 0;
+document.getElementById("grid").addEventListener("scroll", () => {
+  if (dayRaf) return;
+  dayRaf = requestAnimationFrame(() => { dayRaf = 0; showDay(); });
+}, {passive: true});
+// 창을 줄이면 줄바꿈이 달라져 금의 자리가 바뀐다
+if ("ResizeObserver" in window)
+  new ResizeObserver(measureDays).observe(document.getElementById("grid"));
 
 function boxHtml(b, mine) {
   const has = mine[b.id] || [];
@@ -610,8 +849,7 @@ function drawBoxes() {
   ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
   // **개체가 아닌 자리를 위에 붙여 둔다** — 굴리지 않고 늘 닿게.
   const hold = BOXES.filter(b => b.hold);
-  document.getElementById("holdbox").innerHTML =
-    hold.map(b => boxHtml(b, mine)).join("");
+  sync(document.getElementById("holdbox"), hold, b => b.id, b => boxHtml(b, mine));
   // **이름순 — 다만 숫자를 숫자로 읽는다.** 그냥 글자로 견주면 `상자 11` 이
   // `상자 2` 앞에 오고, `JTA010` 다음이 `JTA100` 이 된다. `numeric` 이 그것을
   // 자릿수가 아니라 값으로 읽게 한다.
@@ -629,14 +867,14 @@ function drawBoxes() {
   // 것이 아래**라는 뜻이므로, 그 뜻을 적어 둔다. 한글끼리는 가나다순이라야
   // 하니 견주는 로케일은 `ko` 로 남긴다.
   const later = s => (/^[가-힣]/.test(s) ? 1 : 0);
-  document.getElementById("boxes").innerHTML =
+  sync(document.getElementById("boxes"),
     BOXES.filter(b => !b.hold)
       .sort((a, b) => {
         const x = a.name || "", y = b.name || "";
         return later(x) - later(y) ||
                x.localeCompare(y, "ko", {numeric: true, sensitivity: "base"});
-      })
-      .map(b => boxHtml(b, mine)).join("");
+      }),
+    b => b.id, b => boxHtml(b, mine));
   bindBoxes();
 }
 
@@ -662,8 +900,10 @@ document.getElementById("grid").onpointerdown = e => {
   wasSel = sel.has(id);         // **누르기 전에** 이미 골라져 있었나
   if (e.shiftKey && lastClick !== null) {
     // **범위로 고른다.** 닮은 순서로 이웃해 있는 것을 하나씩 누르게 하면
-    // 손이 너무 많이 간다 — 이 화면의 목적이 한 번에 넣는 것이다
-    const v = view().map(i => i.id);
+    // 손이 너무 많이 간다 — 이 화면의 목적이 한 번에 넣는 것이다.
+    // **보이는 쪽 안에서만 편다** (`PAGE`, `view()` 아님). 쪽을 건너 고르면
+    // 화면 밖의 것이 골라진 채로 끌려가는데, 끌어 넣고 나서야 그것을 안다.
+    const v = PAGE.map(i => i.id);
     const a = v.indexOf(lastClick), b = v.indexOf(id);
     if (a >= 0 && b >= 0)
       v.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => sel.add(x));
@@ -841,6 +1081,8 @@ function bindBoxes() {
       sel = new Set([id]);
       // 넣은 것을 숨겨 두었으면 찾아 줄 수가 없다 — 먼저 켜 준다
       document.getElementById("hidedone").checked = false;
+      // 그리고 그 조각이 있는 쪽으로 넘어간다
+      goTo(id, true);
       draw();
       flash(id);
     };
@@ -908,14 +1150,23 @@ function showGroup() {
                                : s.score.toFixed(3)}</span>
     </button>`).join("") ||
     '<span class="stat">닮은 개체가 없다 — 새 개체로 만들 것</span>';
-  // **묶음을 격자에서 골라 보여 준다** — 눈으로 확인하고 누르라는 뜻이다
+  // **묶음을 격자에서 골라 보여 준다** — 눈으로 확인하고 누르라는 뜻이다.
+  // 그 조각이 다른 쪽에 있으면 **그 쪽으로 넘어간다**: 안 넘어가면 골랐다는
+  // 표시만 있고 볼 것이 없어, 확인하라고 내민 화면이 확인을 못 하게 한다.
   sel = new Set(g.boxes.filter(b => byId[b]));
   const first = g.boxes.find(b => byId[b]);
+  if (first) goTo(first, true);
   draw();
   if (first) {
     const el = document.querySelector(`[data-id="${first}"]`);
     if (el) el.scrollIntoView({block: "center"});
   }
+  // **쪽에 걸친 묶음은 그렇다고 말한다.** 넣는 것은 `g.boxes` 전부라 맞게
+  // 들어가지만, 화면에서 못 본 것까지 들어간다는 것은 알고 눌러야 한다
+  const on = new Set(PAGE.map(i => i.id));
+  const off = g.boxes.filter(b => byId[b] && !on.has(b)).length;
+  if (off) document.getElementById("gleft").innerHTML +=
+      ` · <span style="color:var(--no)">${off}장은 다른 쪽에 있다</span>`;
 }
 
 async function groupAssign(indId) {
@@ -1086,7 +1337,9 @@ document.getElementById("unfocus").onclick = () => setFocus(null);
 // 열 때마다 `닮은 것끼리` 로 돌아가면 매번 다시 고르게 된다.
 //
 // **`hidedone` 도 함께 기억한다** — 체크상자라 값이 아니라 켬/끔이다.
-["sort", "fside", "hidedone"].forEach(id => {
+// **`psize` 도 함께 기억한다** — 화면 크기와 손버릇에 따라 다르고, 열 때마다
+// 다시 고르게 하면 그것이 곧 안 쓰게 되는 이유가 된다
+["sort", "fside", "hidedone", "psize"].forEach(id => {
   const el = document.getElementById(id);
   const key = "finReid_" + id;
   const saved = localStorage.getItem(key);
@@ -1097,7 +1350,10 @@ document.getElementById("unfocus").onclick = () => setFocus(null);
   el.onchange = () => {
     localStorage.setItem(key, el.type === "checkbox" ? (el.checked ? "1" : "0")
                                                      : el.value);
+    // 거르기·정렬이 바뀌면 몇째 쪽인지는 뜻을 잃는다 — 처음으로 돌아간다
     sel.clear();
+    pageAt = 0;
+    document.getElementById("grid").scrollTop = 0;
     draw();
   };
 });
@@ -1106,8 +1362,13 @@ addEventListener("keydown", e => {
     if (focusOn !== null) { setFocus(null); return; }
     sel.clear(); paint();
   }
+  // **이 쪽 전부**다 — 격자에 안 보이는 것까지 고르면 그것이 그대로 끌려간다
   if ((e.ctrlKey || e.metaKey) && e.key === "a") {
-    e.preventDefault(); view().forEach(i => sel.add(i.id)); paint();
+    e.preventDefault(); PAGE.forEach(i => sel.add(i.id)); paint();
+  }
+  if ((e.key === "[" || e.key === "]") && !e.ctrlKey && !e.metaKey && !e.altKey
+      && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+    goPage(pageAt + (e.key === "]" ? 1 : -1));
   }
 });
 

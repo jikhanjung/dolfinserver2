@@ -193,9 +193,22 @@
     });
   }
 
+  // **크기를 기억한다.** 화면마다 알맞은 크기가 다르고, 여기서 하는 일은
+  // 한참 늘어놓고 견주는 것이라 매번 다시 맞추게 하면 그것이 곧 안 쓰게 되는
+  // 이유가 된다 — `/reid` 의 격자와 같은 어법이되 **열쇠는 따로 둔다**:
+  // 저쪽은 조각 하나를 들여다보는 크기이고 여기는 한 개체를 통째로 펴는
+  // 크기라, 알맞은 값이 서로 다르다.
   const sz = document.getElementById('sz');
-  sz.oninput = () => document.documentElement.style.setProperty(
-      '--fin', sz.value + 'px');
+  const setSz = () => {
+    document.documentElement.style.setProperty('--fin', sz.value + 'px');
+    localStorage.setItem('finCatSize', sz.value);
+  };
+  // 슬라이더가 받는 범위 안일 때만 되살린다 — 밖의 값을 넣으면 브라우저가
+  // 조용히 끝값으로 물리고, 기억한 것과 보이는 것이 어긋난다
+  const savedSz = +localStorage.getItem('finCatSize');
+  if (savedSz >= +sz.min && savedSz <= +sz.max) sz.value = savedSz;
+  setSz();
+  sz.oninput = setSz;
 
   // ---- 고쳐 세우기 --------------------------------------------------------
   //
