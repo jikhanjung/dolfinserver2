@@ -37,3 +37,6 @@ static/vendor/
 static/models/
 bundles/
 reid/
+
+# Claude Code 개인 설정 — 배포 명령 허용 규칙이 든다. 이 기계 것이다
+.claude/settings.local.json
