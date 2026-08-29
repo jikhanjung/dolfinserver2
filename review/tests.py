@@ -2559,3 +2559,31 @@ class ExchangeFreshnessTests(TestCase):
                 from django.test import Client
                 self.assertNotIn("exchange", Client().get("/healthz").json())
 
+class CommandHelpTests(SimpleTestCase):
+    """**모든 명령의 `--help` 가 뜨나.**
+
+    2026-08-29 에 붙였다. `reid_cls --help` 가 `ValueError: unsupported format
+    character 'p'` 로 죽고 있었다 — help 글에 적은 `+2.4%p` 때문이다.
+    **argparse 는 help 를 `%` 로 포맷하므로**(`_expand_help`) 퍼센트를 적으려면
+    `%%` 여야 한다.
+
+    이 저장소의 help 글은 길고 숫자가 많다(`+2.4%p` · `0.73%p`). **퍼센트를
+    적는 것이 여기서는 예외가 아니라 습관**이라 다시 난다 — 그래서 잡는다.
+
+    **`%` 를 찾지 않고 `--help` 를 부른다.** 원인이 아니라 성질을 재는 것이라,
+    다른 이유로 help 가 깨져도 이 시험이 잡는다.
+    """
+    def test_모든_명령의_help_가_뜬다(self):
+        from django.core.management import load_command_class
+
+        names = sorted(p.stem for p in
+                       Path("finseg/management/commands").glob("[!_]*.py"))
+        self.assertGreater(len(names), 10, "명령을 못 찾았다 — 경로가 바뀌었나")
+        broken = {}
+        for name in names:
+            try:
+                cmd = load_command_class("finseg", name)
+                cmd.create_parser("manage.py", name).format_help()
+            except Exception as e:                   # noqa: BLE001
+                broken[name] = f"{type(e).__name__}: {e}"
+        self.assertEqual(broken, {}, f"`--help` 가 깨진 명령: {broken}")

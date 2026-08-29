@@ -74,7 +74,8 @@ class Command(BaseCommand):
         p.add_argument("--emb", default="emb-dinov2.npz",
                        help="`--dir` 안의 임베딩 파일 이름")
         p.add_argument("--test-days", type=int, default=8)
-        p.add_argument("--epochs", type=int, default=400)
+        p.add_argument("--epochs", type=int, default=2000,
+                       help="**400 이었다 — 덜 배운 자리였다** (2026-08-29). 같은 폴드에서 400 → 800 한 칸에 top-1 이 +1.6%%p 뛰고 1200 부터 평평하다. 스크립트들(`exchange.sh`·`from_reid_to_work.sh`)은 이미 `--epochs 2000` 을 안내하고 있었는데 **기본값이 400 이고 재는 명령이 기본값을 써서**, 기록에 남은 성적이 전부 덜 배운 것이었다. 안내와 기본값을 한 자리로 모은다")
         p.add_argument("--lr", type=float, default=0.02)
         p.add_argument("--wd", type=float, default=1e-3,
                        help="**L2 — 손잡이 값의 제곱에 벌점.** 큰 값을 세게 누르되 "
@@ -84,9 +85,18 @@ class Command(BaseCommand):
         p.add_argument("--l1", type=float, default=0.0,
                        help="**L1 — 손잡이 값의 절대값에 벌점.** 작은 값도 같은 "
                             "힘으로 밀어 **쓸모없는 축을 아예 0 으로 만든다.** "
-                            "PCA 가 축을 잘라 이겼으니(384 → 256 에서 +2.4%p) "
+                            "PCA 가 축을 잘라 이겼으니(384 → 256 에서 +2.4%%p) "
                             "**라벨을 보고 자르는 쪽**도 물어볼 값이 있다. "
                             "가중치에만 걸고 편향에는 안 건다")
+        p.add_argument("--hidden", type=int, default=0, metavar="N",
+                       help="**숨은 층을 하나 넣는다** (384→N→개체, ReLU). 0 이면 "
+                            "지금까지 쓰던 선형 한 층이다. 한 층으로는 축들의 "
+                            "가중합밖에 못 말하는데, 두 층은 **조합**을 말한다 — "
+                            "`축 7이 크고 동시에 축 40이 작을 때` 같은 것. "
+                            "**손잡이가 확 는다**: 384→56 이 21,560개인데 "
+                            "384→256→56 은 113,000개이고 배울 조각은 367장이다. "
+                            "미뤄 뒀던 이유가 그것이고(`TODOs`), 조각이 563 → "
+                            "1,221 이 된 2026-08-29 에 다시 물어보려고 붙였다")
         p.add_argument("--no-bias-decay", action="store_true",
                        help="**편향을 감쇠에서 뺀다.** 관례인데 이 저장소는 지금 "
                             "`net.parameters()` 를 통째로 넘겨 편향에도 건다. "
@@ -101,7 +111,7 @@ class Command(BaseCommand):
                        help="**재는 날을 고정하지 말고 돌린다.** 관찰일을 K벌로 "
                             "나눠 한 벌씩 빼면서 K번 배우고 잰다 — 모든 날이 한 "
                             "번씩 잼 쪽에 서므로 질의가 137 → 510 이 되고 눈금이 "
-                            "0.73%p → 0.20%p 가 된다. 0 이면 `--test-days` 대로 "
+                            "0.73%%p → 0.20%%p 가 된다. 0 이면 `--test-days` 대로 "
                             "한 번만 (기본)")
         p.add_argument("--seeds", type=int, default=1, metavar="N",
                        help="씨앗을 N 번 흔들어 폭을 함께 낸다. **폴드 배정은 "
@@ -112,21 +122,34 @@ class Command(BaseCommand):
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
                             "그것이고(`묶음 제안`), 판단 한 번이 여러 장을 덮는다")
 
-    def _fit(self, X, y, n_cls, epochs, lr, wd, seed, l1=0.0, no_bias_decay=False):
-        """선형 한 층. **numpy 로 쓸 수 있게 가중치만 돌려준다** — 화면이 추론할
-        때 torch 를 들이지 않아도 되게.
+    def _fit(self, X, y, n_cls, epochs, lr, wd, seed, l1=0.0, no_bias_decay=False,
+             hidden=0):
+        """선형 한 층, 또는 `hidden` 을 주면 숨은 층 하나를 더 (ReLU).
+        **numpy 로 쓸 수 있게 가중치만 돌려준다** — 화면이 추론할 때 torch 를
+        들이지 않아도 되게. 낸 것은 `_logits` 가 그대로 먹는다.
 
         규제가 둘이다. **L2**(`wd`)는 `AdamW` 가 가중치를 매 걸음 직접 줄이는
         쪽으로 건다(decoupled — Adam 계열에서 손실에 더하는 옛 방식이 의도대로
         안 들어서 갈라 나온 것이다). **L1**(`l1`)은 손실에 더한다.
+
+        **`ReLU` 가 없으면 두 층은 한 층과 같다** — 행렬 두 번 곱하기는 한 번으로
+        접힌다. 층을 진짜 두 층으로 만드는 것이 그 한 줄이다.
         """
         import torch
         import torch.nn.functional as Fn
         torch.manual_seed(seed)
-        net = torch.nn.Linear(X.shape[1], n_cls)
+        if hidden:
+            net = torch.nn.Sequential(torch.nn.Linear(X.shape[1], hidden),
+                                      torch.nn.ReLU(),
+                                      torch.nn.Linear(hidden, n_cls))
+            ws = [net[0].weight, net[2].weight]
+            bs = [net[0].bias, net[2].bias]
+        else:
+            net = torch.nn.Linear(X.shape[1], n_cls)
+            ws, bs = [net.weight], [net.bias]
         if no_bias_decay:
-            groups = [{"params": [net.weight], "weight_decay": wd},
-                      {"params": [net.bias], "weight_decay": 0.0}]
+            groups = [{"params": ws, "weight_decay": wd},
+                      {"params": bs, "weight_decay": 0.0}]
         else:
             groups = [{"params": list(net.parameters()), "weight_decay": wd}]
         opt = torch.optim.AdamW(groups, lr=lr)
@@ -135,13 +158,29 @@ class Command(BaseCommand):
         for _ in range(epochs):
             opt.zero_grad()
             loss = Fn.cross_entropy(net(xt), yt)
-            # **가중치에만 건다** — 편향은 개체마다 하나뿐이라 죽일 축이 없다
+            # **가중치에만 건다** — 편향은 개체마다 하나뿐이라 죽일 축이 없다.
+            # 두 층이면 두 판 다 건다: 미뤄 뒀던 걱정이 손잡이 수라, 규제를
+            # 새로 는 판에만 안 걸면 재려던 것과 다른 것을 재게 된다
             if l1:
-                loss = loss + l1 * net.weight.abs().sum()
+                loss = loss + l1 * sum(t.abs().sum() for t in ws)
             loss.backward()
             opt.step()
-        return (net.weight.detach().numpy().astype(np.float32),
-                net.bias.detach().numpy().astype(np.float32))
+        out = []
+        for t in [x for pair in zip(ws, bs) for x in pair]:
+            out.append(t.detach().numpy().astype(np.float32))
+        return tuple(out)
+
+    @staticmethod
+    def _logits(net, X):
+        """`_fit` 이 낸 것으로 점수를 낸다. **자를 한 곳에 둔다** — 배운 자리와
+        재는 자리가 다른 식으로 셈하면 그 성적은 아무 뜻이 없다."""
+        if len(net) == 2:
+            W, b = net
+            return X @ W.T + b
+        W1, b1, W2, b2 = net
+        h = X @ W1.T + b1
+        np.maximum(h, 0, out=h)                 # ReLU
+        return h @ W2.T + b2
 
     def handle(self, **o):
         import torch
@@ -185,10 +224,10 @@ class Command(BaseCommand):
             raise CommandError("배우는 날과 재는 날이 겹친다 — 이 성적은 못 쓴다")
 
         if o["folds"]:
-            return self._folds(o, X, lab, fac, day, days, cnt, w)
+            return self._folds(o, X, lab, fac, day, days, cnt, w, len(cat))
 
         tot = self._score(o, X, lab, fac, day, is_test, o["seed"], w)
-        self._report(tot, w)
+        self._report(tot, w, len(cat))
 
     def _score(self, o, X, lab, fac, day, is_test, seed, w):
         """한 갈래를 배우고 잰다. **자를 한 곳에 둔다** — 고정 갈래와 폴드가
@@ -213,10 +252,10 @@ class Command(BaseCommand):
                       f"· 개체 {len(classes)})")
                 continue
             k = {c: i for i, c in enumerate(classes)}
-            W, B = self._fit(X[tr], [k[int(v)] for v in lab[tr]], len(classes),
-                             o["epochs"], o["lr"], o["wd"], seed,
-                             o["l1"], o["no_bias_decay"])
-            logit = X[te] @ W.T + B
+            net = self._fit(X[tr], [k[int(v)] for v in lab[tr]], len(classes),
+                            o["epochs"], o["lr"], o["wd"], seed,
+                            o["l1"], o["no_bias_decay"], o["hidden"])
+            logit = self._logits(net, X[te])
 
             # 기준선 — **배우는 날의 조각만** 후보로 둔다. 분류기가 본 것과
             # 같은 자료라야 공평하다
@@ -257,7 +296,7 @@ class Command(BaseCommand):
             tot["cls10_ok"] = tot.get("cls10_ok", True) and len(classes) > 10
         return tot
 
-    def _report(self, tot, w):
+    def _report(self, tot, w, n_ind):
         if not tot["n"]:
             raise CommandError("잴 것이 없다 — `--test-days` 를 줄일 것")
         n = tot["n"]
@@ -266,12 +305,12 @@ class Command(BaseCommand):
           f"{tot['knn10']/n:>9.1%}")
         w(f"  {'**분류기**':<14}{tot['cls1']/n:>9.1%}{tot['cls5']/n:>9.1%}"
           f"{tot['cls10']/n:>9.1%}")
-        w(self._top10_note(tot))
+        w(self._top10_note(tot, n_ind))
         if tot["cls1"] <= tot["knn1"]:
             w("\n** 기준선을 못 넘었다 — 배운 것이 없다. 개체당 조각이 모자라거나"
               " 규제가 세거나 날 갈래가 너무 좁다.")
 
-    def _folds(self, o, X, lab, fac, day, days, cnt, w):
+    def _folds(self, o, X, lab, fac, day, days, cnt, w, n_ind):
         """**재는 날을 돌린다** — 관찰일 K벌, 한 벌씩 빼면서 K번.
 
         ## 왜 조각이 아니라 날로 나누나
@@ -339,7 +378,7 @@ class Command(BaseCommand):
         w(f"\n  {'합':<5}{len(days):>6}{n:>6}"
           f"{r0['knn1'] / n:>7.1%}{r0['knn5'] / n:>7.1%}{r0['knn10'] / n:>7.1%}"
           f"{r0['cls1'] / n:>8.1%}{r0['cls5'] / n:>7.1%}{r0['cls10'] / n:>7.1%}")
-        w(self._top10_note(r0))
+        w(self._top10_note(r0, n_ind))
         w(f"\n  **질의 {n}** — 한 문제가 {100 / n:.2f}%p "
           f"(고정 갈래 137문항이면 {100 / 137:.2f}%p 였다)")
         if o["seeds"] > 1:
@@ -351,20 +390,26 @@ class Command(BaseCommand):
             w("  **폭이 씨앗 때문에 생긴 것이다** — 자료도 폴드도 같았다. "
               "두 자의 차이가 이 폭보다 작으면 그것은 아직 차이가 아니다.")
 
-    def _top10_note(self, tot):
+    def _top10_note(self, tot, n_ind):
         """**top-10 을 다른 연구와 그대로 견주지 말 것.**
 
         finFindR 82% · CurvRank 83% · Kim et al. 84.8% 가 전부 top-10 이라 같은
         줄에 세우고 싶어지는데, **개체 수가 다르면 같은 자가 아니다.** 저쪽
-        reference 는 79개체이고 우리는 42다 — 아무렇게나 찍어도 42마리에서
-        열을 고르면 23.8%가 맞는데 79마리에서는 12.7%다.
+        reference 는 79개체다 — 아무렇게나 찍어도 42마리에서 열을 고르면
+        23.8%가 맞는데 79마리에서는 12.7%다.
 
         그래서 여기에 **찍어서 맞을 확률**을 함께 적는다. 숫자 옆에 그 값이
         없으면 다음에 보는 사람이 그대로 옮겨 적는다.
+
+        **세어서 쓴다.** 2026-08-29 까지 `42마리 · 23.8%` 가 글에 박혀 있었는데,
+        그날 개체는 65였다 — **"숫자를 그대로 옮겨 적지 말라" 고 말하는 문장이
+        정작 제가 낡은 숫자를 옮기고 있었다.** 박아 둔 값은 자료가 자라는 만큼
+        조용히 틀리고, 여기서 틀리면 성적을 남과 견줄 때 그대로 틀린다.
         """
-        return ("  **top-10 을 남과 견줄 때는 개체 수를 함께 적을 것** — "
-                "우리 42마리에서 찍어 맞을 확률이 23.8%다 "
-                "(Kim et al. 은 79마리라 12.7%).")
+        n = max(1, n_ind)
+        return (f"  **top-10 을 남과 견줄 때는 개체 수를 함께 적을 것** — "
+                f"우리 {n}마리에서 찍어 맞을 확률이 {10 / n:.1%}다 "
+                f"(Kim et al. 은 79마리라 {10 / 79:.1%}).")
 
     def _save(self, o, X, ids, fac, lab, cat, w):
         """**화면이 쓸 분류기를 저장한다.** 날을 안 가르고 아는 것을 전부 쓴다 —
@@ -373,6 +418,13 @@ class Command(BaseCommand):
         `npz` 로 둔다. 추론은 `X @ W.T + b` 한 줄이라 화면 쪽에서 torch 를 들일
         이유가 없다.
         """
+        # **화면은 선형 한 층만 읽는다** (`review/views.py` 의 `_score`).
+        # 숨은 층을 넣은 것을 그대로 저장하면 칸 수가 안 맞아, 화면이 조용히
+        # kNN 으로 떨어지거나 터진다 — 저장하는 자리에서 막는다.
+        if o["hidden"]:
+            raise CommandError(
+                "`--hidden` 은 아직 재기만 한다 — 화면이 `X @ W.T + b` 로만 읽는다 "
+                "(`review/views.py` 의 `_score`). 성적이 서면 화면 쪽을 먼저 고칠 것")
         out = {}
         for side in ("left", "right"):
             m = (fac == side) & (lab >= 0)
