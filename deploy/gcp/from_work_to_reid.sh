@@ -13,6 +13,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# **`python3` 를 그냥 부르지 않는다** — cron 에는 venv 가 없다 (`deploy/_venv.sh`)
+source "$REPO/deploy/_venv.sh"
 HOST="${FIN_GCP_HOST:-dolfinid}"
 ROOT=/srv/dolfinserver2
 TMP="$(mktemp -d)"
@@ -20,7 +22,7 @@ trap 'rm -rf "$TMP"' EXIT
 ROWS="$TMP/from_work.sqlite3"
 
 echo "▶ 담는다"
-cd "$REPO" && python3 manage.py export_from_work_to_reid --out "$ROWS"
+cd "$REPO" && "$PY" manage.py export_from_work_to_reid --out "$ROWS"
 
 echo "▶ 보낸다"
 # `db/` 로 보내는 것은 그 디렉토리가 컨테이너의 `/app/hostdb` 라서다 —

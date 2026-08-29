@@ -120,6 +120,20 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 FIN_SENTINEL = Path(os.environ.get(
     "FIN_SENTINEL", Path(DATABASES["default"]["NAME"]).parent / "INTEGRITY_FAIL"))
 
+# 두 레인 주고받기(`deploy/gcp/exchange.sh`)가 마지막으로 언제 돌았나.
+# **`db/` 옆에 두는 이유가 센티넬과 같다** — 호스트 cron 이 쓰고 컨테이너 화면이
+# 읽는다. `logs/` 는 컨테이너에 안 걸려 있어 거기 두면 화면이 못 본다.
+#
+# **이것이 있어야 멎은 것을 안다.** 2026-08-27~29 에 주고받기가 사흘 내리
+# 죽었는데, 로그에만 남아서 아무도 안 봤다 (`.guides/web/operations.md` §5 —
+# 로그만 남기는 cron 은 검사의 환상이다).
+FIN_EXCHANGE_STATUS = Path(os.environ.get(
+    "FIN_EXCHANGE_STATUS",
+    Path(DATABASES["default"]["NAME"]).parent / "exchange_status.txt"))
+# 몇 시간이 지나면 멎었다고 볼 것인가. 하루 한 번(06:30) 도는 것이라 26시간이면
+# **한 번을 통째로 걸렀다는 뜻**이다 — 하루치 여유를 두되 이틀은 안 기다린다.
+FIN_EXCHANGE_STALE_H = int(os.environ.get("FIN_EXCHANGE_STALE_H", "26"))
+
 # ---- 접속 코드 -------------------------------------------------------------
 # **이 앱에는 사람마다의 인증이 없다.** `login_required` 도 없고 쓰기 경로가
 # 그대로 열려 있어, 주소를 아는 사람은 누구나 판정을 써 넣을 수 있다 — 그리고

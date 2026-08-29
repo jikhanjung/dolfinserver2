@@ -15,6 +15,7 @@ SAM2 는 그 안의 것 하나를 딸 뿐이라, 사람이 하는 일은 틀린 
 """
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
@@ -1311,9 +1312,52 @@ def healthz(request):
         except OSError:
             body["integrity"] = "센티넬이 있는데 못 읽었다"
 
+    # **주고받기가 멎었으면 그것을 말한다** (`.guides/web/operations.md` §5).
+    # `work` 자리에서만 본다 — 레인을 도는 것이 이쪽이고, `reid` 자리에서는
+    # 그 파일이 아예 없어서 늘 "멎었다" 가 된다.
+    #
+    # **`degraded` 지 `unhealthy` 가 아니다.** 화면은 멀쩡히 돌고 판정도 쌓인다.
+    # 다만 저쪽 판정이 안 넘어와 분류기가 낡은 것으로 배운다 — 서빙 장애가
+    # 아니므로 상태코드는 200 이다 (503 은 "트래픽 보내지 말라" 는 뜻이라
+    # 배포 스크립트의 liveness 대기를 멈춰 세운다).
+    if settings.FIN_ROLE == "work":
+        st = _exchange_state()
+        if st:
+            body["exchange"] = st
+            if not st.get("fresh"):
+                degraded = True
+
     body["status"] = ("unhealthy" if not ok else
                       "degraded" if degraded else "ok")
     return JsonResponse(body, status=200 if ok else 503)
+
+
+def _exchange_state():
+    """주고받기가 마지막으로 언제, 성하게 돌았나 (`deploy/gcp/exchange.sh` 가 적는다).
+
+    **없는 것과 멎은 것을 가른다.** 파일이 없으면 아직 한 번도 안 돌았거나 이
+    자리가 레인을 안 도는 것이라 `None` 을 내고 화면에 아무 말도 안 한다 —
+    안 하기로 한 일을 고장으로 세면 그 다음부터 아무도 안 본다.
+    """
+    f = Path(settings.FIN_EXCHANGE_STATUS)
+    try:
+        kv = dict(l.split("=", 1) for l in f.read_text(encoding="utf-8").splitlines()
+                  if "=" in l)
+    except OSError:
+        return None
+    at = kv.get("at", "")
+    age = None
+    try:
+        age = (timezone.localtime() - timezone.make_aware(
+            datetime.strptime(at, "%Y-%m-%d %H:%M:%S"))).total_seconds() / 3600
+    except (ValueError, TypeError):
+        pass
+    # 때를 못 읽으면 성하다고 치지 않는다 — 못 읽는 것 자체가 알 거리다
+    fresh = bool(kv.get("ok") == "1" and age is not None
+                 and age <= settings.FIN_EXCHANGE_STALE_H)
+    return {"at": at, "ok": kv.get("ok") == "1", "stage": kv.get("stage", ""),
+            "note": kv.get("note", "")[:120], "fresh": fresh,
+            **({"age_h": round(age, 1)} if age is not None else {})}
 
 
 @ensure_csrf_cookie

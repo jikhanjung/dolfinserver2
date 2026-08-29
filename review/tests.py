@@ -2481,3 +2481,81 @@ class TileStampTests(TestCase):
         got = json.loads(re.search(r"const ITEMS = (\[.*?\]);", html, re.S).group(1))
         self.assertEqual(got[0]["at"], "2016-03-15 05:48:12")
         self.assertIn("i.at.slice(0, 16)", html)      # 화면은 분까지만 낸다
+
+
+class ExchangeFreshnessTests(TestCase):
+    """**주고받기가 멎었을 때 `/healthz` 가 그것을 말하나.**
+
+    2026-08-29 에 붙였다. 두 레인 cron(`exchange.sh`)이 2026-08-27~29 사흘
+    내리 죽었는데 **한 번도 성공한 적이 없다는 것을 사흘 뒤에 알았다** —
+    죽은 자리가 로그뿐이었고, 로그는 볼 일이 없었다
+    (`.guides/web/operations.md` §5 — 로그만 남기는 cron 은 검사의 환상).
+
+    그래서 재는 것은 "레인이 도는가" 가 아니라 **"멎은 것이 밖에서 보이는가"**
+    다. 앞의 것은 cron 이 하는 일이고, 뒤의 것이 없으면 앞의 것이 멎어도 모른다.
+    """
+    def _hit(self, text=None, **over):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "exchange_status.txt"
+            if text is not None:
+                f.write_text(text, encoding="utf-8")
+            with override_settings(FIN_ROLE="work", FIN_EXCHANGE_STATUS=f,
+                                   FIN_EXCHANGE_STALE_H=26, **over):
+                from django.test import Client
+                r = Client().get("/healthz")
+                return r.status_code, r.json()
+
+    def _stamp(self, hours_ago):
+        from django.utils import timezone
+        from datetime import timedelta
+        return (timezone.localtime()
+                - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def test_방금_돌았으면_성하다(self):
+        code, d = self._hit(f"at={self._stamp(0.5)}\nok=1\nstage=끝\nnote=개체 67\n")
+        self.assertEqual(code, 200)
+        self.assertTrue(d["exchange"]["fresh"], d["exchange"])
+        self.assertEqual(d["status"], "ok")
+
+    def test_하루를_거르면_degraded_지만_200_이다(self):
+        # **503 이 아니다.** 화면은 멀쩡히 돌고 판정도 쌓인다 — 낡은 것은
+        # 분류기가 배울 자료뿐이다. 503 을 내면 배포 스크립트의 liveness
+        # 대기가 멈춰 서서, 게이트가 아니라 배포 장애가 된다.
+        code, d = self._hit(f"at={self._stamp(30)}\nok=1\nstage=끝\nnote=\n")
+        self.assertEqual(code, 200)
+        self.assertFalse(d["exchange"]["fresh"])
+        self.assertEqual(d["status"], "degraded")
+
+    def test_죽은_채로_멎으면_방금이라도_degraded(self):
+        # **때가 새것인 것만으로는 안 된다.** 사흘을 죽인 그 모양이 정확히
+        # 이것이다 — 06:30 마다 꼬박꼬박 돌되 매번 첫 줄에서 죽었다.
+        code, d = self._hit(f"at={self._stamp(0.1)}\nok=0\nstage=되받기\n"
+                            f"note=되받기 에서 멎었다 (rc=1)\n")
+        self.assertEqual(d["status"], "degraded")
+        self.assertEqual(d["exchange"]["stage"], "되받기")
+
+    def test_때를_못_읽으면_성하다고_안_친다(self):
+        _, d = self._hit("at=어제쯤\nok=1\nstage=끝\n")
+        self.assertFalse(d["exchange"]["fresh"])
+        self.assertNotIn("age_h", d["exchange"])
+
+    def test_파일이_없으면_아무_말도_안_한다(self):
+        # **안 하기로 한 일을 고장으로 세지 않는다.** 레인을 안 도는 자리도
+        # 있고, 한 번도 안 돌린 자리도 있다 — 거기서 늘 `degraded` 를 내면
+        # 그 다음부터 아무도 이 자리를 안 본다.
+        code, d = self._hit(None)
+        self.assertEqual(code, 200)
+        self.assertNotIn("exchange", d)
+        self.assertEqual(d["status"], "ok")
+
+    def test_reid_자리에서는_안_본다(self):
+        # 레인을 도는 것은 `work` 다. `reid` 에는 그 파일이 아예 없어서
+        # 보면 늘 "멎었다" 가 된다.
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "s.txt"
+            f.write_text(f"at={self._stamp(99)}\nok=0\nstage=되받기\n", encoding="utf-8")
+            with override_settings(FIN_ROLE="reid", FIN_EXCHANGE_STATUS=f,
+                                   ROOT_URLCONF="review.tests"):
+                from django.test import Client
+                self.assertNotIn("exchange", Client().get("/healthz").json())
+

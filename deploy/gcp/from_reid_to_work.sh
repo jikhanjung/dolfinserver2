@@ -12,6 +12,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# **`python3` 를 그냥 부르지 않는다** — cron 에는 venv 가 없다 (`deploy/_venv.sh`)
+source "$REPO/deploy/_venv.sh"
 HOST="${FIN_GCP_HOST:-dolfinid}"
 ROOT=/srv/dolfinserver2
 TMP="$(mktemp -d)"
@@ -26,9 +28,9 @@ rsync -a "$HOST:$ROOT/db/_to_work.sqlite3" "$TMP/back.sqlite3"
 ssh "$HOST" "rm -f $ROOT/db/_to_work.sqlite3"
 
 echo "▶ 헛돌려 본다"
-cd "$REPO" && python3 manage.py import_from_reid_to_work --from "$TMP/back.sqlite3" --dry-run
+cd "$REPO" && "$PY" manage.py import_from_reid_to_work --from "$TMP/back.sqlite3" --dry-run
 echo "▶ 갈아 끼운다"
-python3 manage.py import_from_reid_to_work --from "$TMP/back.sqlite3"
+"$PY" manage.py import_from_reid_to_work --from "$TMP/back.sqlite3"
 
 echo ""
 echo "다음 — 새 판정으로 분류기를 다시 배운다:"
