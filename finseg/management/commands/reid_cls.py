@@ -1,7 +1,7 @@
 """**아는 개체를 얼마나 맞히나** — 카탈로그를 클래스로 놓고 분류기를 배운다.
 
     python manage.py reid_cls --dir reid/v2 --emb emb-dinov2.npz
-    python manage.py reid_cls --test-days 10 --epochs 400
+    python manage.py reid_cls --test-days 10 --folds 5 --seeds 3
 
 ## 왜 metric 이 아니라 분류인가
 

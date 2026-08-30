@@ -184,6 +184,38 @@ def curve_of(state, crop):
     return trailing_edge(norm)
 
 
+def rear_chord(te):
+    """뒷날 점들 → **뒷날 현으로 다시 세운 (x, y)**. 못 세우면 None.
+
+    끝점이 원점, 뒷삽입점이 (1, 0). **호를 안 편다** — 남는 `y` 가 곧 호의
+    부풂이고 거기 얹힌 잔물결이 notch 다.
+
+    ## 왜 펴면 안 되나
+
+    처음에는 "축에서 벗어난 거리" 로 폈다. 화면을 쓰는 사람의 판단이 그것을
+    뒤집었다 — **호가 있고 거기에 notch 가 생겨서 구분되는 것**이라, 펴면 그
+    관계가 사라진다 (`devlog/20260827_003` 7절).
+
+    **밑동 현이 아니라 뒷날 현이다.** 밑동 현으로 세우면 지느러미가 앞으로
+    기운 정도가 뒷날 모양에 섞여 든다.
+    """
+    te = np.asarray(te, float)
+    if len(te) < 3:
+        return None
+    a, b = te[0], te[-1]
+    v = b - a
+    L = float(np.hypot(*v))
+    if L < 1e-9:
+        return None
+    c, s = v / L
+    R = np.array([[c, s], [-s, c]]) / L
+    q = (te - a) @ R.T
+    # 호가 늘 +y 로 부풀게 — 좌·우를 섞지 않는 한 안전하다 (`frame` 과 같은 규칙)
+    if q[:, 1].mean() < 0:
+        q = q * (1, -1)
+    return q
+
+
 def distance(a, b):
     """뒷날 곡선 둘 사이의 거리. 작을수록 닮았다.
 

@@ -45,8 +45,12 @@ class Command(BaseCommand):
         p.add_argument("--dir", default=str(settings.FIN_REID), help="기본은 **화면이 보는 격자**(`FIN_REID`) — 박아 두면 격자를 갈아 끼울 때마다 조용히 옛것을 잰다")
         p.add_argument("--emb", default="emb-dinov2.npz")
         p.add_argument("--test-days", type=int, default=8)
-        p.add_argument("--epochs", type=int, default=400,
-                       help="**`reid_cls` 와 같은 값이라야 한다** — 성적이 그 명령과 다르면 자를 견줄 근거가 없다")
+        p.add_argument("--epochs", type=int, default=2000,
+                       help="**`reid_cls` 와 같은 값이라야 한다** — 성적이 그 명령과 "
+                            "다르면 자를 견줄 근거가 없다. 2026-08-29 에 저쪽 기본이 "
+                            "400 → 2000 으로 올라서 함께 올렸다(400 은 덜 배운 "
+                            "자리였다). **한쪽만 고치면 이 명령이 조용히 낮은 성적으로 "
+                            "자를 매긴다** — 같아야 한다고 적어 두는 것만으로는 안 맞는다")
         p.add_argument("--write", action="store_true",
                        help="`items.json` 에 자들을 적는다 — 화면 정렬에 쓰려면")
         p.add_argument("--seed", type=int, default=20260825)
