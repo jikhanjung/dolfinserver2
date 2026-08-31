@@ -68,6 +68,41 @@
   figure.newday { border-left:2px solid var(--line); padding-left:5px }
   figure.rep figcaption { color:var(--ok) }
   .side-r figcaption:after { content:" ↔" }
+  /* **고른 것은 테로 말한다.** 이 화면은 조각을 잔뜩 펴 놓는 자리라, 흐리게
+     하거나 크기를 바꾸면 정작 견주려던 그림이 달라 보인다 */
+  figure.sel img { border-color:var(--sel); box-shadow:0 0 0 2px var(--sel) }
+  #menu { position:fixed; z-index:60; min-width:190px; padding:4px;
+          background:#1a212b; border:1px solid #33404f; border-radius:8px;
+          box-shadow:0 10px 28px #000a }
+  #menu button { display:block; width:100%; background:none; border:0;
+                 border-radius:5px; padding:6px 10px; text-align:left;
+                 font:inherit; font-size:13px; color:var(--ink); cursor:pointer }
+  #menu button:hover { background:#2b3646 }
+  #menu button[disabled] { color:var(--dim); cursor:default; background:none }
+  #menu hr { border:0; border-top:1px solid var(--line); margin:4px 6px }
+  #menu .head { color:var(--dim); font-size:11.5px; padding:3px 10px }
+  /* 고르는 창. **거를 칸이 먼저다** — 개체가 67이고 늘어난다 */
+  #pick { position:fixed; inset:0; z-index:70; display:flex;
+          align-items:center; justify-content:center; background:#0008 }
+  #pick .box { width:min(460px, 92vw); max-height:74vh; display:flex;
+               flex-direction:column; background:#141b23;
+               border:1px solid var(--line); border-radius:10px;
+               box-shadow:0 18px 50px #000b }
+  #pick .top { padding:10px; border-bottom:1px solid var(--line) }
+  #pick input { width:100%; font:inherit; font-size:14px; padding:7px 10px;
+                background:#0d131a; color:var(--ink);
+                border:1px solid var(--line); border-radius:6px; outline:none }
+  #pick input:focus { border-color:var(--sel) }
+  #pick .list { overflow-y:auto; padding:6px }
+  #pick .list button { display:flex; gap:8px; align-items:baseline; width:100%;
+                       background:none; border:0; border-radius:6px;
+                       padding:6px 10px; text-align:left; font:inherit;
+                       color:var(--ink); cursor:pointer }
+  #pick .list button:hover, #pick .list button.on { background:#2b3646 }
+  #pick .list .nk { color:var(--dim); font-size:12px }
+  #pick .list .kd { color:#ffd479; font-size:11.5px }
+  #pick .list .new { color:var(--ok); font-weight:600 }
+  #pick .none { color:var(--dim); padding:12px; font-size:13px }
 </style>
 
 {% include "review/_nav.html" with here="catalog" %}
@@ -87,7 +122,8 @@
   <span style="flex:1"></span>
   <span class="stat"><a href="/reid">분류하러 가기</a> ·
     번호·별명·메모는 <b>눌러서 고친다</b>{% if fin_role != "reid" %} ·
-    조각을 누르면 원본 사진{% endif %}</span>
+    조각을 누르면 원본 사진{% else %} ·
+    조각은 <b>눌러서 고르고</b> <b>우클릭</b>으로 옮긴다{% endif %}</span>
 </header>
 
 <main>
@@ -108,7 +144,7 @@
     <div class="fins">
       {% for f in r.fins %}
         <figure class="{% if f.id == r.rep %}rep{% endif %} {% if f.facing == 'right' %}side-r{% endif %}"
-                data-day="{{ f.day }}">
+                data-day="{{ f.day }}" data-box="{{ f.id }}">
           {% comment %}
              **여기서 못 가는 길은 안 낸다** (`fin_role`). `/photo` 는 `work`
              자리의 길이고 이 화면은 `reid` 자리에만 걸려 있어(`urls.py`)
@@ -132,15 +168,215 @@
 {% endfor %}
 </main>
 
+<div id="menu" hidden></div>
+
 <script>
   // 날이 바뀌는 자리에 금. **같은 날 연속 프레임은 개체의 증거가 약하다**
-  for (const box of document.querySelectorAll('.fins')) {
-    let prev = null;
-    for (const f of box.children) {
-      if (prev !== null && f.dataset.day !== prev) f.classList.add('newday');
-      prev = f.dataset.day;
+  // (긋는 식은 아래 `marks()` 하나다 — 옮긴 뒤에도 같은 것을 다시 부른다)
+  marks();
+  // ---- 조각을 옮긴다 -------------------------------------------------------
+  //
+  // **이 화면이 존재하는 이유가 여기 있다.** `/catalog` 은 "둘이 사실 같은
+  // 개체는 아닌지, 한 상자에 두 개체가 섞이지 않았는지" 를 나란히 놓고 보는
+  // 자리인데, 섞인 것을 **찾고 나서 고치려면 `/reid` 로 건너가 그 상자를
+  // 다시 찾아야** 했다. 그 왕복이 일의 절반이다 — 번호 붙이는 길을 여기 둔
+  // 것과 같은 이유로 옮기는 길도 여기 둔다.
+  //
+  // 넣는 길은 `/reid` 와 **같은 것 하나**다 (`/api/reid/assign`) — 판정을
+  // 쌓는 규칙(덮어쓰지 않는다)이 두 화면에서 갈리면 안 된다.
+  const INDS = {{ inds|safe }};
+  const ROLE = "{{ fin_role }}";
+  let sel = new Set(), lastPick = null;
+
+  const figs = () => [...document.querySelectorAll('figure[data-box]')];
+  const paint = () => figs().forEach(f =>
+    f.classList.toggle('sel', sel.has(+f.dataset.box)));
+
+  // **`/photo` 링크가 사는 자리에서는 눌러 고르지 않는다.** 지금 이 화면은
+  // `reid` 역할에만 걸려 있어 그 링크가 없지만(`urls.py`), 뒷날 `work` 에도
+  // 걸리면 누르는 뜻이 둘이 된다 — 그때 저절로 갈리게 둔다.
+  if (ROLE === 'reid') {
+    document.addEventListener('click', e => {
+      const f = e.target.closest('figure[data-box]');
+      if (!f) { if (!e.target.closest('#menu,#pick')) { sel.clear(); paint(); } return; }
+      const id = +f.dataset.box;
+      // **범위는 한 개체 안에서만 편다** — 개체를 건너뛰며 고르는 일은 없고,
+      // 건너뛰게 두면 안 보이는 개체의 조각이 딸려 간다
+      if (e.shiftKey && lastPick !== null) {
+        const inSec = [...f.closest('.fins').children].map(x => +x.dataset.box);
+        const a = inSec.indexOf(lastPick), b = inSec.indexOf(id);
+        if (a >= 0 && b >= 0)
+          inSec.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => sel.add(x));
+      } else if (sel.has(id)) sel.delete(id);
+      else sel.add(id);
+      lastPick = id;
+      paint();
+    });
+  }
+
+  const menu = document.getElementById('menu');
+  const hideMenu = () => { menu.hidden = true; };
+  addEventListener('mousedown', e => { if (!e.target.closest('#menu')) hideMenu(); });
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape') { hideMenu(); closePick(); sel.clear(); paint(); }
+  });
+
+  // **누른 것이 고른 것 안에 있으면 고른 것 전부에, 아니면 그 한 장에.**
+  // `/reid` 의 우클릭과 같은 규칙이다 — 안 가르면 여럿 골라 놓고 우클릭했을
+  // 때 한 장만 옮겨져, 사람은 다 된 줄 알고 지나간다.
+  function targets(id) {
+    return sel.has(id) && sel.size > 1 ? [...sel] : [id];
+  }
+
+  document.addEventListener('contextmenu', e => {
+    const f = e.target.closest('figure[data-box]');
+    if (!f) return;
+    e.preventDefault();
+    const id = +f.dataset.box;
+    const ids = targets(id);
+    const sec = f.closest('.ind');
+    const from = +sec.querySelector('.nm').dataset.id;
+    const many = ids.length > 1 ? ` (${ids.length}장)` : '';
+    const rows = [
+      [`다른 개체로 옮기기…${many}`, () => openPick(ids, from)],
+      // 대표는 한 장일 때만 뜻이 있다
+      ids.length === 1 && !f.classList.contains('rep')
+        ? ['이 조각을 대표로', () => setRep(from, id)] : null,
+      null,
+      [`개체에서 빼기${many}`, () => move(ids, null, from)],
+    ];
+    menu.innerHTML = `<div class="head">상자 ${ids.join(', ').slice(0, 40)}</div>`
+      + rows.map((r, n) => r === null ? '<hr>'
+          : `<button data-n="${n}">${r[0]}</button>`).join('');
+    menu.querySelectorAll('button').forEach(b => {
+      b.onclick = () => { hideMenu(); rows[+b.dataset.n][1](); };
+    });
+    menu.hidden = false;
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.min(e.clientX, innerWidth - r.width - 6) + 'px';
+    menu.style.top = Math.min(e.clientY, innerHeight - r.height - 6) + 'px';
+  });
+
+  // ---- 개체 고르는 창 ------------------------------------------------------
+  let pickEl = null;
+  function closePick() { if (pickEl) { pickEl.remove(); pickEl = null; } }
+
+  function openPick(ids, from) {
+    closePick();
+    pickEl = document.createElement('div');
+    pickEl.id = 'pick';
+    pickEl.innerHTML = `<div class="box">
+        <div class="top"><input placeholder="번호·별명으로 거른다 — Enter 로 첫 줄"></div>
+        <div class="list"></div></div>`;
+    document.body.appendChild(pickEl);
+    const inp = pickEl.querySelector('input'), list = pickEl.querySelector('.list');
+    const draw = () => {
+      const q = inp.value.trim().toLowerCase();
+      // **옮겨 갈 곳에서 지금 개체는 뺀다** — 제자리에 넣는 것은 판정만 한 벌
+      // 더 쌓고 아무것도 안 바꾼다
+      const hit = INDS.filter(i => i.id !== from &&
+        (!q || (i.name + ' ' + (i.nick || '')).toLowerCase().includes(q)));
+      list.innerHTML = `<button class="mk"><span class="new">＋ 새 개체로</span>
+          <span class="nk">고른 것만 담은 새 상자를 만든다</span></button>`
+        + (hit.length ? hit.map(i => `<button data-id="${i.id}">
+              <span>${i.name}</span>
+              ${i.nick ? `<span class="nk">${i.nick}</span>` : ''}
+              ${i.kind ? `<span class="kd">${i.kind === 'notfin' ? '지느러미 아님' : '보관함'}</span>` : ''}
+            </button>`).join('')
+           : '<div class="none">맞는 개체가 없다 — 새 개체로 만들 수 있다</div>');
+      list.querySelectorAll('button').forEach(b => {
+        b.onclick = () => b.classList.contains('mk') ? newInd(ids, from)
+                                                     : move(ids, +b.dataset.id, from);
+      });
+    };
+    inp.oninput = draw;
+    inp.onkeydown = e => {
+      if (e.key === 'Enter') { const b = list.querySelector('button[data-id]');
+                               if (b) b.click(); }
+    };
+    pickEl.onmousedown = e => { if (e.target === pickEl) closePick(); };
+    draw();
+    inp.focus();
+  }
+
+  async function post(url, body) {
+    const r = await fetch(url, {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf()},
+      body: JSON.stringify(body)});
+    const j = await r.json().catch(() => ({error: `서버가 ${r.status} 를 냈다`}));
+    if (j.error) { alert(j.error); return null; }
+    return j;
+  }
+
+  async function newInd(ids, from) {
+    const r = await post('/api/reid/box', {});
+    if (!r) return;
+    INDS.push({id: r.id, name: r.name, nick: '', kind: ''});
+    await move(ids, r.id, from);
+  }
+
+  async function setRep(ind, box) {
+    const r = await post('/api/reid/box', {id: ind, rep: box});
+    if (!r) return;
+    const sec = section(ind);
+    if (sec) {
+      sec.querySelectorAll('figure.rep').forEach(f => f.classList.remove('rep'));
+      const f = sec.querySelector(`figure[data-box="${box}"]`);
+      if (f) f.classList.add('rep');
     }
   }
+
+  const section = ind => [...document.querySelectorAll('.ind')]
+    .find(s => +s.querySelector('.nm').dataset.id === ind) || null;
+
+  async function move(ids, to, from) {
+    closePick();
+    if (!await post('/api/reid/assign', {individual: to, boxes: ids})) return;
+    const dst = to === null ? null : section(to);
+    for (const id of ids) {
+      const f = document.querySelector(`figure[data-box="${id}"]`);
+      if (!f) continue;
+      if (!dst) { f.remove(); continue; }
+      // 날짜순으로 끼워 넣는다 — 이 화면은 날이 바뀌는 자리에 금을 긋는다
+      const box = dst.querySelector('.fins');
+      const at = [...box.children].find(x => x.dataset.day > f.dataset.day);
+      box.insertBefore(f, at || null);
+      f.classList.remove('rep');            // 옮겨 간 곳의 대표가 아니다
+    }
+    sel.clear(); paint();
+    [section(from), dst].forEach(s => s && refresh(s));
+    marks();
+    // **새 개체는 화면에 자리가 없다.** 만들자마자 옮기면 그 개체의 구획이
+    // 아직 없어서 조각이 갈 데가 없다 — 그때만 다시 그린다.
+    if (to !== null && !dst) location.reload();
+  }
+
+  /** 구획 하나의 머리를 **DOM 에서 다시 센다** — 서버에 다시 묻지 않는다.
+      묻자면 조각 그림을 통째로 다시 받는데, 옮긴 것은 한 장이다. */
+  function refresh(sec) {
+    const fs = [...sec.querySelectorAll('figure[data-box]')];
+    const days = [...new Set(fs.map(f => f.dataset.day).filter(Boolean))].sort();
+    sec.dataset.n = fs.length;
+    sec.dataset.days = days.length;
+    sec.dataset.last = days.length ? days[days.length - 1] : '';
+    sec.classList.toggle('one', days.length < 2);
+    const span = days.length > 1 ? ` · ${days[0]} ~ ${days[days.length - 1]}`
+                                 : (days.length ? ` · ${days[0]}` : '');
+    sec.querySelector('.meta').innerHTML =
+      `${fs.length}장 · <span class="days">날 ${days.length}</span>${span}`;
+  }
+
+  /** 날이 바뀌는 자리의 금을 다시 긋는다. */
+  function marks() {
+    for (const box of document.querySelectorAll('.fins')) {
+      let prev = null;
+      for (const f of box.children) {
+        f.classList.toggle('newday', prev !== null && f.dataset.day !== prev);
+        prev = f.dataset.day;
+      }
+    }
+  }
+
   // ---- 세 칸을 고친다 ------------------------------------------------------
   //
   // **알아보는 자리에서 이름을 붙인다.** 번호를 붙이는 사람은 조각 여러 장을

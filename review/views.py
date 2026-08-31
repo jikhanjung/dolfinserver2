@@ -591,7 +591,14 @@ def catalog(request):
     # **첫 그림은 서버가 이 순서로 낸다** — JS 가 늦거나 막혀도 뜻이 있는
     # 순서로 보이고, 고쳐 세우는 것은 조각을 다시 받지 않는다.
     rows.sort(key=lambda r: (-r["days"], -r["n"]))
+    # **옮길 곳 목록은 카탈로그가 아니라 개체 전부다.** `catalog()` 는 조각이
+    # 든 것만 세는데, 옮기는 자리에서는 **빈 개체와 개체가 아닌 자리
+    # (임시보관함·지느러미 아님)** 도 골라야 한다 — 한 상자에 섞인 둘을
+    # 가르다 보면 "이건 지느러미가 아니다" 가 나온다.
+    inds = [{"id": i.id, "name": i.name, "nick": i.nickname, "kind": i.kind}
+            for i in Individual.objects.order_by("id")]
     return render(request, "review/catalog.html", {
+        "inds": json.dumps(inds, ensure_ascii=False),
         "rows": rows,
         "n_ind": len(rows),
         "n_fin": sum(r["n"] for r in rows),
