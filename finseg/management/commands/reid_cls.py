@@ -89,6 +89,30 @@ class Command(BaseCommand):
                             "PCA 가 축을 잘라 이겼으니(384 → 256 에서 +2.4%%p) "
                             "**라벨을 보고 자르는 쪽**도 물어볼 값이 있다. "
                             "가중치에만 걸고 편향에는 안 건다")
+        p.add_argument("--as-of", type=int, default=None, metavar="개체판정번호",
+                       help="**그때의 카탈로그로 잰다** — `Identification` 번호가 "
+                            "이 값 이하인 정답만 쓴다(`reid_eval` 과 같은 손잡이). "
+                            "**자료가 늘면 문제가 달라져 성적을 세로로 못 견준다** — "
+                            "2026-08-29 하루에도 44.9 → 49.5 였는데 코드가 아니라 "
+                            "판정이 는 것이었다. 문제를 고정하고 자·자료를 흔들려면 "
+                            "이것이 필요하다. **`kind` 는 못 되살린다** — 그때 "
+                            "임시보관함이던 것이 지금 개체면 개체로 센다")
+        p.add_argument("--min-chips", type=int, default=0, metavar="N",
+                       help="**조각이 N장 이상인 개체만** 놓고 배운다. `자료가 더 "
+                            "있으면 나아지나` 를 묻는 자리다 — 잰 곡선이 4~9장 "
+                            "11.1%% → 10~19장 30.6%% → 20장 이상 33.8%% 였다. "
+                            "**혼자 쓰면 답이 안 나온다**: 개체당 조각이 느는 "
+                            "동시에 **개체 수가 줄어** 문제가 쉬워진다. "
+                            "`--sample-ind` 로 개체 수만 같게 맞춘 대조군을 함께 "
+                            "돌릴 것")
+        p.add_argument("--sample-ind", type=int, default=0, metavar="K",
+                       help="**개체를 K마리만 아무렇게나 골라** 놓고 배운다. "
+                            "`--min-chips` 의 대조군이다 — 클래스 수를 같게 맞춰 "
+                            "놓으면 남는 차이가 조각 수에서 온 것이 된다. "
+                            "고르는 씨앗은 `--ind-seed` 다(머리 씨앗과 따로 둔다 — "
+                            "**같은 개체 무리를 놓고 머리만 흔들어야** 둘을 가른다)")
+        p.add_argument("--ind-seed", type=int, default=0,
+                       help="`--sample-ind` 가 개체를 고르는 씨앗")
         p.add_argument("--calib", action="store_true",
                        help="**확신이 읽히나** 를 함께 낸다. 성적은 `무엇을 골랐나` "
                             "만 재는데, 화면은 그 옆에 `98.3%%` 같은 퍼센트를 "
@@ -269,7 +293,20 @@ class Command(BaseCommand):
             raise CommandError("`--arcface` 와 `--hidden` 은 같이 못 쓴다 — "
                                "숨은 층을 두면 추론 때도 특징을 정규화해야 한다")
 
-        cat = reid.catalog()
+        cat = reid.catalog(as_of=o["as_of"])
+        # **개체를 걸러 내는 자리는 여기 하나다** — `of` 를 만들기 전에 걸러야
+        # 뺀 개체의 조각이 `lab = -1` 이 되어 배움에서도 잼에서도 함께 빠진다.
+        # 뒤에서 걸러 내면 그 조각이 다른 개체의 후보로 남아 문제가 달라진다.
+        if o["min_chips"]:
+            cat = {k: v for k, v in cat.items() if len(v) >= o["min_chips"]}
+        if o["sample_ind"]:
+            rng = np.random.default_rng(o["ind_seed"])
+            keys = sorted(cat)
+            pick = rng.choice(len(keys), size=min(o["sample_ind"], len(keys)),
+                              replace=False)
+            cat = {keys[i]: cat[keys[i]] for i in sorted(pick)}
+        if len(cat) < 2:
+            raise CommandError(f"남은 개체가 {len(cat)}마리다 — 거르기를 늦출 것")
         of = {b: i for i, v in cat.items() for b in v}
         lab = np.array([of.get(int(b), -1) for b in ids])
         if (lab >= 0).sum() < 20:
@@ -281,7 +318,8 @@ class Command(BaseCommand):
         test_days = set(sorted(days, key=lambda d: -cnt[d])[:o["test_days"]])
         is_test = np.array([d in test_days for d in day])
         w(f"자료 {f} · {X.shape[1]}차원 · 정답 {int((lab>=0).sum()):,}조각 "
-          f"· 개체 {len(cat)}")
+          f"· 개체 {len(cat)}"
+          + (f"  ← 개체판정 {o['as_of']:,}번까지의 정답" if o["as_of"] else ""))
         w(f"관찰일 {len(days)} → 재는 날 {len(test_days)} · 배우는 날 "
           f"{len(days)-len(test_days)}")
 
