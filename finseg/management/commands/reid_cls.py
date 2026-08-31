@@ -34,6 +34,7 @@
 """
 import json
 import math
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -89,6 +90,28 @@ class Command(BaseCommand):
                             "PCA 가 축을 잘라 이겼으니(384 → 256 에서 +2.4%%p) "
                             "**라벨을 보고 자르는 쪽**도 물어볼 값이 있다. "
                             "가중치에만 걸고 편향에는 안 건다")
+        p.add_argument("--unfreeze", type=int, default=0, metavar="N",
+                       help="**백본 마지막 N블록을 녹여 함께 배운다** (0 이면 지금처럼 "
+                            "얼린 특징 위의 선형 한 층). 얼린 백본 위에서 진 것들"
+                            "(ViT-B · 2층 MLP · ArcFace 여백)과 **축이 다르다** — "
+                            "저것들은 특징을 안 건드렸다. `TODOs` 가 걸어 둔 조건"
+                            "(조각 1,200)은 2026-08-29 에 넘었다. "
+                            "**앞 블록은 한 번만 계산해 캐시한다** — 얼려 뒀으니 "
+                            "매 에폭 같은 값이 나오고, 그것만으로 4.3배 빠르다"
+                            "(m710q CPU 에서 72 → 16.6 ms/장). "
+                            "**그래서 증강을 못 쓴다**: 앞이 매번 같은 입력을 본다. "
+                            "증강까지 하려면 캐시를 버려야 하고 4배가 든다")
+        p.add_argument("--deep-epochs", type=int, default=20, metavar="N",
+                       help="`--unfreeze` 일 때의 에폭. 얼린 갈래의 `--epochs`(2000)와 "
+                            "**자릿수가 다르다** — 저쪽은 384차원 위의 선형 한 층을 "
+                            "밑바닥부터 배우고, 이쪽은 이미 배운 블록을 조금 옮긴다")
+        p.add_argument("--lr-deep", type=float, default=1e-4,
+                       help="`--unfreeze` 일 때의 학습률. 얼린 갈래의 0.02 를 그대로 "
+                            "쓰면 배운 블록이 무너진다")
+        p.add_argument("--batch", type=int, default=16,
+                       help="`--unfreeze` 일 때의 묶음 크기")
+        p.add_argument("--chips", default="chips.npz",
+                       help="`--unfreeze` 가 읽을 조각 꾸러미 (`reid_chips` 가 쓴다)")
         p.add_argument("--as-of", type=int, default=None, metavar="개체판정번호",
                        help="**그때의 카탈로그로 잰다** — `Identification` 번호가 "
                             "이 값 이하인 정답만 쓴다(`reid_eval` 과 같은 손잡이). "
@@ -171,6 +194,106 @@ class Command(BaseCommand):
                        help="**묶어서 묻는다** — 같은 날·같은 쪽의 한 개체 조각을 "
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
                             "그것이고(`묶음 제안`), 판단 한 번이 여러 장을 덮는다")
+
+    def _prefix(self, root, chips, ids, unfreeze, w, keep_rows):
+        """조각 → **얼린 앞부분을 통과한 토큰**. 한 번만 만들어 두고 돌려 쓴다.
+
+        마지막 N블록만 녹이면 앞 블록은 얼려 있으므로 **매 에폭 같은 값**이
+        나온다. 그것을 다시 계산하는 것이 CPU 에서 값을 다 먹는다 —
+        재 보니 마지막 블록만 녹인 학습(72ms/장)이 얼린 forward(76ms/장)와
+        거의 같았다. 캐시하면 16.6ms/장이다.
+
+        **그래서 증강을 못 쓴다.** 앞이 매번 같은 입력을 본다 — 증강까지
+        하려면 이 함수를 버리고 조각부터 매번 돌려야 한다.
+
+        `reid_chips` 의 전처리를 그대로 쓴다 (128 → 224 · ImageNet 정규화) —
+        **다른 식으로 넣으면 얼린 특징과 견줄 수 없다.**
+
+        **정답이 있는 조각만 만든다.** 격자가 7,912장인데 정답은 1,300장이고,
+        정답 없는 것은 배움에도 잼에도 안 들어간다 — 전부 만들면 497초에
+        3.1GB 였다. 낸 `pos` 가 원래 줄번호를 캐시 줄번호로 옮긴다.
+        """
+        import torch
+        import torch.nn.functional as Fn
+
+        z = np.load(root / chips)
+        if not (z["box_id"] == ids).all():
+            raise CommandError(f"{chips} 와 임베딩의 상자 차례가 다르다")
+        m = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14",
+                           pretrained=True, verbose=False)
+        m.eval()
+        for p in m.parameters():
+            p.requires_grad_(False)
+        keep = m.blocks[-unfreeze:]
+        head = m.blocks[:-unfreeze]
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        rows = np.flatnonzero(keep_rows)
+        pos = np.full(len(ids), -1, dtype=np.int64)
+        pos[rows] = np.arange(len(rows))
+        C = torch.from_numpy(z["chip"][rows])
+        out = []
+        t0 = time.time()
+        for i in range(0, len(C), 32):
+            if i and i % 640 == 0:
+                w(f"    캐시 {i:,}/{len(C):,} … {time.time() - t0:.0f}s")
+            x = C[i:i + 32].unsqueeze(1).repeat(1, 3, 1, 1)
+            x = Fn.interpolate(x, size=224, mode="bilinear", align_corners=False)
+            with torch.no_grad():
+                h = m.prepare_tokens_with_masks((x - mean) / std)
+                for blk in head:
+                    h = blk(h)
+            out.append(h)
+        w(f"    캐시 {len(C):,}장 (격자 {len(ids):,} 중 정답 있는 것) · "
+          f"{time.time() - t0:.0f}s · "
+          f"{sum(t.numel() for t in out) * 4 / 1e6:.0f} MB")
+        return torch.cat(out), m, keep, pos
+
+    def _fit_deep(self, pre, tr, y, n_cls, m, keep, o, seed):
+        """캐시된 토큰 위에서 **마지막 N블록 + 머리**를 배운다 → numpy 로 낸다.
+
+        낸 것은 `_logits_deep` 이 먹는다. 얼린 갈래처럼 `(W, b)` 로 못 접는다 —
+        블록이 배웠으므로 추론에 그 블록이 필요하다.
+        """
+        import copy
+        import torch
+        import torch.nn.functional as Fn
+
+        torch.manual_seed(seed)
+        blocks = copy.deepcopy(keep)          # **폴드마다 처음부터** — 안 그러면
+        for p in blocks.parameters():         # 앞 폴드가 배운 것이 새어 든다
+            p.requires_grad_(True)
+        blocks.train()
+        head = torch.nn.Linear(384, n_cls)
+        opt = torch.optim.AdamW([*blocks.parameters(), *head.parameters()],
+                                lr=o["lr_deep"], weight_decay=o["wd"])
+        H = pre[tr]
+        yt = torch.tensor(y)
+        B = o["batch"]
+        g = torch.Generator().manual_seed(seed)
+        for _ in range(o["deep_epochs"]):
+            for i in torch.randperm(len(H), generator=g).split(B):
+                opt.zero_grad()
+                h = H[i]
+                for blk in blocks:
+                    h = blk(h)
+                loss = Fn.cross_entropy(head(m.norm(h)[:, 0]), yt[i])
+                loss.backward()
+                opt.step()
+        blocks.eval()
+        return blocks, head
+
+    def _logits_deep(self, net, m, pre, idx, batch=32):
+        import torch
+        blocks, head = net
+        out = []
+        with torch.no_grad():
+            for i in range(0, len(idx), batch):
+                h = pre[idx[i:i + batch]]
+                for blk in blocks:
+                    h = blk(h)
+                out.append(head(m.norm(h)[:, 0]).numpy())
+        return np.concatenate(out)
 
     def _fit(self, X, y, n_cls, epochs, lr, wd, seed, l1=0.0, no_bias_decay=False,
              hidden=0, arcface=False, arc_m=0.3, arc_s=30.0):
@@ -331,6 +454,16 @@ class Command(BaseCommand):
         if set(day[is_test]) & set(day[~is_test]):
             raise CommandError("배우는 날과 재는 날이 겹친다 — 이 성적은 못 쓴다")
 
+        # **캐시는 한 번만 만든다** — 폴드·씨앗이 바뀌어도 얼린 앞부분은 같다.
+        # 이것이 `--unfreeze` 를 이 기계에서 돌릴 만하게 하는 전부다.
+        pre = None
+        if o["unfreeze"]:
+            w(f"\n마지막 {o['unfreeze']}블록을 녹인다 · 에폭 {o['deep_epochs']} · "
+              f"lr {o['lr_deep']} · 묶음 {o['batch']}")
+            pre, model, keep, pos = self._prefix(root, o["chips"], ids,
+                                                 o["unfreeze"], w, lab >= 0)
+            o["_deep"] = (pre, model, keep, pos)
+
         if o["folds"]:
             return self._folds(o, X, lab, fac, day, days, cnt, w, len(cat))
 
@@ -360,11 +493,19 @@ class Command(BaseCommand):
                       f"· 개체 {len(classes)})")
                 continue
             k = {c: i for i, c in enumerate(classes)}
-            net = self._fit(X[tr], [k[int(v)] for v in lab[tr]], len(classes),
-                            o["epochs"], o["lr"], o["wd"], seed,
-                            o["l1"], o["no_bias_decay"], o["hidden"],
-                            o["arcface"], o["arc_m"], o["arc_s"])
-            logit = self._logits(net, X[te])
+            yk = [k[int(v)] for v in lab[tr]]
+            if o["unfreeze"]:
+                # **캐시 줄번호로 옮겨서 쓴다** — 정답 있는 것만 만들어 뒀다
+                pre, model, keep, pos = o["_deep"]
+                deep = self._fit_deep(pre, pos[tr], yk, len(classes),
+                                      model, keep, o, seed)
+                logit = self._logits_deep(deep, model, pre, pos[te])
+            else:
+                net = self._fit(X[tr], yk, len(classes),
+                                o["epochs"], o["lr"], o["wd"], seed,
+                                o["l1"], o["no_bias_decay"], o["hidden"],
+                                o["arcface"], o["arc_m"], o["arc_s"])
+                logit = self._logits(net, X[te])
 
             # 기준선 — **배우는 날의 조각만** 후보로 둔다. 분류기가 본 것과
             # 같은 자료라야 공평하다
@@ -582,6 +723,11 @@ class Command(BaseCommand):
         # **화면은 선형 한 층만 읽는다** (`review/views.py` 의 `_score`).
         # 숨은 층을 넣은 것을 그대로 저장하면 칸 수가 안 맞아, 화면이 조용히
         # kNN 으로 떨어지거나 터진다 — 저장하는 자리에서 막는다.
+        if o["unfreeze"]:
+            raise CommandError(
+                "`--unfreeze` 는 아직 재기만 한다 — 화면이 `X @ W.T + b` 로만 읽는데 "
+                "(`review/views.py` 의 `_score`) 녹인 블록은 그 한 줄로 못 접힌다. "
+                "성적이 서면 **조각마다 임베딩을 다시 내는 길**부터 놓을 것")
         if o["hidden"]:
             raise CommandError(
                 "`--hidden` 은 아직 재기만 한다 — 화면이 `X @ W.T + b` 로만 읽는다 "
