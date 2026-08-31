@@ -110,6 +110,13 @@ class Command(BaseCommand):
                             "쓰면 배운 블록이 무너진다")
         p.add_argument("--batch", type=int, default=16,
                        help="`--unfreeze` 일 때의 묶음 크기")
+        p.add_argument("--device", default=None,
+                       help="cuda | cpu. 안 주면 있으면 cuda. **`--unfreeze` 에만 "
+                            "든다** — 얼린 갈래는 384차원 위의 선형 한 층이라 "
+                            "GPU 로 옮기는 값이 없다(옮기는 비용이 더 크다). "
+                            "**bf16 은 안 쓴다**: Turing(sm_75, 2080ti·RTX 8000)에 "
+                            "그것이 없어 조용히 느려지거나 터진다 "
+                            "(`segment.py` 의 `autocast_dtype`)")
         p.add_argument("--backbone", default="dinov2",
                        help="`--unfreeze` 가 녹일 백본. **`--emb` 가 어느 백본으로 "
                             "뽑힌 것인지와 같아야 한다** — 다르면 캐시와 임베딩이 "
@@ -201,7 +208,8 @@ class Command(BaseCommand):
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
                             "그것이고(`묶음 제안`), 판단 한 번이 여러 장을 덮는다")
 
-    def _prefix(self, root, chips, ids, unfreeze, w, keep_rows, backbone, dim):
+    def _prefix(self, root, chips, ids, unfreeze, w, keep_rows, backbone, dim,
+                device="cpu"):
         """조각 → **얼린 앞부분을 통과한 토큰**. 한 번만 만들어 두고 돌려 쓴다.
 
         마지막 N블록만 녹이면 앞 블록은 얼려 있으므로 **매 에폭 같은 값**이
@@ -231,10 +239,12 @@ class Command(BaseCommand):
                 f"`--unfreeze` 는 ViT 만 녹인다 — `--backbone {backbone}` 은 아니다. "
                 f"쓸 수 있는 것: "
                 f"{', '.join(k for k in BB.BACKBONES if BB.kind(k) in ('v2', 'v3'))}")
-        m = BB.load(backbone)
+        m = BB.load(backbone).to(device)
         pre, tail, keep = BB.split(m, unfreeze)
         mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        if device != "cpu":
+            w(f"    {device} 로 돈다")
         # **차원이 안 맞으면 여기서 멈춘다.** `--emb` 를 바꾸고 `--backbone` 을
         # 안 바꾸면 캐시와 임베딩이 다른 그물에서 나오는데, kNN 은 임베딩으로
         # 재고 분류기는 캐시로 재므로 **둘이 다른 그물인 채 나란히 찍힌다.**
@@ -253,13 +263,15 @@ class Command(BaseCommand):
                 w(f"    캐시 {i:,}/{len(C):,} … {time.time() - t0:.0f}s")
             x = C[i:i + 32].unsqueeze(1).repeat(1, 3, 1, 1)
             x = Fn.interpolate(x, size=224, mode="bilinear", align_corners=False)
-            h, aux = pre((x - mean) / std)
-            out.append(h)
+            h, aux = pre(((x - mean) / std).to(device))
+            # **캐시는 CPU 에 둔다.** 정답 1,300장이면 513MB 라 VRAM 에 얹어도
+            # 되지만, 격자가 자라면 먼저 터지는 자리가 여기다. 묶음마다 올린다
+            out.append(h.cpu())
         w(f"    캐시 {len(C):,}장 (격자 {len(ids):,} 중 정답 있는 것) · "
           f"{time.time() - t0:.0f}s · "
           f"{sum(t.numel() for t in out) * 4 / 1e6:.0f} MB")
         # `aux` 는 조각 크기가 한 가지라 한 벌이면 된다 (v3 의 RoPE · v2 는 None)
-        return torch.cat(out), (m, tail, aux), keep, pos
+        return torch.cat(out), (m, tail, aux, device), keep, pos
 
     def _fit_deep(self, pre, tr, y, n_cls, ctx, keep, o, seed):
         """캐시된 토큰 위에서 **마지막 N블록 + 머리**를 배운다 → numpy 로 낸다.
@@ -271,23 +283,23 @@ class Command(BaseCommand):
         import torch
         import torch.nn.functional as Fn
 
-        m, tail, aux = ctx
+        m, tail, aux, device = ctx
         torch.manual_seed(seed)
         blocks = copy.deepcopy(keep)          # **폴드마다 처음부터** — 안 그러면
         for p in blocks.parameters():         # 앞 폴드가 배운 것이 새어 든다
             p.requires_grad_(True)
         blocks.train()
-        head = torch.nn.Linear(m.embed_dim, n_cls)
+        head = torch.nn.Linear(m.embed_dim, n_cls).to(device)
         opt = torch.optim.AdamW([*blocks.parameters(), *head.parameters()],
                                 lr=o["lr_deep"], weight_decay=o["wd"])
         H = pre[tr]
-        yt = torch.tensor(y)
+        yt = torch.tensor(y).to(device)
         B = o["batch"]
         g = torch.Generator().manual_seed(seed)
         for _ in range(o["deep_epochs"]):
             for i in torch.randperm(len(H), generator=g).split(B):
                 opt.zero_grad()
-                loss = Fn.cross_entropy(head(tail(H[i], blocks, aux)), yt[i])
+                loss = Fn.cross_entropy(head(tail(H[i].to(device), blocks, aux)), yt[i])
                 loss.backward()
                 opt.step()
         blocks.eval()
@@ -295,12 +307,13 @@ class Command(BaseCommand):
 
     def _logits_deep(self, net, ctx, pre, idx, batch=32):
         import torch
-        _m, tail, aux = ctx
+        _m, tail, aux, device = ctx
         blocks, head = net
         out = []
         with torch.no_grad():
             for i in range(0, len(idx), batch):
-                out.append(head(tail(pre[idx[i:i + batch]], blocks, aux)).numpy())
+                h = pre[idx[i:i + batch]].to(device)
+                out.append(head(tail(h, blocks, aux)).cpu().numpy())
         return np.concatenate(out)
 
     def _fit(self, X, y, n_cls, epochs, lr, wd, seed, l1=0.0, no_bias_decay=False,
@@ -468,9 +481,10 @@ class Command(BaseCommand):
         if o["unfreeze"]:
             w(f"\n마지막 {o['unfreeze']}블록을 녹인다 · 에폭 {o['deep_epochs']} · "
               f"lr {o['lr_deep']} · 묶음 {o['batch']}")
+            dev = o["device"] or ("cuda" if torch.cuda.is_available() else "cpu")
             pre, ctx, keep, pos = self._prefix(root, o["chips"], ids,
                                                o["unfreeze"], w, lab >= 0,
-                                               o["backbone"], X.shape[1])
+                                               o["backbone"], X.shape[1], dev)
             o["_deep"] = (pre, ctx, keep, pos)
 
         if o["folds"]:
