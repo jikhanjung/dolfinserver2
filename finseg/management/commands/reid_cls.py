@@ -110,6 +110,12 @@ class Command(BaseCommand):
                             "쓰면 배운 블록이 무너진다")
         p.add_argument("--batch", type=int, default=16,
                        help="`--unfreeze` 일 때의 묶음 크기")
+        p.add_argument("--backbone", default="dinov2",
+                       help="`--unfreeze` 가 녹일 백본. **`--emb` 가 어느 백본으로 "
+                            "뽑힌 것인지와 같아야 한다** — 다르면 캐시와 임베딩이 "
+                            "다른 그물에서 나와 성적이 아무 뜻이 없다. 차원이 안 "
+                            "맞으면 멈춘다. 이름은 `reid_chips` 의 `BACKBONES` 와 "
+                            "같다 (`dinov2` S/14 · `dinov2b` B/14 · `dinov2l` L/14)")
         p.add_argument("--chips", default="chips.npz",
                        help="`--unfreeze` 가 읽을 조각 꾸러미 (`reid_chips` 가 쓴다)")
         p.add_argument("--as-of", type=int, default=None, metavar="개체판정번호",
@@ -195,7 +201,7 @@ class Command(BaseCommand):
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
                             "그것이고(`묶음 제안`), 판단 한 번이 여러 장을 덮는다")
 
-    def _prefix(self, root, chips, ids, unfreeze, w, keep_rows):
+    def _prefix(self, root, chips, ids, unfreeze, w, keep_rows, backbone, dim):
         """조각 → **얼린 앞부분을 통과한 토큰**. 한 번만 만들어 두고 돌려 쓴다.
 
         마지막 N블록만 녹이면 앞 블록은 얼려 있으므로 **매 에폭 같은 값**이
@@ -219,7 +225,14 @@ class Command(BaseCommand):
         z = np.load(root / chips)
         if not (z["box_id"] == ids).all():
             raise CommandError(f"{chips} 와 임베딩의 상자 차례가 다르다")
-        m = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14",
+        from finseg.management.commands.reid_chips import BACKBONES
+        hub = BACKBONES.get(backbone)
+        if not hub:
+            raise CommandError(
+                f"`--unfreeze` 는 ViT 만 녹인다 — `--backbone {backbone}` 은 "
+                f"{'torchvision(resnet)' if backbone in BACKBONES else '모르는 이름'} 이다. "
+                f"쓸 수 있는 것: {', '.join(k for k, v in BACKBONES.items() if v)}")
+        m = torch.hub.load("facebookresearch/dinov2", hub,
                            pretrained=True, verbose=False)
         m.eval()
         for p in m.parameters():
@@ -228,6 +241,13 @@ class Command(BaseCommand):
         head = m.blocks[:-unfreeze]
         mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        # **차원이 안 맞으면 여기서 멈춘다.** `--emb` 를 바꾸고 `--backbone` 을
+        # 안 바꾸면 캐시와 임베딩이 다른 그물에서 나오는데, kNN 은 임베딩으로
+        # 재고 분류기는 캐시로 재므로 **둘이 다른 그물인 채 나란히 찍힌다.**
+        if m.embed_dim != dim:
+            raise CommandError(
+                f"`--backbone {backbone}` 은 {m.embed_dim}차원인데 `--emb` 는 "
+                f"{dim}차원이다 — 같은 백본으로 맞출 것")
         rows = np.flatnonzero(keep_rows)
         pos = np.full(len(ids), -1, dtype=np.int64)
         pos[rows] = np.arange(len(rows))
@@ -264,7 +284,7 @@ class Command(BaseCommand):
         for p in blocks.parameters():         # 앞 폴드가 배운 것이 새어 든다
             p.requires_grad_(True)
         blocks.train()
-        head = torch.nn.Linear(384, n_cls)
+        head = torch.nn.Linear(m.embed_dim, n_cls)
         opt = torch.optim.AdamW([*blocks.parameters(), *head.parameters()],
                                 lr=o["lr_deep"], weight_decay=o["wd"])
         H = pre[tr]
@@ -461,7 +481,8 @@ class Command(BaseCommand):
             w(f"\n마지막 {o['unfreeze']}블록을 녹인다 · 에폭 {o['deep_epochs']} · "
               f"lr {o['lr_deep']} · 묶음 {o['batch']}")
             pre, model, keep, pos = self._prefix(root, o["chips"], ids,
-                                                 o["unfreeze"], w, lab >= 0)
+                                                 o["unfreeze"], w, lab >= 0,
+                                                 o["backbone"], X.shape[1])
             o["_deep"] = (pre, model, keep, pos)
 
         if o["folds"]:
