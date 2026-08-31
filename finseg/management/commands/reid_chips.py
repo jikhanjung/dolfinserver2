@@ -159,6 +159,12 @@ class Command(BaseCommand):
         p.add_argument("--emb-only", action="store_true",
                        help="이미 만든 조각으로 **임베딩만 다시 뽑는다** — 백본을 "
                             "갈아 볼 때. 조각·곡선·그림은 안 건드린다")
+        p.add_argument("--no-chain", action="store_true",
+                       help="**`items.json` 의 `sim` 을 안 건드린다.** 임베딩만 "
+                            "새로 뽑을 때(`--emb-only`) 기본은 그 값을 다시 적는 "
+                            "것인데, 그러면 **자를 바꿔 보려다 화면의 "
+                            "`닮은 것끼리` 정렬이 조용히 바뀐다** — 다음 레인에 "
+                            "저쪽 화면까지 간다. 재 보기만 할 때는 이것을 줄 것")
         p.add_argument("--emb-name", default="emb.npz",
                        help="임베딩 파일 이름. 백본마다 달리 두면 한 격자에서 "
                             "여러 자를 견줄 수 있다")
@@ -432,6 +438,9 @@ class Command(BaseCommand):
         np.savez_compressed(out / o["emb_name"], box_id=z["box_id"],
                             facing=z["facing"], emb=emb)
         w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
+        if o["no_chain"]:
+            w("  `sim` 은 안 건드렸다 (`--no-chain`)")
+            return
         self._chain(out, z["box_id"], z["facing"], emb, None, w)
 
     def _chain(self, out, ids, fac, emb, rows, w):
