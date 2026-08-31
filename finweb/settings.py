@@ -181,5 +181,9 @@ FIN_CROPS = Path(os.environ.get("FIN_CROPS", BASE_DIR / "crops"))
 # re-ID 조각 꾸러미. **격자를 갈아 끼울 수 있어야 한다** — 옛 상자에서 후보를
 # 더 뽑아 섞어 보는 일이 이 값을 바꿔 가며 도는 일이다 (`reid_chips --out`)
 FIN_REID = Path(os.environ.get("FIN_REID", BASE_DIR / "reid" / "v1"))
+# DINOv3 가중치를 둔 자리. **라이선스에 동의해야 받을 수 있어** hub 가 못
+# 받아 온다 — 받아 둔 파일을 가리킨다 (`finseg/backbone.py`). NAS 를 기본으로
+# 두는 것은 형제 기계도 같은 것을 보게 하려는 것이다.
+FIN_MODELS = Path(os.environ.get("FIN_MODELS", "/nas/JikhanJung/models"))
 FIN_SRC_DB = Path(os.environ.get(
     "FIN_SRC_DB", BASE_DIR.parent / "dolfinserver" / "db.sqlite3"))

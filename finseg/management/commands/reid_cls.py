@@ -225,20 +225,14 @@ class Command(BaseCommand):
         z = np.load(root / chips)
         if not (z["box_id"] == ids).all():
             raise CommandError(f"{chips} 와 임베딩의 상자 차례가 다르다")
-        from finseg.management.commands.reid_chips import BACKBONES
-        hub = BACKBONES.get(backbone)
-        if not hub:
+        from finseg import backbone as BB
+        if BB.kind(backbone) not in ("v2", "v3"):
             raise CommandError(
-                f"`--unfreeze` 는 ViT 만 녹인다 — `--backbone {backbone}` 은 "
-                f"{'torchvision(resnet)' if backbone in BACKBONES else '모르는 이름'} 이다. "
-                f"쓸 수 있는 것: {', '.join(k for k, v in BACKBONES.items() if v)}")
-        m = torch.hub.load("facebookresearch/dinov2", hub,
-                           pretrained=True, verbose=False)
-        m.eval()
-        for p in m.parameters():
-            p.requires_grad_(False)
-        keep = m.blocks[-unfreeze:]
-        head = m.blocks[:-unfreeze]
+                f"`--unfreeze` 는 ViT 만 녹인다 — `--backbone {backbone}` 은 아니다. "
+                f"쓸 수 있는 것: "
+                f"{', '.join(k for k in BB.BACKBONES if BB.kind(k) in ('v2', 'v3'))}")
+        m = BB.load(backbone)
+        pre, tail, keep = BB.split(m, unfreeze)
         mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
         # **차원이 안 맞으면 여기서 멈춘다.** `--emb` 를 바꾸고 `--backbone` 을
@@ -259,17 +253,15 @@ class Command(BaseCommand):
                 w(f"    캐시 {i:,}/{len(C):,} … {time.time() - t0:.0f}s")
             x = C[i:i + 32].unsqueeze(1).repeat(1, 3, 1, 1)
             x = Fn.interpolate(x, size=224, mode="bilinear", align_corners=False)
-            with torch.no_grad():
-                h = m.prepare_tokens_with_masks((x - mean) / std)
-                for blk in head:
-                    h = blk(h)
+            h, aux = pre((x - mean) / std)
             out.append(h)
         w(f"    캐시 {len(C):,}장 (격자 {len(ids):,} 중 정답 있는 것) · "
           f"{time.time() - t0:.0f}s · "
           f"{sum(t.numel() for t in out) * 4 / 1e6:.0f} MB")
-        return torch.cat(out), m, keep, pos
+        # `aux` 는 조각 크기가 한 가지라 한 벌이면 된다 (v3 의 RoPE · v2 는 None)
+        return torch.cat(out), (m, tail, aux), keep, pos
 
-    def _fit_deep(self, pre, tr, y, n_cls, m, keep, o, seed):
+    def _fit_deep(self, pre, tr, y, n_cls, ctx, keep, o, seed):
         """캐시된 토큰 위에서 **마지막 N블록 + 머리**를 배운다 → numpy 로 낸다.
 
         낸 것은 `_logits_deep` 이 먹는다. 얼린 갈래처럼 `(W, b)` 로 못 접는다 —
@@ -279,6 +271,7 @@ class Command(BaseCommand):
         import torch
         import torch.nn.functional as Fn
 
+        m, tail, aux = ctx
         torch.manual_seed(seed)
         blocks = copy.deepcopy(keep)          # **폴드마다 처음부터** — 안 그러면
         for p in blocks.parameters():         # 앞 폴드가 배운 것이 새어 든다
@@ -294,25 +287,20 @@ class Command(BaseCommand):
         for _ in range(o["deep_epochs"]):
             for i in torch.randperm(len(H), generator=g).split(B):
                 opt.zero_grad()
-                h = H[i]
-                for blk in blocks:
-                    h = blk(h)
-                loss = Fn.cross_entropy(head(m.norm(h)[:, 0]), yt[i])
+                loss = Fn.cross_entropy(head(tail(H[i], blocks, aux)), yt[i])
                 loss.backward()
                 opt.step()
         blocks.eval()
         return blocks, head
 
-    def _logits_deep(self, net, m, pre, idx, batch=32):
+    def _logits_deep(self, net, ctx, pre, idx, batch=32):
         import torch
+        _m, tail, aux = ctx
         blocks, head = net
         out = []
         with torch.no_grad():
             for i in range(0, len(idx), batch):
-                h = pre[idx[i:i + batch]]
-                for blk in blocks:
-                    h = blk(h)
-                out.append(head(m.norm(h)[:, 0]).numpy())
+                out.append(head(tail(pre[idx[i:i + batch]], blocks, aux)).numpy())
         return np.concatenate(out)
 
     def _fit(self, X, y, n_cls, epochs, lr, wd, seed, l1=0.0, no_bias_decay=False,
@@ -480,10 +468,10 @@ class Command(BaseCommand):
         if o["unfreeze"]:
             w(f"\n마지막 {o['unfreeze']}블록을 녹인다 · 에폭 {o['deep_epochs']} · "
               f"lr {o['lr_deep']} · 묶음 {o['batch']}")
-            pre, model, keep, pos = self._prefix(root, o["chips"], ids,
-                                                 o["unfreeze"], w, lab >= 0,
-                                                 o["backbone"], X.shape[1])
-            o["_deep"] = (pre, model, keep, pos)
+            pre, ctx, keep, pos = self._prefix(root, o["chips"], ids,
+                                               o["unfreeze"], w, lab >= 0,
+                                               o["backbone"], X.shape[1])
+            o["_deep"] = (pre, ctx, keep, pos)
 
         if o["folds"]:
             return self._folds(o, X, lab, fac, day, days, cnt, w, len(cat))
@@ -517,10 +505,10 @@ class Command(BaseCommand):
             yk = [k[int(v)] for v in lab[tr]]
             if o["unfreeze"]:
                 # **캐시 줄번호로 옮겨서 쓴다** — 정답 있는 것만 만들어 뒀다
-                pre, model, keep, pos = o["_deep"]
+                pre, ctx, keep, pos = o["_deep"]
                 deep = self._fit_deep(pre, pos[tr], yk, len(classes),
-                                      model, keep, o, seed)
-                logit = self._logits_deep(deep, model, pre, pos[te])
+                                      ctx, keep, o, seed)
+                logit = self._logits_deep(deep, ctx, pre, pos[te])
             else:
                 net = self._fit(X[tr], yk, len(classes),
                                 o["epochs"], o["lr"], o["wd"], seed,

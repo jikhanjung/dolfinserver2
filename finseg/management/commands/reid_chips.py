@@ -39,7 +39,7 @@ import numpy as np
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from finseg import baseline, geometry, reid, rules
+from finseg import backbone, baseline, geometry, reid, rules
 from finseg.models import Box, Crop
 
 LOOK = 320          # 사람이 보는 그림 한 변
@@ -48,12 +48,9 @@ LOOK = 320          # 사람이 보는 그림 한 변
 # **자를 바꿔 볼 자리.** 값이 `torch.hub` 의 이름이고, `None` 이면 torchvision.
 # 키우면 차원이 함께 커지고(384 → 768 → 1024) **선형 머리의 파라미터도 그만큼
 # 는다** — 그래서 `--pca` 통제줄이 필요하다.
-BACKBONES = {
-    "resnet18": None,          # ImageNet 지도학습 · 512차원
-    "dinov2": "dinov2_vits14",   # ViT-S/14 ·  384
-    "dinov2b": "dinov2_vitb14",  # ViT-B/14 ·  768
-    "dinov2l": "dinov2_vitl14",  # ViT-L/14 · 1024
-}
+# **여는 식은 `finseg/backbone.py` 하나다.** 여기 있던 표를 그리로 옮겼다 —
+# `reid_cls --unfreeze` 가 같은 그물을 열어야 하는데 표가 둘이면 갈린다.
+BACKBONES = backbone.BACKBONES
 
 
 def _gray(crops_dir, crop):
@@ -511,15 +508,8 @@ class Command(BaseCommand):
         """
         import torch
         import torch.nn.functional as Fn
-        hub = BACKBONES[backbone]
-        if hub:
-            m = torch.hub.load("facebookresearch/dinov2", hub,
-                               pretrained=True, verbose=False)
-        else:
-            import torchvision as tv
-            m = tv.models.resnet18(weights=tv.models.ResNet18_Weights.IMAGENET1K_V1)
-            m.fc = torch.nn.Identity()
-        m.eval()
+        from finseg import backbone as BB
+        m = BB.load(backbone)
         mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
         outs = []
