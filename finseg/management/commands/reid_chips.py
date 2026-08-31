@@ -156,6 +156,22 @@ class Command(BaseCommand):
         p.add_argument("--emb-only", action="store_true",
                        help="이미 만든 조각으로 **임베딩만 다시 뽑는다** — 백본을 "
                             "갈아 볼 때. 조각·곡선·그림은 안 건드린다")
+        p.add_argument("--chip-size", type=int, default=None, metavar="N",
+                       help="**모델이 먹을 조각 한 변** (기본 `reid.CHIP`=128). "
+                            "128 은 **원본의 절반을 버린다** — 밑동 현이 원본에서 "
+                            "중앙 186화소인데 조각에서는 98화소(=N/1.3)뿐이고, "
+                            "그것을 다시 224 로 늘려 백본에 넣는다. "
+                            "**224 로 뜨면 계산이 한 톨도 안 는다**(백본 입력이 "
+                            "어차피 224 다) — 늘려 만든 172화소 대신 진짜 172화소를 "
+                            "넣는 것이다. 256 이면 상자의 41%%에서 원본을 넘어 "
+                            "보간이 되므로 224 가 자연스러운 자리다. "
+                            "**사람이 보는 `look/` 은 안 건드린다**")
+        p.add_argument("--no-look", action="store_true",
+                       help="**사람이 볼 그림(`look/` 7,912장)을 안 쓴다.** 자를 "
+                            "바꿔 재려고 격자를 새로 뜰 때는 화면이 그것을 안 보므로 "
+                            "파일 쓰기가 통째로 낭비다. **만들기는 한다** — "
+                            "`look` 이 안 만들어진 상자는 빠지므로, 안 만들면 "
+                            "**어느 상자가 남는지가 달라져** 견줄 수 없다")
         p.add_argument("--no-chain", action="store_true",
                        help="**`items.json` 의 `sim` 을 안 건드린다.** 임베딩만 "
                             "새로 뽑을 때(`--emb-only`) 기본은 그 값을 다시 적는 "
@@ -214,7 +230,7 @@ class Command(BaseCommand):
             if not ok:
                 why[bad.split("(")[0].strip()] += 1
                 continue
-            c = reid.chip(st, crop)
+            c = reid.chip(st, crop, size=o["chip_size"] or reid.CHIP)
             look = reid.chip(st, crop, size=LOOK, color=True, cut=False)
             curve = reid.curve_of(st, crop)
             if c is None or look is None or not len(curve):
@@ -299,12 +315,15 @@ class Command(BaseCommand):
              "auto_facing": bool(o["auto_facing"]), "auto_cls": bool(o["auto_cls"]),
              "items": rows}, ensure_ascii=False))
         # 사람이 보는 그림은 파일로 — 화면이 낱장으로 읽는다
-        from PIL import Image as PImage
-        (out / "look").mkdir(exist_ok=True)
-        for r, im in zip(rows, looks):
-            PImage.fromarray((np.clip(im, 0, 1) * 255).astype(np.uint8)).save(
-                out / "look" / f"{r['id']:08d}.jpg", quality=92)
-        w(f"{out}/chips.npz · curves.npz · items.json · look/")
+        if o["no_look"]:
+            w(f"{out}/chips.npz · curves.npz · items.json  (`look/` 은 안 썼다)")
+        else:
+            from PIL import Image as PImage
+            (out / "look").mkdir(exist_ok=True)
+            for r, im in zip(rows, looks):
+                PImage.fromarray((np.clip(im, 0, 1) * 255).astype(np.uint8)).save(
+                    out / "look" / f"{r['id']:08d}.jpg", quality=92)
+            w(f"{out}/chips.npz · curves.npz · items.json · look/")
 
         if not o["no_emb"]:
             emb = self._embed(np.stack(chips), o["backbone"])
