@@ -411,7 +411,13 @@ class Individual(models.Model):
     #          (주인이 작업 자리 하나다) 여기에 넣어 두면, 되받은 뒤 작업
     #          자리에서 **사람이 진짜 분류를 골라 `Review` 로 옮겨 적는다**
     #          (검토 화면의 `저쪽에서 아니라 한 것` 대기열)
-    KINDS = [("", "개체"), ("hold", "임시보관함"), ("notfin", "지느러미 아님")]
+    # `unid`   **이 사진으로는 식별이 안 되는 것.** 지느러미는 맞는데 흐리거나
+    #          작거나 잠겨서 사람이 개체를 알아볼 수 없다 — `hold`(알아볼 수
+    #          있는데 자리를 모름)와 다르다. 정답이 영영 못 생기는 조각이라
+    #          학습·성적에는 안 들어가고, 품질 게이트(`p(식별가능)`)의 음성
+    #          예제와 격자 정렬의 재료로 쓴다 (`devlog/20260902` 대화)
+    KINDS = [("", "개체"), ("hold", "임시보관함"), ("notfin", "지느러미 아님"),
+             ("unid", "식별 불가능")]
     kind = models.CharField(max_length=10, choices=KINDS, blank=True, default="",
                             help_text="비어 있으면 진짜 개체다")
     at = models.DateTimeField(auto_now_add=True)

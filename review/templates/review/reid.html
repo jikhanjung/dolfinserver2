@@ -292,6 +292,12 @@
   .box.hold.notfin { border-color:#7a2e2e; background:#1d1111 }
   .box.hold.notfin .nm { color:#ff9a9a }
   .box.hold.notfin.over { border-color:#ff9a9a; background:#2c1717 }
+  /* `식별 불가능` — 지느러미는 맞는데 이 사진으로는 개체를 못 알아보는 것.
+     `임시보관함`(노랑 — 알아볼 수 있는데 자리를 모름)과 다른 판단이라 색을
+     가른다. 잿빛: 판단이 끝난 자리라는 뜻이다 */
+  .box.hold.unid { border-color:#3e4e5e; background:#10161d }
+  .box.hold.unid .nm { color:#9fb3c8 }
+  .box.hold.unid.over { border-color:#9fb3c8; background:#182230 }
   /* **붙박이 셋을 목록 위에 띄운다.** 격자 위에 한 줄로 자리를 잡고 있으면
      폭이 넓어도 첫 줄에 개체 상자가 한 칸도 안 들어간다 — 정작 자주 보는 것이
      밀려난다. 목록은 폭을 온전히 쓰고, 셋은 아래에 떠서 늘 손 닿는 데 있다 */
@@ -336,6 +342,11 @@
   #focusbar.on { display:flex }
   #focusbar b { color:var(--sel) }
   .box .thumbs { display:flex; flex-wrap:wrap; gap:3px; padding:0 8px 8px }
+  /* **빈 상자도 든 상자와 같은 높이다.** 대표 조각이 없다고 납작해지면
+     끌어 넣을 과녁이 몇 픽셀만 남는다 — 빈 상자야말로 넣을 곳인데.
+     상자 목록(#boxes)에만 건다: 위에 붙는 특수 상자들은 반 칸 배치가
+     제 높이를 따로 정한다 (`#pinned` 의 규칙들) */
+  #boxes .box .thumbs { min-height:calc(var(--thumb) * .8) }
   /* 대표 한 장만 보이므로 넉넉히 키운다 */
   .box .thumbs img { width:calc(var(--thumb) * 1.7);
                      height:calc(var(--thumb) * 1.7);
@@ -825,7 +836,7 @@ function boxHtml(b, mine) {
   const has = mine[b.id] || [];
   const rep = has.includes(b.rep) ? b.rep : has[0];
   return `
-      <div class="box${b.hold ? " hold" : ""}${b.kind === "notfin" ? " notfin" : ""}${
+      <div class="box${b.hold ? " hold" : ""}${b.kind && b.kind !== "hold" ? " " + b.kind : ""}${
               focusOn === b.id ? " focus" : ""}"
            data-box="${b.id}">
         <div class="hd">
@@ -848,7 +859,10 @@ function drawBoxes() {
   const mine = {};
   ITEMS.forEach(i => { if (i.in) (mine[i.in] = mine[i.in] || []).push(i.id); });
   // **개체가 아닌 자리를 위에 붙여 둔다** — 굴리지 않고 늘 닿게.
-  const hold = BOXES.filter(b => b.hold);
+  // 다만 `식별 불가능` 은 위가 아니라 **목록 맨 끝**이다: 위 고정칸은 아직
+  // 판단이 남은 자리(보류·되돌려 보낼 것)이고, 이것은 판단이 **끝난** 통이라
+  // 늘 닿아 있을 이유가 없다. 일반 상자처럼 굴러 내려가 있으면 된다.
+  const hold = BOXES.filter(b => b.hold && b.kind !== "unid");
   sync(document.getElementById("holdbox"), hold, b => b.id, b => boxHtml(b, mine));
   // **이름순 — 다만 숫자를 숫자로 읽는다.** 그냥 글자로 견주면 `상자 11` 이
   // `상자 2` 앞에 오고, `JTA010` 다음이 `JTA100` 이 된다. `numeric` 이 그것을
@@ -873,7 +887,9 @@ function drawBoxes() {
         const x = a.name || "", y = b.name || "";
         return later(x) - later(y) ||
                x.localeCompare(y, "ko", {numeric: true, sensitivity: "base"});
-      }),
+      })
+      // `식별 불가능` 은 이름순 어디가 아니라 **늘 맨 끝**이다
+      .concat(BOXES.filter(b => b.kind === "unid")),
     b => b.id, b => boxHtml(b, mine));
   bindBoxes();
 }

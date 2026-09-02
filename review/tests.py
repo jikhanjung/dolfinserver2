@@ -1802,13 +1802,14 @@ class SpecialBoxTests(TestCase):
         # 화면을 한 번도 안 연 기계에서도 있어야 한다
         self.nf = Individual.objects.get(kind="notfin")
 
-    def test_opening_the_screen_makes_both_boxes(self):
+    def test_opening_the_screen_makes_the_special_boxes(self):
         with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
                            ROOT_URLCONF="review.tests"):
             self.client.get("/reid")
         self.assertEqual(
             sorted(Individual.objects.exclude(kind="").values_list("kind", "name")),
-            [("hold", "임시보관함"), ("notfin", "지느러미 아님")])
+            [("hold", "임시보관함"), ("notfin", "지느러미 아님"),
+             ("unid", "식별 불가능")])
 
     def test_only_one_box_per_kind(self):
         """둘이 되면 어느 쪽에 넣었는지에 따라 결과가 갈리는데, **그 사실은
