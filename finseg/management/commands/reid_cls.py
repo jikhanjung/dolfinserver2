@@ -211,6 +211,11 @@ class Command(BaseCommand):
                        help="씨앗을 N 번 흔들어 폭을 함께 낸다. **폴드 배정은 "
                             "안 흔든다** — 두 자를 견줄 때 같은 문제를 풀어야 "
                             "차이가 자 때문인지 문제 때문인지 갈린다")
+        p.add_argument("--save-logits", metavar="파일",
+                       help="폴드·씨앗마다 질의별 로짓을 npz 로 남긴다 — 두 갈래를 "
+                            "따로 배워 로짓을 평균하는 **앙상블을 같은 자로 재기** "
+                            "위한 것이다. 폴드 배정이 씨앗을 안 타므로 갈래끼리 "
+                            "같은 질의가 같은 줄에 선다")
         p.add_argument("--group", action="store_true",
                        help="**묶어서 묻는다** — 같은 날·같은 쪽의 한 개체 조각을 "
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
@@ -546,6 +551,14 @@ class Command(BaseCommand):
                                 o["arcface"], o["arc_m"], o["arc_s"])
                 logit = self._logits(net, X[te])
 
+            if o.get("save_logits"):
+                # 묶기(`--group`) 전의 날것을 남긴다 — 앙상블은 질의 단위로
+                # 합친 뒤에 같은 규칙으로 묶어야 자가 하나가 된다
+                o.setdefault("_dump", []).append(dict(
+                    fold=o.get("_fold", -1), seed=seed, side=side,
+                    te=te.copy(), y_ind=lab[te].copy(),
+                    classes=np.array(classes), logit=logit.copy()))
+
             # 기준선 — **배우는 날의 조각만** 후보로 둔다. 분류기가 본 것과
             # 같은 자료라야 공평하다
             knn = np.full((len(te), len(classes)), -np.inf)
@@ -662,6 +675,7 @@ class Command(BaseCommand):
                   f"{'기준선 1/5/10':>22}{'분류기 1/5/10':>22}")
             for fi, ds in enumerate(fold):
                 is_test = np.array([d in set(ds) for d in day])
+                o["_fold"] = fi
                 t = self._score(o, X, lab, fac, day, is_test, seed, None)
                 for k2 in tot:
                     tot[k2] += t[k2]
@@ -671,6 +685,11 @@ class Command(BaseCommand):
                       f"{t['knn1'] / n:>7.1%}{t['knn5'] / n:>7.1%}{t['knn10'] / n:>7.1%}"
                       f"{t['cls1'] / n:>8.1%}{t['cls5'] / n:>7.1%}{t['cls10'] / n:>7.1%}")
             runs.append(tot)
+
+        if o.get("save_logits") and o.get("_dump"):
+            np.savez_compressed(o["save_logits"],
+                                entries=np.array(o["_dump"], dtype=object))
+            w(f"  로짓 {len(o['_dump'])}벌 → {o['save_logits']}")
 
         n = runs[0]["n"]
         if not n:
