@@ -108,6 +108,14 @@ class Command(BaseCommand):
         p.add_argument("--lr-deep", type=float, default=1e-4,
                        help="`--unfreeze` 일 때의 학습률. 얼린 갈래의 0.02 를 그대로 "
                             "쓰면 배운 블록이 무너진다")
+        p.add_argument("--lr-blocks", type=float, default=None, metavar="LR",
+                       help="블록 쪽만 다른 학습률. 안 주면 `--lr-deep` 그대로 — "
+                            "머리는 밑바닥부터 배우고 블록은 배운 것을 옮기는 "
+                            "것이라, 둘을 가르는 것이 층별 학습률의 절반이다")
+        p.add_argument("--lr-decay", type=float, default=1.0, metavar="G",
+                       help="블록 학습률을 꼭대기에서 아래로 갈수록 G 배씩 줄인다 "
+                            "(ViT 관례 0.65~0.9). 1.0 이면 지금과 같다 — 기본을 "
+                            "바꾸지 않아야 앞의 성적표가 그대로 선다")
         p.add_argument("--batch", type=int, default=16,
                        help="`--unfreeze` 일 때의 묶음 크기")
         p.add_argument("--device", default=None,
@@ -290,8 +298,16 @@ class Command(BaseCommand):
             p.requires_grad_(True)
         blocks.train()
         head = torch.nn.Linear(m.embed_dim, n_cls).to(device)
-        opt = torch.optim.AdamW([*blocks.parameters(), *head.parameters()],
-                                lr=o["lr_deep"], weight_decay=o["wd"])
+        # 층별 학습률 — 머리는 `lr_deep`, 블록은 `lr_blocks`(없으면 같다)에서
+        # 꼭대기부터 아래로 `lr_decay` 배씩. 기본값이면 그룹이 갈려도 수학은
+        # 한 그룹과 같아 앞의 성적표가 그대로 선다.
+        lr_b = o["lr_blocks"] if o["lr_blocks"] is not None else o["lr_deep"]
+        n_b = len(blocks)
+        groups = [{"params": head.parameters(), "lr": o["lr_deep"]}]
+        groups += [{"params": blk.parameters(),
+                    "lr": lr_b * o["lr_decay"] ** (n_b - 1 - i)}
+                   for i, blk in enumerate(blocks)]
+        opt = torch.optim.AdamW(groups, weight_decay=o["wd"])
         H = pre[tr]
         yt = torch.tensor(y).to(device)
         B = o["batch"]
