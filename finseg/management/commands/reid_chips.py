@@ -528,14 +528,17 @@ class Command(BaseCommand):
         import torch
         import torch.nn.functional as Fn
         from finseg import backbone as BB
-        m = BB.load(backbone)
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        # GPU 가 있으면 쓴다 — Swin-L(384) 같은 큰 백본은 CPU 로 몇 시간이다
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        m = BB.load(backbone).to(dev)
+        size = BB.input_size(backbone)
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(dev)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(dev)
         outs = []
         X = torch.from_numpy(X)
         for i in range(0, len(X), 64):
-            x = X[i:i + 64].unsqueeze(1).repeat(1, 3, 1, 1)
-            x = Fn.interpolate(x, size=224, mode="bilinear", align_corners=False)
+            x = X[i:i + 64].unsqueeze(1).repeat(1, 3, 1, 1).to(dev)
+            x = Fn.interpolate(x, size=size, mode="bilinear", align_corners=False)
             with torch.no_grad():
-                outs.append(m((x - mean) / std).numpy())
+                outs.append(m((x - mean) / std).cpu().numpy())
         return np.concatenate(outs)

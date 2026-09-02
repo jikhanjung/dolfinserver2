@@ -30,8 +30,8 @@ from pathlib import Path
 
 from django.conf import settings
 
-# 값: (갈래, torch.hub 이름, v3 가중치 파일의 앞머리)
-#   `tv` 는 torchvision · `v2`·`v3` 는 DINO.
+# 값: (갈래, torch.hub / timm 이름, v3 가중치 파일의 앞머리)
+#   `tv` 는 torchvision · `v2`·`v3` 는 DINO · `timm` 은 timm 이 hf-hub 에서 연다.
 BACKBONES = {
     "resnet18": ("tv", None, None),              # ImageNet 지도학습 · 512
     "dinov2":   ("v2", "dinov2_vits14", None),   # ViT-S/14 ·  384
@@ -41,11 +41,19 @@ BACKBONES = {
     "dinov3sp": ("v3", "dinov3_vits16plus", "dinov3_vits16plus_pretrain"),# 384
     "dinov3b":  ("v3", "dinov3_vitb16", "dinov3_vitb16_pretrain"),        # 768
     "dinov3l":  ("v3", "dinov3_vitl16", "dinov3_vitl16_pretrain"),        # 1024
+    # 동물 re-ID 전용 사전학습 (WildlifeDatasets · Swin-L · 입력 384 · 1536차원).
+    # **얼린 갈래 전용이다** — Swin 은 블록 구조가 달라 `split()` 이 못 가른다
+    "megad":    ("timm", "hf-hub:BVRA/MegaDescriptor-L-384", None),
 }
 
 
 def kind(name):
     return BACKBONES[name][0] if name in BACKBONES else None
+
+
+def input_size(name):
+    """백본이 기대하는 입력 한 변. 조각을 이 크기로 늘려 넣는다."""
+    return 384 if name == "megad" else 224
 
 
 def load(name):
@@ -60,6 +68,9 @@ def load(name):
         import torchvision as tv
         m = tv.models.resnet18(weights=tv.models.ResNet18_Weights.IMAGENET1K_V1)
         m.fc = torch.nn.Identity()
+    elif k == "timm":
+        import timm
+        m = timm.create_model(entry, pretrained=True, num_classes=0)
     elif k == "v2":
         m = torch.hub.load("facebookresearch/dinov2", entry,
                            pretrained=True, verbose=False)
