@@ -247,11 +247,11 @@ class Command(BaseCommand):
         if not (z["box_id"] == ids).all():
             raise CommandError(f"{chips} 와 임베딩의 상자 차례가 다르다")
         from finseg import backbone as BB
-        if BB.kind(backbone) not in ("v2", "v3"):
+        if BB.kind(backbone) not in ("v2", "v3", "timm"):
             raise CommandError(
-                f"`--unfreeze` 는 ViT 만 녹인다 — `--backbone {backbone}` 은 아니다. "
-                f"쓸 수 있는 것: "
-                f"{', '.join(k for k in BB.BACKBONES if BB.kind(k) in ('v2', 'v3'))}")
+                f"`--unfreeze` 는 ViT·Swin 만 녹인다 — `--backbone {backbone}` 은 "
+                f"아니다. 쓸 수 있는 것: "
+                f"{', '.join(k for k in BB.BACKBONES if BB.kind(k) in ('v2', 'v3', 'timm'))}")
         m = BB.load(backbone).to(device)
         pre, tail, keep = BB.split(m, unfreeze)
         mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
@@ -261,9 +261,12 @@ class Command(BaseCommand):
         # **차원이 안 맞으면 여기서 멈춘다.** `--emb` 를 바꾸고 `--backbone` 을
         # 안 바꾸면 캐시와 임베딩이 다른 그물에서 나오는데, kNN 은 임베딩으로
         # 재고 분류기는 캐시로 재므로 **둘이 다른 그물인 채 나란히 찍힌다.**
-        if m.embed_dim != dim:
+        # Swin 은 `embed_dim` 이 줄기 폭(192)이고 특징 폭은 `num_features`(1536)다.
+        # DINO ViT 는 둘이 같다 — 특징 폭 쪽을 묻는다.
+        feat_dim = getattr(m, "num_features", None) or m.embed_dim
+        if feat_dim != dim:
             raise CommandError(
-                f"`--backbone {backbone}` 은 {m.embed_dim}차원인데 `--emb` 는 "
+                f"`--backbone {backbone}` 은 {feat_dim}차원인데 `--emb` 는 "
                 f"{dim}차원이다 — 같은 백본으로 맞출 것")
         rows = np.flatnonzero(keep_rows)
         pos = np.full(len(ids), -1, dtype=np.int64)
@@ -275,7 +278,8 @@ class Command(BaseCommand):
             if i and i % 640 == 0:
                 w(f"    캐시 {i:,}/{len(C):,} … {time.time() - t0:.0f}s")
             x = C[i:i + 32].unsqueeze(1).repeat(1, 3, 1, 1)
-            x = Fn.interpolate(x, size=224, mode="bilinear", align_corners=False)
+            x = Fn.interpolate(x, size=BB.input_size(backbone), mode="bilinear",
+                               align_corners=False)
             h, aux = pre(((x - mean) / std).to(device))
             # **캐시는 CPU 에 둔다.** 정답 1,300장이면 513MB 라 VRAM 에 얹어도
             # 되지만, 격자가 자라면 먼저 터지는 자리가 여기다. 묶음마다 올린다
@@ -302,7 +306,8 @@ class Command(BaseCommand):
         for p in blocks.parameters():         # 앞 폴드가 배운 것이 새어 든다
             p.requires_grad_(True)
         blocks.train()
-        head = torch.nn.Linear(m.embed_dim, n_cls).to(device)
+        head = torch.nn.Linear(getattr(m, "num_features", None) or m.embed_dim,
+                               n_cls).to(device)
         # 층별 학습률 — 머리는 `lr_deep`, 블록은 `lr_blocks`(없으면 같다)에서
         # 꼭대기부터 아래로 `lr_decay` 배씩. 기본값이면 그룹이 갈려도 수학은
         # 한 그룹과 같아 앞의 성적표가 그대로 선다.

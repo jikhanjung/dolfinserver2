@@ -101,8 +101,39 @@ def split(m, unfreeze):
     """
     import torch
 
+    if not hasattr(m, "blocks") and hasattr(m, "layers"):
+        # ---- timm Swin (MegaDescriptor) — 단계마다 **다운샘플이 먼저, 블록이
+        # 뒤**다 (timm `SwinTransformerStage.forward`). 단계 넷을 한 줄로 펴고
+        # 뒤에서 N개 **블록**부터 배운다 — 그 사이에 낀 다운샘플(patch merging,
+        # 손잡이 있음)은 자른 자리 뒤면 함께 배운다. 활성은 NHWC 라 전역 평균이
+        # `forward_head(pre_logits)` 와 같다 (아래 tail — 등가는 시험이 잰다).
+        seq, is_blk = [], []
+        for st in m.layers:
+            seq.append(st.downsample); is_blk.append(False)
+            for b in st.blocks:
+                seq.append(b); is_blk.append(True)
+        blocks_pos = [i for i, f in enumerate(is_blk) if f]
+        if unfreeze > len(blocks_pos):
+            raise ValueError(f"블록이 {len(blocks_pos)}개뿐이다")
+        cut = blocks_pos[-unfreeze]
+        keep = torch.nn.ModuleList(seq[cut:])
+
+        def prefix(x):
+            with torch.no_grad():
+                h = m.patch_embed(x)
+                for mod in seq[:cut]:
+                    h = mod(h)
+            return h, None
+
+        def tail(h, blocks, _aux=None):
+            for mod in blocks:
+                h = mod(h)
+            return m.norm(h).mean(dim=(1, 2))
+
+        return prefix, tail, keep
+
     if not hasattr(m, "blocks"):
-        raise ValueError("이 백본은 블록을 못 가른다 (ViT 만 된다)")
+        raise ValueError("이 백본은 블록을 못 가른다 (ViT·Swin 만 된다)")
     keep = m.blocks[-unfreeze:]
 
     if m.rope_embed is None if hasattr(m, "rope_embed") else True:
