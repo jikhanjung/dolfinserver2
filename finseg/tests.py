@@ -267,3 +267,62 @@ class FinalPointsTests(SimpleTestCase):
         st = self.state()
         st["polygon"] = ""
         self.assertEqual(rules.final_points(st, c), [])
+
+
+class EnsLogitsTests(SimpleTestCase):
+    """**앙상블 규칙 한 곳** (`reid.ens_logits`).
+
+    화면과 `reid_ensemble` 이 이 함수를 부른다 — 여기가 흔들리면 잰 성적과
+    화면이 내는 순위가 조용히 갈린다.
+    """
+
+    def test_한_벌은_제_표준화다(self):
+        import numpy as np
+
+        from finseg import reid as R
+        a = np.array([[1.0, 2.0, 4.0]])
+        want = (a - a.mean(-1, keepdims=True)) / a.std(-1, keepdims=True)
+        self.assertTrue(np.allclose(R.ens_logits([a]), want))
+
+    def test_멤버의_크기_차이가_순위를_안_삼킨다(self):
+        """**표준화가 있는 까닭이 이것이다.** 한쪽 로짓이 백 배 크면 표준화가
+        없을 때 그 멤버가 그냥 이겨 버린다 — 그것은 앙상블이 아니라 그 멤버다.
+        """
+        import numpy as np
+
+        from finseg import reid as R
+        weak = np.array([[0.0, 1.0, 0.0]])          # 2번을 민다
+        loud = np.array([[100.0, 0.0, 200.0]])      # 3번을 민다 · 크기가 백 배
+        # 표준화 없이 그냥 더하면 큰 쪽이 이긴다
+        self.assertEqual(int(np.argmax(weak + loud)), 2)
+        # 표준화하면 둘의 말이 같은 무게로 들어간다 — 3번이 이기되 2번이 산다
+        got = R.ens_logits([weak, loud])[0]
+        self.assertGreater(got[1], got[0])
+
+    def test_모양이_다르면_멈춘다(self):
+        import numpy as np
+
+        from finseg import reid as R
+        with self.assertRaises(ValueError):
+            R.ens_logits([np.zeros((1, 3)), np.zeros((1, 4))])
+
+    def test_가중치는_정규화된다(self):
+        """`[1,1]` 과 `[5,5]` 가 같은 답이어야 한다 — 비율만 뜻이 있다."""
+        import numpy as np
+
+        from finseg import reid as R
+        a, b = np.array([[1.0, 2, 3]]), np.array([[3.0, 1, 2]])
+        self.assertTrue(np.allclose(R.ens_logits([a, b], [1, 1]),
+                                    R.ens_logits([a, b], [5, 5])))
+
+    def test_멤버가_없으면_멈춘다(self):
+        from finseg import reid as R
+        with self.assertRaises(ValueError):
+            R.ens_logits([])
+
+    def test_softmax_는_합이_1이다(self):
+        import numpy as np
+
+        from finseg import reid as R
+        p = R.softmax(np.array([[1.0, 2, 3], [-5, 0, 5]]))
+        self.assertTrue(np.allclose(p.sum(-1), 1.0))

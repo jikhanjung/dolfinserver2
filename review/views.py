@@ -14,6 +14,7 @@ SAM2 는 그 안의 것 하나를 딸 뿐이라, 사람이 하는 일은 틀린 
 것이 곧 학습 자료여야 하기 때문이다.
 """
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
+
+logger = logging.getLogger(__name__)
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
@@ -768,14 +771,65 @@ def _reid_pool():
     # 분류기 44.5% 로 거의 두 배다. 없으면 kNN 으로 떨어진다 — 화면이 멈추지는
     # 않되, 무엇으로 낸 것인지는 응답이 말한다
     cls = None
-    f = root / "cls-dinov2.npz"
-    if f.exists():
+    for f, w_, X_ in _members(root, ids):
         z = np.load(f)
-        cls = {side: (z[f"{side}_W"], z[f"{side}_b"], z[f"{side}_cls"])
-               for side in ("left", "right") if f"{side}_W" in z}
-        cls["_n_labeled"] = int(z["n_labeled"][0]) if "n_labeled" in z else 0
+        head = {side: (z[f"{side}_W"], z[f"{side}_b"], z[f"{side}_cls"])
+                for side in ("left", "right") if f"{side}_W" in z}
+        if not head:
+            continue
+        if cls is None:
+            cls = {"members": [], "_n_labeled": 0}
+        cls["members"].append({"head": head, "w": w_, "X": X_, "name": f.stem})
+        cls["_n_labeled"] = max(cls["_n_labeled"],
+                                int(z["n_labeled"][0]) if "n_labeled" in z else 0)
     return {"ids": ids, "day": day, "fac": fac, "emb": emb, "frame": frame,
             "cls": cls, "pos": {int(b): i for i, b in enumerate(ids)}}
+
+
+def _members(root, ids):
+    """앙상블 멤버 [(머리 파일, 가중치, 정규화된 임베딩)…].
+
+    **멤버마다 임베딩이 다르다** — 녹인 백본이 낸 것이라 얼린 것과 다른 공간이고,
+    전체 조각과 뒷날 크롭은 아예 다른 그림에서 나온다. 그래서 머리 하나에
+    임베딩 하나가 짝지어 다닌다.
+
+    `ensemble.json` 이 있으면 그것이 명단이다:
+
+        {"members": [{"emb": "emb-fullL.npz", "cls": "cls-fullL.npz", "w": 1},
+                     {"emb": "emb-cropL.npz", "cls": "cls-cropL.npz", "w": 1}]}
+
+    없으면 **지금까지 하던 그대로** `emb-dinov2.npz` + `cls-dinov2.npz` 한 벌이다.
+    명단에 적힌 파일이 없거나 상자 차례가 격자와 다르면 **그 멤버만 조용히
+    빠지는 것이 아니라 로그에 남는다** — 앙상블이 한 벌로 줄어든 채 89.2 인 줄
+    알면 안 된다.
+    """
+    import json as _json
+
+    import numpy as np
+
+    spec = []
+    f = root / "ensemble.json"
+    if f.exists():
+        try:
+            spec = _json.loads(f.read_text()).get("members", [])
+        except Exception as e:      # 명단이 깨졌으면 한 벌로 떨어진다
+            logger.warning("ensemble.json 을 못 읽었다 — 한 벌로 돈다: %s", e)
+    if not spec:
+        spec = [{"emb": "emb-dinov2.npz", "cls": "cls-dinov2.npz", "w": 1.0}]
+    out = []
+    for m in spec:
+        ef, cf = root / m.get("emb", ""), root / m.get("cls", "")
+        if not (ef.exists() and cf.exists()):
+            logger.warning("앙상블 멤버를 건너뛴다 (파일 없음): %s · %s", ef, cf)
+            continue
+        z = np.load(ef)
+        if not (z["box_id"] == ids).all():
+            logger.warning("앙상블 멤버를 건너뛴다 (상자 차례가 격자와 다르다): %s", ef)
+            continue
+        E = z["emb"]
+        out.append((cf, float(m.get("w", 1.0)),
+                    E / np.maximum(np.linalg.norm(E, axis=1, keepdims=True), 1e-9)))
+    return out
 
 
 def _score(P, g, cat_idx, k=5):
@@ -790,19 +844,44 @@ def _score(P, g, cat_idx, k=5):
 
     cls = P.get("cls")
     side = str(P["fac"][g[0]])
-    if cls and side in cls:
-        W, b, classes = cls[side]
-        X = P["emb"] / np.maximum(np.linalg.norm(P["emb"], axis=1, keepdims=True), 1e-9)
-        # **묶음은 로짓을 평균한다** — 표를 모으는 것이 낱장보다 낫다
-        logit = (X[g] @ W.T + b).mean(0)
-        e = np.exp(logit - logit.max())
-        prob = e / e.sum()
-        order = np.argsort(-prob)[:k]
-        # 카탈로그에서 사라진 개체(뺐거나 합친 것)는 내지 않는다
-        return [(int(classes[i]), float(prob[i]), True)
-                for i in order if int(classes[i]) in cat_idx], True
-    return [(ind, sc, False)
-            for ind, sc in R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx, k)], False
+    live = [m for m in (cls or {}).get("members", []) if side in m["head"]]
+    if live:
+        # **멤버끼리 개체 차례가 같아야 합칠 수 있다.** 따로 배운 머리라
+        # 카탈로그가 달라져 있으면 칸이 어긋나는데, 그대로 더하면 **다른
+        # 개체의 표를 더한다** — 눈에 안 보이는 종류다. 겹치는 개체만 쓴다.
+        common = None
+        for m in live:
+            s = {int(c) for c in m["head"][side][2]}
+            common = s if common is None else (common & s)
+        common = sorted(c for c in (common or set()) if c in cat_idx)
+        if not common:
+            return [], False
+        logits, ws = [], []
+        for m in live:
+            W, b, classes = m["head"][side]
+            col = {int(c): i for i, c in enumerate(classes)}
+            # **묶음은 로짓을 평균한다** — 표를 모으는 것이 낱장보다 낫다
+            lg = (m["X"][g] @ W.T + b).mean(0)
+            logits.append(lg[[col[c] for c in common]])
+            ws.append(m["w"])
+        if len(logits) == 1:
+            # **한 벌일 때는 표준화를 안 건다.** 표준화는 멤버끼리 로짓 크기를
+            # 맞추려고 있는 것이라 견줄 상대가 없으면 할 일이 없는데, 걸면
+            # softmax 의 온도가 바뀌어 **화면이 내미는 퍼센트가 딴것이 된다**
+            # (실측: 0.993 → 0.209). 순위는 같지만 사람이 읽는 수가 달라진다.
+            score, kind = R.softmax(logits[0]), "prob"
+        else:
+            # **합치는 규칙은 `reid.ens_logits` 한 곳에 있다** — `reid_ensemble`
+            # 이 같은 함수로 채점하므로 거기서 난 성적이 곧 이 화면의 순위다.
+            # **다만 그 수는 확률이 아니다** — z 척도 위의 softmax 라 납작하다.
+            # 온도 보정이 서기 전까지 화면은 이것을 퍼센트로 부르지 않는다
+            # (`TODOs` 의 그 항목 · `docs/닫힌_판과_열린_판…`).
+            score, kind = R.softmax(R.ens_logits(
+                [lg[None, :] for lg in logits], ws)[0]), "rank"
+        order = np.argsort(-score)[:k]
+        return [(int(common[i]), float(score[i]), kind) for i in order], kind
+    return [(ind, sc, "sim")
+            for ind, sc in R.suggest(g, P["emb"], P["day"], P["fac"], cat_idx, k)], "sim"
 
 
 @require_GET
@@ -833,7 +912,7 @@ def reid_groups(request):
     names = dict(Individual.objects.values_list("id", "name"))
     n = int(request.GET.get("n", 20))
     out = []
-    is_cls = False
+    is_cls = "sim"
     for g in groups[:n]:
         sg, is_cls = _score(P, g, cat_idx)
         out.append({
@@ -845,13 +924,18 @@ def reid_groups(request):
     # **무엇으로 낸 점수인지 화면이 알아야 한다** — 확률과 닮음은 읽는 법이 다르다
     unknown = 0
     if P.get("cls"):
+        # **어느 멤버도 못 배운 개체가 몇인가.** 카탈로그에 있는데 머리가 그
+        # 칸을 안 가진 개체는 **다섯 개가 전부 틀린다** — 화면이 그 수를
+        # 말해야 "제안이 자꾸 틀린다" 가 기능 탓으로 안 읽힌다
         known = set()
-        for side in ("left", "right"):
-            if side in P["cls"]:
-                known |= set(int(x) for x in P["cls"][side][2])
+        for m in P["cls"].get("members", []):
+            for side in ("left", "right"):
+                if side in m["head"]:
+                    known |= set(int(x) for x in m["head"][side][2])
         unknown = len([i for i in cat_idx if i not in known])
     return JsonResponse({"groups": out, "n_free": int(len(free)),
-                         "n_groups": len(groups), "prob": bool(is_cls),
+                         "n_groups": len(groups), "prob": is_cls == "prob",
+                         "scale": is_cls,
                          "unknown": unknown})
 
 
@@ -872,7 +956,10 @@ def reid_suggest(request):
                for ind, boxes in R.catalog().items()}
     names = dict(Individual.objects.values_list("id", "name"))
     sg, is_cls = _score(P, g, cat_idx, k=int(body.get("k", 5)))
-    return JsonResponse({"prob": is_cls,
+    # **몇 갈래로 낸 것인지 화면이 안다.** 앙상블이 한 벌로 줄어든 채(파일이
+    # 없거나 차례가 어긋나서) 도는 것을 사람이 눈으로 잡는 자리다
+    return JsonResponse({"prob": is_cls == "prob", "scale": is_cls,
+                         "members": len((P.get("cls") or {}).get("members", [])),
                          "suggest": [{"id": i, "name": names.get(i, str(i)),
                                       "score": round(s, 4)} for i, s, _ in sg]})
 

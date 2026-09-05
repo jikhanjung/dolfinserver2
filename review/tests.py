@@ -2588,3 +2588,92 @@ class CommandHelpTests(SimpleTestCase):
             except Exception as e:                   # noqa: BLE001
                 broken[name] = f"{type(e).__name__}: {e}"
         self.assertEqual(broken, {}, f"`--help` 가 깨진 명령: {broken}")
+
+
+class EnsembleMembersTests(TestCase):
+    """**앙상블 명단을 읽는 자리** (`review/views.py` 의 `_members`).
+
+    화면이 몇 벌로 도는지가 조용히 줄면 안 된다 — 한 벌로 떨어진 채 89.2 인
+    줄 알면 그 숫자가 무엇인지 아무도 모른다.
+    """
+
+    def _grid(self, root, names=("emb-dinov2.npz",), ids=(1, 2, 3)):
+        import json
+
+        import numpy as np
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "items.json").write_text(json.dumps({"items": []}))
+        for n in names:
+            np.savez(root / n, box_id=np.array(ids, dtype=np.int64),
+                     emb=np.eye(len(ids), 4, dtype=np.float32))
+        return np.array(ids, dtype=np.int64)
+
+    def test_명단이_없으면_옛_한_벌이다(self):
+        import tempfile
+        from pathlib import Path
+
+        from review import views as V
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ids = self._grid(root)
+            (root / "cls-dinov2.npz").write_bytes(b"")   # 있기만 하면 된다
+            got = V._members(root, ids)
+            self.assertEqual([f.name for f, _, _ in got], ["cls-dinov2.npz"])
+
+    def test_파일이_없는_멤버는_빠지고_로그에_남는다(self):
+        """**조용히 빠지는 것이 가장 나쁘다.** 이 저장소가 "0/659" 하나로
+        실패 659건을 못 보고 지나간 적이 있다.
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from review import views as V
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ids = self._grid(root)
+            (root / "cls-dinov2.npz").write_bytes(b"")
+            (root / "ensemble.json").write_text(json.dumps({"members": [
+                {"emb": "emb-dinov2.npz", "cls": "cls-dinov2.npz"},
+                {"emb": "emb-nope.npz", "cls": "cls-nope.npz"},
+            ]}))
+            with self.assertLogs("review.views", level="WARNING") as log:
+                got = V._members(root, ids)
+            self.assertEqual(len(got), 1)
+            self.assertTrue(any("건너뛴다" in m for m in log.output))
+
+    def test_상자_차례가_다르면_빠진다(self):
+        """임베딩과 격자의 차례가 어긋나면 **남의 개체 표를 더하게 된다.**"""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        import numpy as np
+
+        from review import views as V
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ids = self._grid(root)
+            np.savez(root / "emb-shift.npz",
+                     box_id=np.array([9, 9, 9], dtype=np.int64),
+                     emb=np.eye(3, 4, dtype=np.float32))
+            (root / "cls-dinov2.npz").write_bytes(b"")
+            (root / "ensemble.json").write_text(json.dumps({"members": [
+                {"emb": "emb-shift.npz", "cls": "cls-dinov2.npz"}]}))
+            with self.assertLogs("review.views", level="WARNING") as log:
+                self.assertEqual(V._members(root, ids), [])
+            self.assertTrue(any("차례" in m for m in log.output))
+
+    def test_명단이_깨져도_한_벌로_돈다(self):
+        import tempfile
+        from pathlib import Path
+
+        from review import views as V
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ids = self._grid(root)
+            (root / "cls-dinov2.npz").write_bytes(b"")
+            (root / "ensemble.json").write_text("{ 깨진 글")
+            with self.assertLogs("review.views", level="WARNING"):
+                got = V._members(root, ids)
+            self.assertEqual(len(got), 1)

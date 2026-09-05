@@ -788,9 +788,12 @@ class Command(BaseCommand):
         # kNN 으로 떨어지거나 터진다 — 저장하는 자리에서 막는다.
         if o["unfreeze"]:
             raise CommandError(
-                "`--unfreeze` 는 아직 재기만 한다 — 화면이 `X @ W.T + b` 로만 읽는데 "
-                "(`review/views.py` 의 `_score`) 녹인 블록은 그 한 줄로 못 접힌다. "
-                "성적이 서면 **조각마다 임베딩을 다시 내는 길**부터 놓을 것")
+                "`--unfreeze` 는 아직 재기만 한다 — 화면은 `X @ W.T + b` 로만 읽는데 "
+                "(`review/views.py` 의 `_score`) 녹인 블록은 그 한 줄로 못 접힌다.\n"
+                "**화면 쪽은 이제 준비돼 있다** — 임베딩·머리를 한 벌씩 짝지어 "
+                "여러 벌 읽고 `reid.ens_logits` 로 합친다(`ensemble.json`). "
+                "남은 것은 여기다: **녹여 배운 백본으로 격자 조각의 임베딩을 "
+                "다시 내는 길**. 그러면 머리는 다시 선형 한 층이라 그대로 실린다")
         if o["hidden"]:
             raise CommandError(
                 "`--hidden` 은 아직 재기만 한다 — 화면이 `X @ W.T + b` 로만 읽는다 "

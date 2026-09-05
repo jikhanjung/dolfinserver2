@@ -467,6 +467,76 @@ LINK_DIST = 0.06
 LINK_GAP = 2
 
 
+# ── 앙상블 ──────────────────────────────────────────────────────────────────
+#
+# **전체 조각과 뒷날 크롭은 서로 다른 실수를 한다.** 2026-09-03 에 잰 것:
+#
+#     전체 L·16 단독      84.6 ±0.4
+#     뒷날 크롭 L·16 단독  84.0 ±0.6
+#     둘의 로짓 평균      **89.2 ±0.5**   (top-5 95.9 · top-10 97.3)
+#
+# 크롭은 단독으로는 졌는데 멤버로는 +4.6 을 보탠다 — **단독 성적으로 멤버를
+# 고르면 이것을 놓친다.** 셋·넷은 둘보다 못하다(88.0/87.x): 수가 아니라
+# 상보성이고, 약한 멤버를 더 섞으면 희석된다 (`devlog/20260903_001` 3절).
+#
+# **규칙이 여기 한 곳에 있는 까닭.** 저 89.2 는 GPU 자리의 일회성 스크립트가
+# 낸 것이고, 화면이 그것을 따로 구현하면 **다른 것을 내면서 그걸 모른다.**
+# 화면(`review/views.py` 의 `_score`)과 채점(`reid_ensemble`)이 이 함수 하나를
+# 부른다 — `rules.py`·`evaluate.py` 를 한 곳에 둔 것과 같은 이유다.
+
+
+def ens_logits(logits, weights=None):
+    """멤버별 로짓 [(질의, 클래스)…] → 합친 로짓 (질의, 클래스).
+
+    **질의마다 클래스 축으로 표준화한 뒤 가중 평균한다.** 표준화가 필요한 것은
+    멤버끼리 로짓의 크기가 다르기 때문이다 — 큰 쪽이 그냥 이겨 버리면 그것은
+    앙상블이 아니라 그 멤버다. 질의 단위로 재는 것은 **재는 날의 통계를 안
+    쓰려는 것**이다: 열 전체로 표준화하면 그 판에 무엇이 함께 들어왔는지가
+    한 질의의 답에 스민다.
+
+    가중치는 지렛대가 아니다 — 실측에서 0.45~0.60 이 89.0~89.2 로 평평했다.
+    **반반이 곧 꼭짓점**이라 기본값이 그것이고, 비율을 재는 날에서 고를 이유가
+    없다는 뜻이기도 하다.
+
+    멤버는 **같은 질의가 같은 줄, 같은 개체가 같은 칸**이어야 한다. 부르는
+    쪽이 맞춰서 넣는다 — 여기서는 모양만 본다.
+    """
+    L = [np.asarray(x, dtype=np.float64) for x in logits]
+    if not L:
+        raise ValueError("멤버가 없다")
+    shape = L[0].shape
+    for i, x in enumerate(L):
+        if x.shape != shape:
+            raise ValueError(f"멤버 {i} 의 모양이 {x.shape} 라 {shape} 와 다르다 — "
+                             "같은 질의·같은 개체 차례여야 한다")
+    if weights is None:
+        weights = [1.0] * len(L)
+    w = np.asarray(weights, dtype=np.float64)
+    if len(w) != len(L):
+        raise ValueError("가중치 수가 멤버 수와 다르다")
+    if w.sum() <= 0:
+        raise ValueError("가중치 합이 0 이하다")
+    w = w / w.sum()
+    out = np.zeros(shape, dtype=np.float64)
+    for x, wi in zip(L, w):
+        mu = x.mean(axis=-1, keepdims=True)
+        sd = x.std(axis=-1, keepdims=True)
+        out += wi * ((x - mu) / np.maximum(sd, 1e-9))
+    return out
+
+
+def softmax(logit, axis=-1):
+    """로짓 → 확률. **화면이 내미는 퍼센트가 이것이다.**
+
+    지금 이 확률은 **21%p 부풀어 있다** (평균 확신 70.4% 대 실제 49.5% ·
+    ECE 0.210, 2026-08-29). 온도 보정이 `TODOs` 에 있고, 붙이면 여기에
+    나눗셈 한 줄이 는다 — 그래서 부르는 자리를 하나로 뒀다.
+    """
+    x = np.asarray(logit, dtype=np.float64)
+    e = np.exp(x - x.max(axis=axis, keepdims=True))
+    return e / e.sum(axis=axis, keepdims=True)
+
+
 def group_links(idx, emb, day, facing, frame, d_max=LINK_DIST, gap_max=LINK_GAP):
     """조각 번호들 → 묶음 목록. **같은 날·같은 쪽·가까운 프레임·닮은 것**만 잇는다.
 

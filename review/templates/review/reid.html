@@ -370,6 +370,20 @@
   .warn { margin:14px; padding:10px 13px; background:#2a1416;
           border:1px solid #5c2a2f; border-left:3px solid var(--no);
           border-radius:6px; color:#ffc9cd; font-size:13px; max-width:74ch }
+/* 개체 제안 툴팁 — 조각에 머무르면 top-5 를 띄운다. `title` 이 아니라 제
+   상자인 것은 **확률 막대와 "여기 없을 수 있음" 한 줄**을 함께 실어야 해서다. */
+#sug{position:fixed;z-index:60;display:none;min-width:16em;max-width:22em;
+     padding:.45em .55em;border:1px solid #bbb;border-radius:5px;
+     background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.18);
+     font-size:.82em;line-height:1.45;pointer-events:none}
+#sug .h{color:#666;margin-bottom:.3em}
+#sug .row{display:flex;align-items:center;gap:.4em;white-space:nowrap}
+#sug .row .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+#sug .row .pc{color:#333;font-variant-numeric:tabular-nums}
+#sug .bar{height:3px;background:#e5e5e5;border-radius:2px;margin:.1em 0 .25em}
+#sug .bar i{display:block;height:100%;background:#4a7;border-radius:2px}
+#sug .warn{color:#a60;margin-top:.35em;border-top:1px solid #eee;padding-top:.3em}
+#sug .dim{color:#999}
 </style>
 
 {% include "review/_nav.html" with here="reid" %}
@@ -450,6 +464,7 @@
   <div id="gcol">
     <div id="daybar"><b id="dbday"></b><span id="dbspan"></span></div>
     <div id="grid"></div>
+    <div id="sug"></div>
     <div id="pager"></div>
   </div>
   <div id="side">
@@ -504,6 +519,13 @@
 const ITEMS = {{ items|safe }};
 let BOXES = {{ boxes|safe }};
 const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+
+// 개체 제안 툴팁의 상태. **선언이 여기 있는 것은 `draw()` 가 이 파일 어디서든
+// 불리기 때문**이다 — 아래쪽에 두면 첫 `draw()` 가 `const` 의 사각지대에 든다.
+const sugBox = document.getElementById("sug");
+const sugCache = new Map();
+let sugTimer = null, sugFor = null;
+function sugClear() { sugCache.clear(); }
 const byId = Object.fromEntries(ITEMS.map(i => [i.id, i]));
 let sel = new Set(), lastClick = null;
 
@@ -691,6 +713,7 @@ function finHtml(i, nm) {
 }
 
 function draw() {
+  sugClear();
   const nm = Object.fromEntries(BOXES.map(b => [b.id, b.name]));
   const bar = document.getElementById("focusbar");
   bar.classList.toggle("on", focusOn !== null);
@@ -1438,6 +1461,102 @@ if ({{ only_boxes|yesno:"true,false" }}) {
   });
   tell({t: "boxwin?"});      // 이미 떠 있나
 }
+
+// ── 개체 제안 툴팁 ──────────────────────────────────────────────────────────
+//
+// 조각에 머무르면 `/api/reid/suggest` 에 그 상자 하나만 넘겨 top-5 를 띄운다.
+// **서버는 이미 다 돼 있었다** — 앙상블이면 멤버들의 로짓을 합친 확률이고,
+// 분류기가 없으면 코사인 닮음이라 응답의 `prob` 이 그것을 말한다.
+//
+// **넣을 때 둘을 함께 둔다** (`TODOs` 의 그 항목):
+//   ① 확률은 부풀어 있다 — 온도 보정 전이라 평균 확신이 실제보다 21%p 높다
+//   ② **여기 없을 수 있다** — 카탈로그가 개체군의 6할이라, 없는 개체면
+//      다섯 개가 전부 틀린다. 그 한 줄이 없으면 "제안이 자꾸 틀린다" 가
+//      기능 자체에 대한 불신으로 읽힌다
+//
+// 한 번 부른 것은 상자별로 쟁여 둔다 — 격자를 훑으면 같은 조각 위를 여러 번
+// 지난다. 판정이 바뀌면 `draw()` 가 비운다.
+function sugHide() {
+  clearTimeout(sugTimer); sugTimer = null; sugFor = null;
+  sugBox.style.display = "none";
+}
+
+function sugPlace(el) {
+  const r = el.getBoundingClientRect();
+  sugBox.style.display = "block";
+  const b = sugBox.getBoundingClientRect();
+  // 오른쪽·아래로 넘치면 반대편에 붙인다 — 격자 가장자리 조각이 잘리면
+  // 정작 볼 것을 못 본다
+  let x = r.right + 8, y = r.top;
+  if (x + b.width > innerWidth - 6) x = Math.max(6, r.left - b.width - 8);
+  if (y + b.height > innerHeight - 6) y = Math.max(6, innerHeight - b.height - 6);
+  sugBox.style.left = x + "px";
+  sugBox.style.top = y + "px";
+}
+
+function sugRender(d, el) {
+  if (!d || !d.suggest || !d.suggest.length) {
+    sugBox.innerHTML = `<div class="dim">제안할 것이 없다 — 분류기도 임베딩도 없거나
+                        이 쪽(좌/우)에 배운 개체가 없다</div>`;
+    sugPlace(el); return;
+  }
+  // **무엇으로 낸 수인지에 따라 다르게 적는다.** 셋이 다르다 —
+  //   prob 분류기 한 벌의 확률. 읽을 수는 있으나 **21%p 부풀어 있다**
+  //   rank 앙상블. 순위가 잰 것(89.2)이고 **수 자체는 확률이 아니다**
+  //   sim  코사인 닮음. 다 0.9대라 절대값에 뜻이 없다
+  const scale = d.scale || (d.prob ? "prob" : "sim");
+  const head = {prob: "개체 제안 — 확률", rank: "개체 제안 — 순위",
+                sim: "닮은 개체 — 순위로만 읽는다"}[scale];
+  const hi = d.suggest[0].score || 1;
+  sugBox.innerHTML =
+    `<div class="h">${head}${d.members > 1 ? ` · 갈래 ${d.members}` : ""}</div>` +
+    d.suggest.map((s, i) => {
+      const v = scale === "prob" ? (s.score * 100).toFixed(1) + "%"
+              : scale === "rank" ? `${i + 1}위`
+              : s.score.toFixed(3);
+      const wpc = Math.max(2, Math.round((s.score / hi) * 100));
+      return `<div class="row"><span class="nm">${s.name}</span>
+              <span class="pc">${v}</span></div>
+              <div class="bar"><i style="width:${wpc}%"></i></div>`;
+    }).join("") +
+    `<div class="warn">여기 없을 수 있다 — 카탈로그가 개체군의 일부다.${
+       scale === "prob" ? " 확률은 아직 부풀어 있다(온도 보정 전)."
+     : scale === "rank" ? " 앙상블의 수는 확률이 아니다 — 순위로만 읽는다."
+     : ""}</div>`;
+  sugPlace(el);
+}
+
+function sugShow(el) {
+  const id = +el.dataset.id;
+  if (sugCache.has(id)) { sugRender(sugCache.get(id), el); return; }
+  fetch("/api/reid/suggest", {
+    method: "POST", headers: {"Content-Type": "application/json",
+                              "X-CSRFToken": csrf()},
+    body: JSON.stringify({boxes: [id], k: 5}),
+  }).then(r => r.json()).then(d => {
+    sugCache.set(id, d);
+    if (sugFor === id) sugRender(d, el);
+  }).catch(() => {});
+}
+
+// 격자에 하나만 건다 — 칸이 7,912개라 칸마다 걸면 그 자체가 무겁다
+// (`devlog/20260829_001` 이 걷어낸 것과 같은 종류다).
+document.getElementById("grid").addEventListener("mouseover", e => {
+  const el = e.target.closest(".fin");
+  if (!el || !el.dataset.id) return;
+  const id = +el.dataset.id;
+  if (sugFor === id) return;
+  clearTimeout(sugTimer);
+  sugFor = id;
+  sugBox.style.display = "none";
+  // 격자를 스쳐 지나는 것마다 부르지 않는다
+  sugTimer = setTimeout(() => { if (sugFor === id) sugShow(el); }, 260);
+});
+document.getElementById("grid").addEventListener("mouseout", e => {
+  if (!e.relatedTarget || !e.relatedTarget.closest?.(".fin")) sugHide();
+});
+addEventListener("scroll", sugHide, true);
+addEventListener("keydown", e => { if (e.key === "Escape") sugHide(); });
 
 draw();
 </script>

@@ -49,6 +49,7 @@ Django 5.2 + SQLite. **파이프라인은 전부 management command 다** — �
 finseg/models.py   스키마. 판정이 왜 네 축인지 여기 적혀 있다
 finseg/rules.py    **판정 규칙 한 곳.** 검토 화면과 내보내기가 같은 함수를 부른다
 finseg/evaluate.py **비교 계산 한 곳.** eval_masks 와 /compare 가 같은 함수를 부른다
+finseg/reid.py     re-ID. **앙상블 합치기 한 곳(`ens_logits`)** — 화면과 채점이 같이 쓴다
 finseg/geometry.py 폴리곤 표기와 **원본↔크롭 사상 — 이 식은 여기 둘뿐이다**
 finseg/baseline.py 아래 경계(밑동 현). **자동 탐지 실패 기록이 여기 있다**
 finseg/management/commands/  import_boxes · crops · segment · export_yolo ·
@@ -109,6 +110,10 @@ python manage.py reid_cls --folds 5 --seeds 3   # **자를 돌려서 잰다** (�
 python manage.py reid_chips --out reid/v3 --pca 256 --pca-src emb-dinov2.npz \
     --pca-unlabeled --emb-name emb-s256-clean.npz   # **재는 자리에서는 정답을 빼고 축을 잡는다**
 python manage.py reid_cls --emb emb-s256-clean.npz --folds 5 --seeds 3 --l1 1e-5
+python manage.py reid_cls --folds 5 --seeds 3 --save-logits full.npz   # 앙상블 재료
+python manage.py reid_ensemble --logits full.npz crop.npz --each
+#   **합치는 규칙은 `reid.ens_logits` 한 곳이다** — 화면(`_score`)과 이 명령이
+#   같은 함수를 부른다. 화면 명단은 격자의 `ensemble.json` 이고, 없으면 한 벌이다
 
 python manage.py export_pose --out datasets/pose-v1        # 밑동 두 점 (4단계)
 python manage.py train --data datasets/pose-v1             # [GPU]
