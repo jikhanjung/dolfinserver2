@@ -20,3 +20,11 @@ sam-2 @ git+https://github.com/facebookresearch/sam2.git
 # sam2 가 선언하지 않는다. `build_sam2_hf()` 가 부를 때에야 없는 것이 드러나므로
 # **모델을 내려받는 첫 순간에 터진다** — 여기 적어 두고 함께 깐다.
 huggingface_hub
+# DINOv3 를 `torch.hub` 로 열면 그 저장소의 `hubconf` 가 분할 갈래까지 끌어와
+# `torchmetrics` 를 import 한다 — 우리는 백본만 쓰는데도 없으면 그 자리에서
+# 터진다. 2026-09-05 에 2080ti 가 실제로 여기서 멈췄다 (`dinov3l` 첫 호출).
+torchmetrics
+# MegaDescriptor(`--backbone megad`)가 timm 모델이다
+timm
+# 그 import 사슬이 하나 더 끌어온다 (`dinov3.logging`).
+termcolor

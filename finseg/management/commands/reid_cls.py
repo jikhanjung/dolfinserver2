@@ -200,7 +200,10 @@ class Command(BaseCommand):
         p.add_argument("--fit-all", metavar="파일",
                        help="**재지 않고 배워서 저장한다** — 화면이 쓸 것이라 "
                             "날을 가르지 않고 아는 것을 전부 쓴다. 성적을 볼 때는 "
-                            "이것을 쓰면 안 된다 (배운 것으로 배운 것을 잰다)")
+                            "이것을 쓰면 안 된다 (배운 것으로 배운 것을 잰다). "
+                            "`--unfreeze` 와 함께 주면 **파일이 둘**이다 — 머리는 "
+                            "여기, 녹은 블록은 곁의 `.blocks.pt` 로. 그 `.pt` 를 "
+                            "`reid_chips --emb-only --deep` 에 물려야 짝이 선다")
         p.add_argument("--folds", type=int, default=0, metavar="K",
                        help="**재는 날을 고정하지 말고 돌린다.** 관찰일을 K벌로 "
                             "나눠 한 벌씩 빼면서 K번 배우고 잰다 — 모든 날이 한 "
@@ -494,7 +497,7 @@ class Command(BaseCommand):
           f"{len(days)-len(test_days)}")
 
         if o["fit_all"]:
-            return self._save(o, X, ids, fac, lab, cat, w)
+            return self._save(o, root, X, ids, fac, lab, cat, w)
 
         # **누수를 값으로 막는다.** 날로 가른다고 적어 두는 것과 실제로 안 겹치는
         # 것은 다르다 — 이 저장소가 "화면은 됐다는데 값이 안 닿는다" 로 겪은 종류다
@@ -776,28 +779,38 @@ class Command(BaseCommand):
                 f"우리 {n}마리에서 찍어 맞을 확률이 {10 / n:.1%}다 "
                 f"(Kim et al. 은 79마리라 {10 / 79:.1%}).")
 
-    def _save(self, o, X, ids, fac, lab, cat, w):
+    def _save(self, o, root, X, ids, fac, lab, cat, w):
         """**화면이 쓸 분류기를 저장한다.** 날을 안 가르고 아는 것을 전부 쓴다 —
         성적을 재는 일과 실제로 쓰는 일은 다르다.
 
         `npz` 로 둔다. 추론은 `X @ W.T + b` 한 줄이라 화면 쪽에서 torch 를 들일
         이유가 없다.
+
+        **`--unfreeze` 면 파일이 둘이다.** 머리는 여전히 선형 한 층이라 `npz`
+        그대로인데(화면이 읽는 형식이 안 바뀐다), 그 머리가 앉은 자리가 얼린
+        임베딩이 아니라 **녹은 백본이 내는 임베딩**이다. 그래서 블록을 곁에
+        `.blocks.pt` 로 남긴다 — `reid_chips --emb-only --deep` 가 그것을 받아
+        격자 전체의 임베딩을 다시 내고, 그 짝이 `ensemble.json` 의 한 줄이 된다.
+        **`.pt` 는 GCP 로 안 나른다** (거기 torch 가 없다 · 화면이 읽는 것은
+        `npz` 둘뿐이다).
         """
-        # **화면은 선형 한 층만 읽는다** (`review/views.py` 의 `_score`).
-        # 숨은 층을 넣은 것을 그대로 저장하면 칸 수가 안 맞아, 화면이 조용히
-        # kNN 으로 떨어지거나 터진다 — 저장하는 자리에서 막는다.
-        if o["unfreeze"]:
-            raise CommandError(
-                "`--unfreeze` 는 아직 재기만 한다 — 화면은 `X @ W.T + b` 로만 읽는데 "
-                "(`review/views.py` 의 `_score`) 녹인 블록은 그 한 줄로 못 접힌다.\n"
-                "**화면 쪽은 이제 준비돼 있다** — 임베딩·머리를 한 벌씩 짝지어 "
-                "여러 벌 읽고 `reid.ens_logits` 로 합친다(`ensemble.json`). "
-                "남은 것은 여기다: **녹여 배운 백본으로 격자 조각의 임베딩을 "
-                "다시 내는 길**. 그러면 머리는 다시 선형 한 층이라 그대로 실린다")
         if o["hidden"]:
             raise CommandError(
                 "`--hidden` 은 아직 재기만 한다 — 화면이 `X @ W.T + b` 로만 읽는다 "
                 "(`review/views.py` 의 `_score`). 성적이 서면 화면 쪽을 먼저 고칠 것")
+        blocks_out = None
+        if o["unfreeze"]:
+            import torch
+            dev = o["device"] or ("cuda" if torch.cuda.is_available() else "cpu")
+            w(f"\n마지막 {o['unfreeze']}블록을 녹인다 · 에폭 {o['deep_epochs']} · "
+              f"lr {o['lr_deep']} · 묶음 {o['batch']}")
+            # **캐시는 정답 있는 조각만이다.** 배우는 데 쓸 것이 그것뿐이라
+            # 그렇고, 격자 전부를 캐시하면 3.1GB 다 (`_prefix` 의 그 문단).
+            # 격자 전체를 흘리는 것은 ②(`reid_chips --emb-only --deep`)의 몫이다
+            pre, ctx, keep, pos = self._prefix(root, o["chips"], ids,
+                                               o["unfreeze"], w, lab >= 0,
+                                               o["backbone"], X.shape[1], dev)
+            blocks_out = {}
         out = {}
         for side in ("left", "right"):
             m = (fac == side) & (lab >= 0)
@@ -807,19 +820,51 @@ class Command(BaseCommand):
                 w(f"  {side}: 배울 것이 모자란다 ({len(idx)}조각 · 개체 {len(classes)})")
                 continue
             k = {c: i for i, c in enumerate(classes)}
-            W_, B_ = self._fit(X[idx], [k[int(v)] for v in lab[idx]], len(classes),
-                               o["epochs"], o["lr"], o["wd"], o["seed"],
-                               o["l1"], o["no_bias_decay"], 0,
-                               o["arcface"], o["arc_m"], o["arc_s"])
+            y = [k[int(v)] for v in lab[idx]]
+            if o["unfreeze"]:
+                # **폴드도 씨앗도 안 돈다** — 아는 것을 전부 써서 한 번 배운다.
+                # 낸 머리는 `tail` 의 출력 위의 선형 한 층이라 얼린 갈래와 같은
+                # 모양이고, 그래서 화면 코드가 한 줄도 안 바뀐다
+                bl, head = self._fit_deep(pre, pos[idx], y, len(classes),
+                                          ctx, keep, o, o["seed"])
+                W_ = head.weight.detach().cpu().numpy().astype(np.float32)
+                B_ = head.bias.detach().cpu().numpy().astype(np.float32)
+                blocks_out[side] = {n: t.cpu() for n, t in bl.state_dict().items()}
+            else:
+                W_, B_ = self._fit(X[idx], y, len(classes),
+                                   o["epochs"], o["lr"], o["wd"], o["seed"],
+                                   o["l1"], o["no_bias_decay"], 0,
+                                   o["arcface"], o["arc_m"], o["arc_s"])
             out[f"{side}_W"] = W_
             out[f"{side}_b"] = B_
             out[f"{side}_cls"] = np.array(classes, dtype=np.int64)
             w(f"  {side:<6} 개체 {len(classes):>2} · 조각 {len(idx):>3}")
         if not out:
             raise CommandError("배운 것이 없다")
-        out["emb"] = np.array([o["emb"]])
+        # **`emb` 는 이 머리가 앉을 자리의 이름이다.** 얼린 갈래에서는 읽어 온
+        # 그 파일이고, 녹인 갈래에서는 **아직 없는 파일** — ②가 낼 것이다.
+        # 이름을 여기서 정해 두어야 (a)가 낸 것과 (b)가 낼 것이 짝인 줄 안다
+        emb_name = o["emb"]
+        if o["unfreeze"]:
+            stem = Path(str(o["fit_all"])).name
+            emb_name = ("emb-" + stem[4:]) if stem.startswith("cls-") else stem
+        out["emb"] = np.array([emb_name])
         out["dim"] = np.array([X.shape[1]])
         out["n_labeled"] = np.array([int((lab >= 0).sum())])
         np.savez_compressed(o["fit_all"], **out)
         w(f"\n{o['fit_all']}  — 아는 것을 전부 써서 배웠다.")
         w("**이것으로 성적을 재지 말 것** — 배운 것으로 배운 것을 재게 된다.")
+        if blocks_out is None:
+            return
+        import torch
+        bp = Path(str(o["fit_all"]))
+        bp = bp.with_name(bp.name[:-4] if bp.name.endswith(".npz") else bp.name)
+        bp = bp.with_name(bp.name + ".blocks.pt")
+        torch.save({"backbone": o["backbone"], "unfreeze": o["unfreeze"],
+                    "chips": o["chips"], "dim": int(X.shape[1]),
+                    "emb": emb_name, "blocks": blocks_out}, bp)
+        w(f"{bp}  — 녹은 블록 ({' · '.join(sorted(blocks_out))})")
+        w(f"**아직 짝이 아니다.** 이 머리는 `{emb_name}` 위에 앉는데 그 파일이 "
+          f"아직 없다 — 다음이 그것을 낸다:\n"
+          f"  python manage.py reid_chips --out <격자> --emb-only "
+          f"--backbone {o['backbone']} --deep {bp} --emb-name {emb_name}")

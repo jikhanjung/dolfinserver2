@@ -156,6 +156,15 @@ class Command(BaseCommand):
         p.add_argument("--emb-only", action="store_true",
                        help="이미 만든 조각으로 **임베딩만 다시 뽑는다** — 백본을 "
                             "갈아 볼 때. 조각·곡선·그림은 안 건드린다")
+        p.add_argument("--deep", metavar="파일",
+                       help="**녹여 배운 블록으로 뽑는다** (`reid_cls --fit-all "
+                            "--unfreeze` 가 남긴 `.blocks.pt`). 사전학습 그대로가 "
+                            "아니라 그 블록을 태우므로 **얼린 임베딩과 다른 "
+                            "공간**이고, 짝인 머리(`cls-*.npz`)와만 뜻이 있다. "
+                            "`--emb-only` 에서만 든다. 좌우를 따로 녹였으면 조각의 "
+                            "`facing` 이 어느 블록을 태울지 정한다 — 화면도 성적도 "
+                            "같은 쪽끼리만 견주므로(`reid.suggest`·`group_links`· "
+                            "`_score`) 한 파일에 두 공간이 섞여도 안 부딪힌다")
         p.add_argument("--chip-size", type=int, default=None, metavar="N",
                        help="**모델이 먹을 조각 한 변** (기본 `reid.CHIP`=128). "
                             "128 은 **원본의 절반을 버린다** — 밑동 현이 원본에서 "
@@ -449,15 +458,95 @@ class Command(BaseCommand):
         if not f.exists():
             raise CommandError(f"{f} 가 없다 — 먼저 조각을 만들 것")
         z = np.load(f)
-        w(f"{f} 조각 {len(z['box_id']):,} · 자 {o['backbone']}")
-        emb = self._embed(z["chip"], o["backbone"])
+        w(f"{f} 조각 {len(z['box_id']):,} · 자 {o['backbone']}"
+          + (f" · 녹은 블록 {o['deep']}" if o.get("deep") else ""))
+        if o.get("deep"):
+            emb = self._embed_deep(z["chip"], z["facing"], o, w)
+        else:
+            emb = self._embed(z["chip"], o["backbone"])
         np.savez_compressed(out / o["emb_name"], box_id=z["box_id"],
                             facing=z["facing"], emb=emb)
         w(f"{out}/{o['emb_name']}  ({emb.shape[1]}차원 · {o['backbone']})")
+        if o.get("deep"):
+            # **`sim` 은 안 건드린다.** 녹은 임베딩은 짝인 머리와만 뜻이 있는데
+            # `sim`(화면의 `닮은 것끼리`)과 묶음(`group_links`)은 격자의 기본
+            # 임베딩(`emb-dinov2.npz`)으로 도는 자리다 — 여기서 덮어쓰면 멤버
+            # 하나를 더한 값이 **묶는 규칙까지 조용히 바꾼다**
+            w("  `sim` 은 안 건드렸다 (녹은 임베딩은 짝인 머리와만 쓴다)")
+            return
         if o["no_chain"]:
             w("  `sim` 은 안 건드렸다 (`--no-chain`)")
             return
         self._chain(out, z["box_id"], z["facing"], emb, None, w)
+
+    def _embed_deep(self, X, fac, o, w):
+        """**녹여 배운 블록으로 격자 전체의 임베딩을 낸다** (②).
+
+        `reid_cls` 가 배울 때 쓴 길과 **같은 함수**를 탄다 — `BB.split()` 의
+        `prefix`(얼린 앞부분) → 배운 `blocks` → `tail`. `tail` 이 내는 것이 곧
+        `m.norm(h)[:, 0]`, 얼린 백본의 `m(x)` 와 같은 자리다. 그래서 이 파일은
+        `emb-*.npz` 로 그대로 실리고 화면 코드가 한 줄도 안 바뀐다.
+
+        **캐시하지 않고 흘린다.** `reid_cls._prefix` 는 정답 있는 조각만
+        (1,300장 513MB) 담아 두고 에폭마다 돌려 쓰지만, 여기는 격자 전부를
+        한 번만 지나가므로 담을 이유가 없다 — 담으면 3.1GB 다. 남기는 것은
+        1024차원 결과뿐이라 7,912장에 32MB 다.
+
+        좌우를 따로 녹였으면 **조각의 `facing` 이 어느 블록을 태울지 정한다.**
+        """
+        import copy
+        import time
+
+        import torch
+        import torch.nn.functional as Fn
+        from finseg import backbone as BB
+
+        ck = torch.load(o["deep"], map_location="cpu", weights_only=True)
+        if ck["backbone"] != o["backbone"]:
+            raise CommandError(
+                f"`--deep` 은 `{ck['backbone']}` 으로 녹인 것인데 `--backbone` 은 "
+                f"`{o['backbone']}` 이다 — 같은 백본이라야 블록이 앉는다")
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        m = BB.load(o["backbone"]).to(dev).eval()
+        pre, tail, keep = BB.split(m, ck["unfreeze"])
+        # **쪽마다 사본을 따로 든다** — 하나를 갈아 끼우며 쓰면 앞 쪽의 블록이
+        # 뒤 쪽 조각에 새어 든다 (`_fit_deep` 이 폴드마다 사본을 뜨는 그 이유)
+        blocks = {}
+        for side, sd in ck["blocks"].items():
+            b = copy.deepcopy(keep)
+            b.load_state_dict(sd)
+            blocks[side] = b.to(dev).eval()
+        missing = sorted({str(s) for s in np.unique(fac)} - set(blocks))
+        if missing:
+            raise CommandError(
+                f"`--deep` 에 {' · '.join(missing)} 쪽 블록이 없다 — 격자에는 그 "
+                f"쪽 조각이 있다. `--fit-all` 이 그 쪽을 건너뛴 것이니 거기부터 볼 것")
+        size = BB.input_size(o["backbone"])
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(dev)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(dev)
+        if dev == "cpu":
+            w("  **CPU 로 돈다** — ViT-L 이면 시간이 한참이다")
+        E = np.zeros((len(X), ck["dim"]), dtype=np.float32)
+        Xt = torch.from_numpy(X)
+        t0 = time.time()
+        done = 0
+        # **쪽별로 모아서 지나간다** — 묶음 안에 두 쪽이 섞이면 조각마다 블록을
+        # 갈아야 해서, 모아 두면 앞부분(`prefix`)도 한 번에 태울 수 있다
+        for side, bl in blocks.items():
+            rows = np.flatnonzero(fac == side)
+            for i in range(0, len(rows), 32):
+                r = rows[i:i + 32]
+                x = Xt[r].unsqueeze(1).repeat(1, 3, 1, 1).to(dev)
+                x = Fn.interpolate(x, size=size, mode="bilinear",
+                                   align_corners=False)
+                with torch.no_grad():
+                    h, aux = pre((x - mean) / std)
+                    E[r] = tail(h, bl, aux).cpu().numpy()
+                done += len(r)
+                if done % 1280 < 32:
+                    w(f"    {done:,}/{len(X):,} … {time.time() - t0:.0f}s")
+        w(f"  {len(X):,}장 · {time.time() - t0:.0f}s")
+        return E
 
     def _chain(self, out, ids, fac, emb, rows, w):
         """`items.json` 에 `sim`(닮은 것끼리 편 등수)을 적는다.
