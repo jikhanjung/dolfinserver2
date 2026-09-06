@@ -504,7 +504,6 @@
   <div id="side">
     <div class="top">
       <span class="stat" id="selinfo">고른 것 0</span>
-      <button id="gbtn" title="연속 프레임 + 닮은 것으로 묶어 한 번에 묻는다">묶음 제안</button>
       <button id="popbox" class="gridonly"
               title="상자 목록만 새 창으로 — 옆 화면에 놓고 끌어 넣는다">창으로 빼기</button>
     </div>
@@ -1367,10 +1366,9 @@ async function groupAssign(indId) {
   showGroup();
 }
 
-document.getElementById("gbtn").onclick = async () => {
-  gMode = "group";
-  if (await loadGroups()) showGroup();
-};
+// 옛 묶음 제안(연속 프레임 + 닮음) 단추는 걷었다 (2026-09-07) — 확신 제안이
+// 그 자리를 물려받아 차림표의 `묶음 제안` 이 됐다. loadGroups 경로는 남긴다:
+// 판(gpanel)과 흐름을 확신 제안이 그대로 쓰고, 되살릴 일이 생기면 단추 하나다.
 if (new URLSearchParams(location.search).get("bulk")) {
   const a = document.getElementById("navbulk");
   if (a) a.classList.add("on");
