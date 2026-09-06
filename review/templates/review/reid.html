@@ -505,7 +505,6 @@
     <div class="top">
       <span class="stat" id="selinfo">고른 것 0</span>
       <button id="gbtn" title="연속 프레임 + 닮은 것으로 묶어 한 번에 묻는다">묶음 제안</button>
-      <button id="bbtn" title="앙상블이 확신하는 조각을 top-1 상자별로 묶어 한꺼번에 확인한다 — 확률·1·2등 차이가 둘 다 상위 20%인 것만">확신 제안</button>
       <button id="popbox" class="gridonly"
               title="상자 목록만 새 창으로 — 옆 화면에 놓고 끌어 넣는다">창으로 빼기</button>
     </div>
@@ -663,6 +662,8 @@ function view() {
   const hide = document.getElementById("hidedone").checked;
   // **한 상자만 볼 때는 다른 거르기를 다 무시한다** — 그 상자를 통째로
   // 훑어보려는 것이라 좌·우나 "넣은 것 숨기기" 가 끼면 뜻이 어긋난다
+  if (bulkIds) return ITEMS.filter(i => bulkIds.has(i.id))
+                            .sort((a, b) => bulkIds.get(a.id) - bulkIds.get(b.id));
   if (focusOn !== null) return ITEMS.filter(i => i.in === focusOn);
   const v = ITEMS.filter(i => (!side || i.facing === side)
                            && !(hide && (i.in || i.notfin)));
@@ -1256,6 +1257,10 @@ let GROUPS = [], gAt = 0, gProb = false, gUnknown = 0;
 // 선택을 풀어 뺀 것은 안 들어가고**, 출처가 `bulk` 로 남아 나중에 이 라벨만
 // 감사·제외할 수 있다). 자동 confirm 은 없다 — 누르는 것은 늘 사람이다.
 let gMode = "group";
+// **확신 제안에서는 격자가 곧 그 묶음이다.** 뒤에 격자 전체가 깔려 있으면
+// 확인하라고 내민 화면이 눈을 흩는다 — `보기`(focusOn)와 같은 원리로,
+// 이 값이 서 있는 동안 view() 는 묶음의 조각만, **확신 높은 차례로** 낸다.
+let bulkIds = null;
 
 async function loadBulk() {
   const r = await fetch("/api/reid/bulk?q=80&min=2");
@@ -1279,7 +1284,9 @@ async function loadGroups() {
 function showGroup() {
   const p = document.getElementById("gpanel");
   const g = GROUPS[gAt];
-  if (!g) { p.hidden = true; return; }
+  bulkIds = (gMode === "bulk" && g)
+      ? new Map(g.boxes.map((b, i) => [b, i])) : null;
+  if (!g) { p.hidden = true; draw(); return; }
   p.hidden = false;
   document.getElementById("gwhen").textContent =
       g.day + " · " + (g.facing === "left" ? "좌현" : "우현");
@@ -1337,12 +1344,15 @@ document.getElementById("gbtn").onclick = async () => {
   gMode = "group";
   if (await loadGroups()) showGroup();
 };
-document.getElementById("bbtn").onclick = async () => {
-  if (await loadBulk()) showGroup();
-};
+if (new URLSearchParams(location.search).get("bulk")) {
+  const a = document.getElementById("navbulk");
+  if (a) a.classList.add("on");
+  (async () => { if (await loadBulk()) showGroup(); })();
+}
 document.getElementById("gskip").onclick = () => { gAt++; showGroup(); };
 document.getElementById("gclose").onclick = () => {
-  document.getElementById("gpanel").hidden = true; sel.clear(); draw();
+  document.getElementById("gpanel").hidden = true; bulkIds = null;
+  sel.clear(); draw();
 };
 document.getElementById("gsug").onclick = e => {
   const b = e.target.closest(".sug");
