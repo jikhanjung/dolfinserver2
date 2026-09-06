@@ -1353,6 +1353,14 @@ function showGroup() {
   const first = g.boxes.find(b => byId[b]);
   if (first) goTo(first, true);
   draw();
+  // **넣을 상자를 목록에서 가운데로 굴려 보여 준다** — 확인 화면의 절반은
+  // 후보 조각이고 나머지 절반은 견줄 상대(그 상자의 대표 조각)다. 상자가
+  // 스크롤 밖에 있으면 견주지 못한 채 누르게 된다.
+  if (gMode === "bulk" && g.suggest.length) {
+    const bx = document.querySelector(
+        `#boxes .box[data-box="${g.suggest[0].id}"]`);
+    if (bx) bx.scrollIntoView({block: "center", behavior: "smooth"});
+  }
   if (first) {
     const el = document.querySelector(`[data-id="${first}"]`);
     if (el) el.scrollIntoView({block: "center"});
