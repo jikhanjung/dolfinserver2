@@ -44,6 +44,7 @@ reid = [
     path("dataset", views.dataset, name="dataset"),
     path("api/reid/box", views.reid_box, name="reid_box"),
     path("api/reid/groups", views.reid_groups, name="reid_groups"),
+    path("api/reid/bulk", views.reid_bulk, name="reid_bulk"),
     path("api/reid/suggest", views.reid_suggest, name="reid_suggest"),
     path("api/reid/assign", views.reid_assign, name="reid_assign"),
     path("reid/chip/<int:box_id>.png", views.reid_chip, name="reid_chip"),

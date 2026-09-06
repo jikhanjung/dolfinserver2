@@ -964,6 +964,96 @@ def reid_groups(request):
                          "unknown": unknown})
 
 
+@require_GET
+def reid_bulk(request):
+    """**확신 높은 제안을 상자별로 묶어 낸다** — 한꺼번에 확인하는 화면의 재료.
+
+    미분류 조각 전부에 앙상블을 돌려, **보정 top-1 확률과 1·2등 차이가 둘 다
+    상위 `q`%** 인 것만 추려 top-1 개체(×쪽)별로 묶는다. 실측(2026-09-06 ·
+    미분류 6,354장): q=80 이면 1,231장 · 52상자가 걸리고, 라벨된 자료에서
+    이 사분면의 정답률은 97.8%였다 — **확인은 사람이 한다.** 두 신호는 거의
+    같은 신호로 실측됐지만(사분면 이탈 12/1,205) 둘 다 거는 값이 싸다.
+
+    `T`(온도)가 없으면 문턱의 확률 눈금이 뜻을 잃으므로 400 이다 — 납작한
+    수 위의 "상위 20%" 는 있어도, 그것을 확신이라 부르면 안 된다.
+    """
+    import numpy as np
+    from finseg import reid as R
+    from finseg.models import Individual
+
+    P = _reid_pool()
+    cls = (P or {}).get("cls")
+    if not cls or len(cls["members"]) < 1:
+        return JsonResponse({"error": "분류기가 없다"}, status=400)
+    T = cls.get("T")
+    if not T:
+        return JsonResponse({"error": "온도(T)가 없다 — ensemble.json 에 넣을 것"},
+                            status=400)
+    q = min(max(float(request.GET.get("q", 80)), 50), 99)
+    min_n = int(request.GET.get("min", 2))
+
+    ids = P["ids"]
+    undecided = set(range(len(ids))) - {P["pos"][b] for b in R.decided(ids)
+                                        if b in P["pos"]}
+    names = dict(Individual.objects.values_list("id", "name"))
+    per = []            # (줄, 쪽, p1, 마진, top-1 개체, 확률 벡터의 상위 셋)
+    for side in ("left", "right"):
+        rows = [i for i in undecided if P["fac"][i] == side]
+        if not rows:
+            continue
+        # 멤버마다 클래스 차례가 다를 수 있다 — `_score` 와 같은 규칙으로
+        # 공통 클래스에 정렬해 합친다
+        common = None
+        for m in cls["members"]:
+            if side not in m["head"]:
+                continue
+            s = set(int(c) for c in m["head"][side][2])
+            common = s if common is None else (common & s)
+        common = sorted(common or set())
+        if len(common) < 2:
+            continue
+        L = []
+        for m in cls["members"]:
+            if side not in m["head"]:
+                continue
+            W, b, classes = m["head"][side]
+            col = {int(c): i for i, c in enumerate(classes)}
+            lg = (m["X"][rows] @ W.T + b)[:, [col[c] for c in common]]
+            L.append(lg)
+        merged = R.ens_logits(L, [m["w"] for m in cls["members"]])
+        prob = R.softmax(merged, axis=1, T=T)
+        o = np.argsort(-prob, axis=1)
+        for j, i in enumerate(rows):
+            p = prob[j]
+            per.append((i, side, float(p[o[j, 0]]),
+                        float(p[o[j, 0]] - p[o[j, 1]]),
+                        int(common[o[j, 0]])))
+    if not per:
+        return JsonResponse({"groups": [], "n_pool": 0, "prob": True})
+    p1s = np.array([x[2] for x in per])
+    mgs = np.array([x[3] for x in per])
+    t_p, t_m = float(np.percentile(p1s, q)), float(np.percentile(mgs, q))
+    picked = {}
+    for (i, side, p1, mg, ind) in per:
+        if p1 >= t_p and mg >= t_m:
+            picked.setdefault((ind, side), []).append((p1, i))
+    groups = []
+    for (ind, side), rows_ in sorted(picked.items(),
+                                     key=lambda kv: -len(kv[1])):
+        if len(rows_) < min_n:
+            continue
+        rows_.sort(reverse=True)                    # 확신 높은 것부터
+        boxes = [int(ids[i]) for _, i in rows_]
+        days = {P["day"][i] for _, i in rows_}
+        groups.append({
+            "day": f"{len(days)}일에 걸침", "facing": side, "boxes": boxes,
+            "suggest": [{"id": ind, "name": names.get(ind, str(ind)),
+                         "score": round(float(np.mean([p for p, _ in rows_])), 4)}],
+        })
+    return JsonResponse({"groups": groups, "prob": True, "n_pool": len(per),
+                         "thresholds": {"p1": round(t_p, 3), "margin": round(t_m, 3)}})
+
+
 @require_POST
 def reid_suggest(request):
     """고른 것들을 한 묶음으로 보고 닮은 개체를 낸다 — 사람이 직접 묶었을 때."""

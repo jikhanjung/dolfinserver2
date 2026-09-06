@@ -2688,6 +2688,23 @@ class EnsembleMembersTests(TestCase):
                 self.assertEqual(V._members(root, ids), [])
             self.assertTrue(any("차례" in m for m in log.output))
 
+    def test_확신_제안은_분류기와_온도_없이는_거절한다(self):
+        """납작한 수 위의 "상위 20%" 를 확신이라 부르면 안 된다."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._grid(root)
+            (root / "items.json").write_text(json.dumps({"items": [
+                {"id": i, "day": "2016-03-15", "facing": "left"}
+                for i in (1, 2, 3)]}))
+            with self.settings(FIN_REID=root, FIN_ROLE="reid",
+                               ROOT_URLCONF="review.tests"):
+                r = self.client.get("/api/reid/bulk")
+            self.assertEqual(r.status_code, 400)   # 분류기가 없다
+
     def test_온도는_명단의_일부다(self):
         """`T` 가 있으면 읽고, 없거나 깨지면 `None` — 보정 없이 `rank` 로 돈다."""
         import json
