@@ -40,6 +40,7 @@ work = [
 reid = [
     path("", views.reid, name="home"),
     path("reid", views.reid, name="reid"),
+    path("bulk", views.reid, name="bulk"),
     path("catalog", views.catalog, name="catalog"),
     path("dataset", views.dataset, name="dataset"),
     path("api/reid/box", views.reid_box, name="reid_box"),

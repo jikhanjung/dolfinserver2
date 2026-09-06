@@ -154,6 +154,10 @@
   .pair .thumbs.slot { flex:1; min-height:0 }
   .box.special .hd { padding:3px 8px }
   .box.special .nm { font-size:12px }
+  /* **/bulk 는 제 차림을 갖는다** — 차례는 확신이 정하고(정렬 무관),
+     묶음이 통째로 한 화면이며(쪽 크기 무관), 묶음이 이미 한쪽이다(좌우 무관).
+     남는 것은 `넣은 것 숨기기` 하나 — 그것은 여기서도 제 몫을 한다 */
+  body.bulkpage #sort, body.bulkpage #psize, body.bulkpage #fside { display:none }
   #main { flex:1; display:flex; min-height:0 }
   /* 격자·날짜띠·쪽 차림이 한 기둥이다 — 격자만 구르고 위아래 둘은 붙박이다 */
   #gcol { flex:1; display:flex; flex-direction:column; min-height:0 }
@@ -420,9 +424,9 @@
                line-height:1.4;white-space:normal}
 </style>
 
-{% include "review/_nav.html" with here="reid" %}
+{% if bulk_page %}{% include "review/_nav.html" with here="bulk" %}{% else %}{% include "review/_nav.html" with here="reid" %}{% endif %}
 <header>
-  <h1>개체 분류</h1>
+  <h1>{% if bulk_page %}묶음 제안{% else %}개체 분류{% endif %}</h1>
   <span class="stat">아직 안 넣은 것 <b id="nleft">0</b> / {{ n_items }}</span>
   <select id="sort">
     <!-- **기본이 여기다** (2026-08-27). 이유는 이것이 분류에 유리해서가 아니라
@@ -550,6 +554,7 @@
 
 <script>
 const ITEMS = {{ items|safe }};
+const BULK_PAGE = {{ bulk_page|yesno:"true,false" }};
 let BOXES = {{ boxes|safe }};
 const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
 
@@ -665,7 +670,8 @@ function view() {
   const hide = document.getElementById("hidedone").checked;
   // **한 상자만 볼 때는 다른 거르기를 다 무시한다** — 그 상자를 통째로
   // 훑어보려는 것이라 좌·우나 "넣은 것 숨기기" 가 끼면 뜻이 어긋난다
-  if (bulkIds) return ITEMS.filter(i => bulkIds.has(i.id))
+  if (bulkIds) return ITEMS.filter(i => bulkIds.has(i.id)
+                                     && !(hide && (i.in || i.notfin)))
                             .sort((a, b) => bulkIds.get(a.id) - bulkIds.get(b.id));
   if (focusOn !== null) return ITEMS.filter(i => i.in === focusOn);
   const v = ITEMS.filter(i => (!side || i.facing === side)
@@ -1369,9 +1375,8 @@ async function groupAssign(indId) {
 // 옛 묶음 제안(연속 프레임 + 닮음) 단추는 걷었다 (2026-09-07) — 확신 제안이
 // 그 자리를 물려받아 차림표의 `묶음 제안` 이 됐다. loadGroups 경로는 남긴다:
 // 판(gpanel)과 흐름을 확신 제안이 그대로 쓰고, 되살릴 일이 생기면 단추 하나다.
-if (new URLSearchParams(location.search).get("bulk")) {
-  const a = document.getElementById("navbulk");
-  if (a) a.classList.add("on");
+if (BULK_PAGE) {
+  document.body.classList.add("bulkpage");
   (async () => { if (await loadBulk()) showGroup(); })();
 }
 document.getElementById("gskip").onclick = () => { gAt++; showGroup(); };

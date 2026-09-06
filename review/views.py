@@ -520,7 +520,12 @@ def reid(request):
     # **상자만 따로 창으로 뽑는다.** 격자와 상자 목록을 두 화면에 나눠 놓으면
     # 끌어 넣는 거리가 짧아지고 목록을 굴릴 일이 없다. 같은 템플릿을 쓰되
     # 격자를 감춘다 — 끌기·놓기·저장 코드를 그대로 물려받으려는 것이다
+    # **`/bulk` 는 같은 템플릿의 독립 페이지다** — 격자·끌기·저장 코드를
+    # 그대로 물려받되(창으로 빼기의 `only_boxes` 와 같은 수), 제 주소와 제
+    # 머리말을 갖는다. 개체 분류의 정렬·쪽 크기는 거기서 할 일이 없다.
     return render(request, "review/reid.html", {
+        "bulk_page": request.path.rstrip("/").endswith("/bulk")
+                     or bool(request.GET.get("bulk")),
         "only_boxes": request.GET.get("only") == "boxes",
         "reid_dir": str(settings.FIN_REID),
         "ready": ready,
