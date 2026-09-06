@@ -759,7 +759,7 @@ function finHtml(i, nm) {
           data-box-name="${i.in ? (nm[i.in] || "") : ""}"
           title="box ${i.id} · ${i.day} · notch ${i.rough}${
             i.facing === "right" ? " · 좌우 뒤집힘" : ""}">
-       <img src="/reid/chip/${i.id}.png" loading="lazy" alt="">
+       <img src="/reid/chip/${i.id}.png"${bulkIds ? "" : ' loading="lazy"'} alt="">
        ${ovHtml(i)}
        <button class="star" data-star="${i.id}"
                title="이 사진을 상자의 대표로">${
