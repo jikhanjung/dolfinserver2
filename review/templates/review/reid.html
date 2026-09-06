@@ -372,18 +372,40 @@
           border-radius:6px; color:#ffc9cd; font-size:13px; max-width:74ch }
 /* 개체 제안 툴팁 — 조각에 머무르면 top-5 를 띄운다. `title` 이 아니라 제
    상자인 것은 **확률 막대와 "여기 없을 수 있음" 한 줄**을 함께 실어야 해서다. */
+/* **이 화면은 어두운 판이다.** 처음에 흰 상자로 지었더니 이름이 색을 안 정해
+   `body` 의 연한 하늘색을 물려받아 **흰 바탕에 얹혀 안 보였다.** 차림표
+   (`#menu`)와 같은 색을 쓴다 — 같은 판의 떠 있는 것 둘이 달라 보일 이유가 없다. */
 #sug{position:fixed;z-index:60;display:none;min-width:16em;max-width:22em;
-     padding:.45em .55em;border:1px solid #bbb;border-radius:5px;
-     background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.18);
+     padding:.45em .55em;border:1px solid #33404f;border-radius:8px;
+     background:#1a212b;box-shadow:0 10px 28px #000a;color:var(--ink);
      font-size:.82em;line-height:1.45;pointer-events:none}
-#sug .h{color:#666;margin-bottom:.3em}
+#sug .h{color:var(--dim);margin-bottom:.3em}
 #sug .row{display:flex;align-items:center;gap:.4em;white-space:nowrap}
-#sug .row .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
-#sug .row .pc{color:#333;font-variant-numeric:tabular-nums}
-#sug .bar{height:3px;background:#e5e5e5;border-radius:2px;margin:.1em 0 .25em}
+#sug .row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+#sug .row .pc{color:#9fe6ff;font-variant-numeric:tabular-nums}
+#sug .bar{height:3px;background:#1d2733;border-radius:2px;margin:.1em 0 .25em}
 #sug .bar i{display:block;height:100%;background:#4a7;border-radius:2px}
-#sug .warn{color:#a60;margin-top:.35em;border-top:1px solid #eee;padding-top:.3em}
-#sug .dim{color:#999}
+#sug .warn{color:#ffd479;margin-top:.35em;border-top:1px solid #2a3644;
+           padding-top:.3em;white-space:normal}
+#sug .dim{color:#8fa3b8;white-space:normal}
+
+/* 우클릭 차림표의 제안 자리. **작을 필요가 없어** 대표 조각을 함께 낸다 —
+   이름만으로는 "이 상자가 그 상자였나" 가 안 떠오른다. */
+#menu .sugwrap{padding:2px 4px 4px}
+#menu .sughead{color:var(--dim);font-size:12px;padding:2px 4px 4px}
+#menu .sugrow{display:flex;width:100%;gap:8px;align-items:center;
+              padding:3px 4px;border:0;background:none;color:var(--ink);
+              cursor:pointer;border-radius:5px;text-align:left}
+#menu .sugrow:hover{background:#2b3646}
+#menu .sugrow img{width:44px;height:44px;object-fit:cover;border-radius:4px;
+                  background:#0d1219;flex:none}
+#menu .sugrow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#menu .sugrow .pc{color:#9fe6ff;font-variant-numeric:tabular-nums;font-size:12px}
+#menu .sugrow .no{width:44px;height:44px;border-radius:4px;background:#0d1219;
+                  display:flex;align-items:center;justify-content:center;
+                  color:#5b6b7d;font-size:11px;flex:none}
+#menu .sugwarn{color:#ffd479;font-size:11.5px;padding:2px 6px 4px;
+               line-height:1.4}
 </style>
 
 {% include "review/_nav.html" with here="reid" %}
@@ -968,8 +990,9 @@ document.getElementById("grid").onclick = e => {
 document.getElementById("grid").oncontextmenu = e => {
   const f = e.target.closest(".fin");
   if (!f) return;
-  // **막고 나서 안 띄우면 아무 일도 안 일어난다.** 올릴 것이 있을 때에만
-  // 브라우저 차림표를 가로챈다 — 없으면 그냥 브라우저 것이 뜨는 편이 낫다
+  // **이제는 늘 띄운다.** 예전에는 올릴 것이 없으면 브라우저 차림표에
+  // 넘겼는데, 아직 아무 상자에도 안 든 조각이 우클릭의 주된 대상이고
+  // 그때 물을 것이 바로 **"어느 개체인가"** 다 — 그것은 늘 낼 수 있다
   if (showMenu(Number(f.dataset.id), e.clientX, e.clientY)) e.preventDefault();
 };
 
@@ -999,19 +1022,78 @@ function showMenu(id, x, y) {
     if (rows.length) rows.push(null);
     rows.push([`상자에서 뺀다${many}`, () => assign(null, ids), ""]);
   }
-  // 올릴 것이 없으면 아예 안 띄운다 — 빈 상자가 뜨는 것이 더 헷갈린다
-  if (!rows.length) return false;
-  m.innerHTML = rows.map((r, n) => r === null ? "<hr>"
-    : r[1] === null ? r[0]
-    : `<button data-n="${n}">${r[0]}<kbd>${r[2]}</kbd></button>`).join("");
-  m.querySelectorAll("button").forEach(b => {
+  // **제안은 올릴 것이 없어도 띄운다** — 아직 아무 상자에도 안 든 조각이
+  // 우클릭의 주된 대상이고, 그때 물을 것이 바로 "어느 개체인가" 다.
+  m.innerHTML =
+    `<div class="sugwrap" id="menusug"><div class="sughead">개체 제안 …</div></div>` +
+    (rows.length ? "<hr>" : "") +
+    rows.map((r, n) => r === null ? "<hr>"
+      : r[1] === null ? r[0]
+      : `<button data-n="${n}">${r[0]}<kbd>${r[2]}</kbd></button>`).join("");
+  m.querySelectorAll("button[data-n]").forEach(b => {
     b.onclick = () => { hideMenu(); rows[Number(b.dataset.n)][1](); };
   });
+  sugHide();               // 머무름 툴팁과 겹쳐 뜨지 않게
+  menuSuggest(ids, m);
   m.hidden = false;
   const r = m.getBoundingClientRect();
   m.style.left = Math.min(x, innerWidth - r.width - 6) + "px";
   m.style.top = Math.min(y, innerHeight - r.height - 6) + "px";
   return true;
+}
+
+// **고른 것이 여럿이면 묶어서 묻는다.** `menuTargets` 가 이미 그 규칙이고
+// (누른 것이 고른 것 안이면 고른 것 전부), 서버의 `_score` 는 묶음의 로짓을
+// 평균한다 — 실측으로 5장 묶음이면 top-1 22.7 → 40% · top-5 68 → **80%** 다.
+// **판단 한 번이 여러 장을 덮는 것**이 이 화면이 노리는 것이라 같은 규칙을 쓴다.
+//
+// 대표 조각을 함께 내는 것은 **이름만으로는 "이 상자가 그 상자였나" 가 안
+// 떠오르기** 때문이다. 대표가 없는 상자(새로 만든 것)는 빈 칸으로 둔다.
+let menuSugSeq = 0;
+function menuSuggest(ids, m) {
+  const seq = ++menuSugSeq;
+  const wrap = document.getElementById("menusug");
+  if (!wrap) return;
+  fetch("/api/reid/suggest", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
+    body: JSON.stringify({boxes: ids, k: 5}),
+  }).then(r => r.json()).then(d => {
+    if (seq !== menuSugSeq || m.hidden) return;
+    const s = d.suggest || [];
+    if (!s.length) {
+      wrap.innerHTML = `<div class="sughead">개체 제안 — 낼 것이 없다</div>`;
+      return; }
+    const scale = d.scale || (d.prob ? "prob" : "sim");
+    const head = {prob: "개체 제안 — 확률", rank: "개체 제안 — 순위",
+                  sim: "닮은 개체 — 순위로만 읽는다"}[scale];
+    wrap.innerHTML =
+      `<div class="sughead">${head}${ids.length > 1 ? ` · 고른 ${ids.length}장을 묶어서` : ""}${
+         d.members > 1 ? ` · 갈래 ${d.members}` : ""}</div>` +
+      s.map((x, i) => {
+        const rep = repOf(x.id);
+        const v = scale === "prob" ? (x.score * 100).toFixed(1) + "%"
+                : scale === "rank" ? `${i + 1}위` : x.score.toFixed(3);
+        return `<button class="sugrow" data-ind="${x.id}">${
+          rep ? `<img src="/reid/chip/${rep}.png" loading="lazy" alt="">`
+              : `<span class="no">빈 상자</span>`}
+          <span class="nm">${x.name}</span><span class="pc">${v}</span></button>`;
+      }).join("") +
+      `<div class="sugwarn">여기 없을 수 있다 — 카탈로그가 개체군의 일부다.${
+         scale === "rank" ? " 수는 확률이 아니다." : ""}</div>`;
+    // **누르면 바로 넣는다.** 제안을 보고 다시 끌어야 하면 판단 한 번이
+    // 저장 한 번이 안 된다 — `TODOs` 가 그것을 남은 일로 적어 두었다
+    wrap.querySelectorAll(".sugrow").forEach(b => {
+      b.onclick = () => { hideMenu(); assign(+b.dataset.ind, ids); };
+    });
+    // 칸이 늘었으니 화면 밖으로 나갔을 수 있다
+    const r = m.getBoundingClientRect();
+    if (r.bottom > innerHeight - 6)
+      m.style.top = Math.max(6, innerHeight - r.height - 6) + "px";
+  }).catch(() => {
+    if (seq === menuSugSeq && wrap)
+      wrap.innerHTML = `<div class="sughead">개체 제안 — 못 불러왔다</div>`;
+  });
 }
 
 function hideMenu() { document.getElementById("menu").hidden = true; }
@@ -1509,7 +1591,8 @@ function sugRender(d, el) {
                 sim: "닮은 개체 — 순위로만 읽는다"}[scale];
   const hi = d.suggest[0].score || 1;
   sugBox.innerHTML =
-    `<div class="h">${head}${d.members > 1 ? ` · 갈래 ${d.members}` : ""}</div>` +
+    `<div class="h">${head}${d.__n > 1 ? ` · 고른 ${d.__n}장을 묶어서` : ""}${
+       d.members > 1 ? ` · 갈래 ${d.members}` : ""}</div>` +
     d.suggest.map((s, i) => {
       const v = scale === "prob" ? (s.score * 100).toFixed(1) + "%"
               : scale === "rank" ? `${i + 1}위`
@@ -1528,13 +1611,18 @@ function sugRender(d, el) {
 
 function sugShow(el) {
   const id = +el.dataset.id;
-  if (sugCache.has(id)) { sugRender(sugCache.get(id), el); return; }
+  // **차림표와 같은 규칙이다** — 누른 것이 고른 것 안이면 고른 것 전부를
+  // 묶어서 묻는다(`menuTargets`). 두 자리가 다른 답을 내면 안 된다.
+  const ids = menuTargets(id);
+  const key = ids.length > 1 ? ids.slice().sort((a, b) => a - b).join(",") : id;
+  if (sugCache.has(key)) { sugRender(sugCache.get(key), el); return; }
   fetch("/api/reid/suggest", {
     method: "POST", headers: {"Content-Type": "application/json",
                               "X-CSRFToken": csrf()},
-    body: JSON.stringify({boxes: [id], k: 5}),
+    body: JSON.stringify({boxes: ids, k: 5}),
   }).then(r => r.json()).then(d => {
-    sugCache.set(id, d);
+    d.__n = ids.length;
+    sugCache.set(key, d);
     if (sugFor === id) sugRender(d, el);
   }).catch(() => {});
 }

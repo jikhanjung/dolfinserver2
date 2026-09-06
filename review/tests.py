@@ -1956,7 +1956,31 @@ class ContextMenuTests(TestCase):
         쓰므로 지워 버리면 `work` 쪽에서 그 길이 없어진다."""
         html = self.page("reid")
         self.assertIn('if (ROLE !== "reid")', html)
-        self.assertIn("if (!rows.length) return false", html)
+
+    def test_the_menu_is_never_empty_because_it_carries_a_suggestion(self):
+        """**빈 차림표가 뜨지 않는 규칙은 그대로이고, 지키는 방법이 바뀌었다.**
+
+        예전에는 `if (!rows.length) return false` 로 **안 띄워서** 지켰다.
+        지금은 차림표가 늘 **개체 제안**을 이고 있어 빌 수가 없다 — 아직 아무
+        상자에도 안 든 조각이 우클릭의 주된 대상이고, 그때 물을 것이 바로
+        "어느 개체인가" 이기 때문이다. 그것은 늘 낼 수 있다.
+
+        그래서 여기서 재는 것은 **제안 자리가 차림표 안에 있는지**다.
+        """
+        html = self.page("reid")
+        self.assertIn('id="menusug"', html)
+        self.assertIn("menuSuggest(ids, m)", html)
+
+    def test_the_menu_asks_about_the_whole_selection(self):
+        """**고른 것이 여럿이면 묶어서 묻는다** — `menuTargets` 하나가 그 규칙이고
+        머무름 툴팁도 같은 것을 부른다. 두 자리가 다른 답을 내면 안 된다.
+        서버의 `_score` 가 묶음의 로짓을 평균하고, 실측으로 5장 묶음이면
+        top-5 가 68 → 80% 다.
+        """
+        html = self.page("reid")
+        self.assertIn("const ids = menuTargets(id);", html)   # 머무름 툴팁
+        self.assertIn("menuSuggest(ids, m)", html)            # 우클릭 차림표
+        self.assertIn("function menuTargets(id)", html)       # 규칙은 한 곳
 
 
 class PcaTests(SimpleTestCase):
