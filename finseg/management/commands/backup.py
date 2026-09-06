@@ -9,11 +9,28 @@
 |---|---|
 | **`fin.db`** | **아니다** — 사람의 판정 6,000여 건과 개체 분류가 들어 있다 |
 | **가중치** | 사실상 아니다 — 자료가 같아도 16시간을 다시 써야 하고 씨앗이 달라진다 |
+| **녹은 블록** (`reid/blocks/*.blocks.pt`) | **사실상 아니다 — 같은 이유다** |
 | 크롭 · 자료 꾸러미 · 조각 | 된다 — `fin.db` 와 사진에서 다시 뽑는다 |
 | 사진 | NAS 가 원본이다 |
 | 코드 | git 에 있다 |
 
-그래서 기본은 **`fin.db` 와 가중치만**이다. 나머지는 뜨는 값보다 자리 값이 크다.
+그래서 기본은 **`fin.db` 와 가중치와 블록만**이다. 나머지는 뜨는 값보다 자리
+값이 크다.
+
+**블록이 왜 가중치 갈래인가.** `reid/blocks/*.blocks.pt` 는 `reid_cls --fit-all
+--unfreeze` 가 남긴 **녹은 ViT 블록**이고, 화면에 떠 있는 앙상블 멤버의 임베딩을
+내는 것이 바로 그것이다 (`reid_chips --emb-only --deep`). 격자를 다시 뜨면
+멤버 임베딩 셋을 이것으로 다시 내야 한다.
+
+다시 배우면 되지 않느냐 — **된다. 다만 그것은 다른 모델이다.** 씨앗도 정답
+시점(`--as-of`)도 달라져, 지금 화면이 내는 그 순위를 되살릴 수 없다. 위 표에서
+가중치를 든 까닭과 한 글자도 다르지 않다. 그리고 이것들은 **기계 셋에 흩어져
+만들어졌다**(2080ti 가 둘 · jikhanserver 가 하나) — 모아 둔 자리가 GCP 하나뿐인
+동안에는 그 디스크가 곧 단일 실패점이다.
+
+**`--derived` 로 딸려 보내지 않는다.** 그쪽은 스스로 *"백업이 아니라 다른
+기계로 옮기려는 것"* 이라 적고 있고 손으로 줄 때만 돈다 — 날마다 도는 레인에
+얹혀야 할 것이 그 뒤에 숨으면 안 된다.
 
 ## `--derived` 는 다른 일이다 — **다른 기계로 옮기려는 것**
 
@@ -261,6 +278,31 @@ class Command(BaseCommand):
                     if src_e.exists():
                         shutil.copyfile(src_e, tgt.parent / extra)
 
+        # ---- 녹은 블록 — 가중치와 같은 규칙 ------------------------------
+        # **이름별로 한 벌, 내용이 같으면 건너뛴다.** 학습이 끝나면 안 바뀌는
+        # 것이라 날짜별로 쌓을 이유가 없다 — 가중치와 똑같다.
+        blocks = []
+        if not o["no_weights"]:
+            bd = Path("reid") / "blocks"
+            if bd.is_dir():
+                w("")
+                for f in sorted(bd.glob("*.blocks.pt")):
+                    tgt = out / "blocks" / f.name
+                    same = tgt.exists() and sha256(tgt) == sha256(f)
+                    blocks.append({"file": f.name, "size": f.stat().st_size,
+                                   "sha256": sha256(f)})
+                    w(f"  {f.name:26s} {f.stat().st_size / 1e6:5.0f}MB"
+                      + ("  (같다 — 건너뛴다)" if same else "  → 뜬다"))
+                    if same or o["dry_run"]:
+                        continue
+                    tgt.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(f, tgt)
+                for extra in ("BLOCKS-README.md",):
+                    src_e = bd / extra
+                    if src_e.exists() and not o["dry_run"]:
+                        (out / "blocks").mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(src_e, out / "blocks" / extra)
+
         # ---- 파생물 — 다른 기계로 옮길 때만 -----------------------------
         if o["derived"]:
             w("")
@@ -295,6 +337,7 @@ class Command(BaseCommand):
                    "sha256": sha256(dst),
                    "reviews": n_rev, "identifications": n_id},
             "weights": kept,
+            "blocks": blocks,
         }, ensure_ascii=False, indent=1))
         w(f"\n{out}")
         if o["derived"]:
@@ -303,6 +346,9 @@ class Command(BaseCommand):
         else:
             w("  **다시 만들 수 없는 것만 든다** — 크롭·자료 꾸러미·조각은 안"
               " 뜬다. `fin.db` 와 사진에서 다시 뽑는다")
+        if blocks:
+            w(f"  녹은 블록 {len(blocks)} 벌도 든다 — 다시 배우면 **다른 모델**이라"
+              " 지금 화면의 순위를 못 되살린다")
         w("  **`fin.db` 는 한 기계에서만 연다.** 옮겨 가서 일했으면 거기서 다시"
           " 떠서 가져올 것 —")
         w("  양쪽에서 동시에 열면 어느 쪽 판정이 이기는지 아무도 모른다")
