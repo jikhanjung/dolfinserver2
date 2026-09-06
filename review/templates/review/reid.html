@@ -579,7 +579,8 @@ let focusOn = null;      // 한 상자만 볼 때 그 상자 번호
 // 아래 `BroadcastChannel` 의 `assign` 주석이 그 자취다).
 let pageAt = 0;
 let VIEW = [], PAGE = [];   // 걸러 정렬한 전부 / 지금 쪽에 있는 것
-const perPage = () => +document.getElementById("psize").value || 1e9;
+const perPage = () =>
+  bulkIds ? 1e9 : +document.getElementById("psize").value || 1e9;
 const dayOf = i => String(i.at || i.day || "").slice(0, 10);
 // **한 상자만 볼 때는 날짜로 안 가른다.** 그 화면은 `view()` 가 정렬을 안 하고
 // 든 차례 그대로 내므로(그 상자를 통째로 훑는 자리다) 금을 그으면 같은 날이
@@ -821,6 +822,29 @@ function drawPager() {
   const np = Math.max(1, Math.ceil(n / per));
   const p = document.getElementById("pager");
   const num = x => x.toLocaleString("en-US");
+  // **확신 제안에서는 쪽이 아니라 상자를 넘긴다.** 묶음 하나가 통째로 한
+  // 화면이므로(perPage) 쪽 넘김은 할 일이 없고, 다음 판단 단위는 상자다.
+  if (bulkIds && GROUPS.length) {
+    const g = GROUPS[gAt];
+    const opts = GROUPS.map((x, i) => `<option value="${i}" ${
+        i === gAt ? "selected" : ""}>${x.suggest[0].name} · ${
+        x.boxes.length}장 · ${x.facing === "left" ? "좌현" : "우현"}</option>`).join("");
+    const bh = `<button data-bg="${gAt - 1}" ${gAt ? "" : "disabled"}>‹ 이전 상자</button>
+       <select id="bjump" title="상자로 바로 간다">${opts}</select>
+       <span><b>${gAt + 1}</b> / ${GROUPS.length} 상자</span>
+       <button data-bg="${gAt + 1}" ${gAt < GROUPS.length - 1 ? "" : "disabled"}>다음 상자 ›</button>
+       <span style="flex:1"></span><span>${num(n)}장</span>`;
+    if (bh !== pagerHtml) {
+      pagerHtml = bh;
+      p.innerHTML = bh;
+      p.querySelectorAll("button[data-bg]").forEach(b => {
+        b.onclick = () => { gAt = +b.dataset.bg; showGroup(); };
+      });
+      const j = document.getElementById("bjump");
+      if (j) j.onchange = () => { gAt = +j.value; showGroup(); };
+    }
+    return;
+  }
   const days = dayMode() && PAGE.length
     ? (() => { const a = dayOf(PAGE[0]), b = dayOf(PAGE[PAGE.length - 1]);
                return a === b ? a : `${a} ~ ${b}`; })() : "";
