@@ -390,22 +390,34 @@
 #sug .dim{color:#8fa3b8;white-space:normal}
 
 /* 우클릭 차림표의 제안 자리. **작을 필요가 없어** 대표 조각을 함께 낸다 —
-   이름만으로는 "이 상자가 그 상자였나" 가 안 떠오른다. */
-#menu .sugwrap{padding:2px 4px 4px}
-#menu .sughead{color:var(--dim);font-size:12px;padding:2px 4px 4px}
-#menu .sugrow{display:flex;width:100%;gap:8px;align-items:center;
-              padding:3px 4px;border:0;background:none;color:var(--ink);
-              cursor:pointer;border-radius:5px;text-align:left}
+   이름만으로는 "이 상자가 그 상자였나" 가 안 떠오른다.
+
+   **크기는 상자 패널과 같은 `--thumb * 1.7`(약 150px)이다.** 처음에 44px 로
+   지었는데, 그것은 상자 패널이 이미 한 번 물리친 크기다 — 거기 주석이
+   *"44px 로는 몇 장 들었나 밖에 안 보인다"* 고 적고 있다. **여기서 하는 일이
+   바로 견주는 일**이라 그 말이 그대로 걸린다. */
+#menu .sugwrap{padding:2px 4px 4px;min-width:330px}
+#menu .sughead{color:var(--dim);font-size:12px;padding:2px 4px 5px}
+#menu .sugrow{display:flex;width:100%;gap:10px;align-items:center;
+              padding:4px;border:0;background:none;color:var(--ink);
+              cursor:pointer;border-radius:6px;text-align:left}
 #menu .sugrow:hover{background:#2b3646}
-#menu .sugrow img{width:44px;height:44px;object-fit:cover;border-radius:4px;
-                  background:#0d1219;flex:none}
-#menu .sugrow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#menu .sugrow img,#menu .sugrow .no{
+    width:calc(var(--thumb) * 1.7);height:calc(var(--thumb) * 1.7);
+    object-fit:cover;border-radius:4px;background:#0d1219;flex:none}
+#menu .sugrow .no{display:flex;align-items:center;justify-content:center;
+                  color:#5b6b7d;font-size:12px}
+/* 오른쪽은 기둥이다 — 이름 · 점수 · 막대 */
+#menu .sugrow .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+#menu .sugrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #menu .sugrow .pc{color:#9fe6ff;font-variant-numeric:tabular-nums;font-size:12px}
-#menu .sugrow .no{width:44px;height:44px;border-radius:4px;background:#0d1219;
-                  display:flex;align-items:center;justify-content:center;
-                  color:#5b6b7d;font-size:11px;flex:none}
-#menu .sugwarn{color:#ffd479;font-size:11.5px;padding:2px 6px 4px;
-               line-height:1.4}
+/* **막대는 툴팁과 같은 것을 말한다** — 1위에 견준 상대 크기다. 절대값이
+   아니라 서로 얼마나 벌어졌나를 보는 자리라, 둘이 비슷하면 사람이 눈으로
+   "이건 갈리지 않는다" 를 안다 */
+#menu .sugrow .bar{height:5px;background:#1d2733;border-radius:3px}
+#menu .sugrow .bar i{display:block;height:100%;background:#4a7;border-radius:3px}
+#menu .sugwarn{color:#ffd479;font-size:11.5px;padding:3px 6px 4px;
+               line-height:1.4;white-space:normal}
 </style>
 
 {% include "review/_nav.html" with here="reid" %}
@@ -1067,6 +1079,7 @@ function menuSuggest(ids, m) {
     const scale = d.scale || (d.prob ? "prob" : "sim");
     const head = {prob: "개체 제안 — 확률", rank: "개체 제안 — 순위",
                   sim: "닮은 개체 — 순위로만 읽는다"}[scale];
+    const hi = s[0].score || 1;
     wrap.innerHTML =
       `<div class="sughead">${head}${ids.length > 1 ? ` · 고른 ${ids.length}장을 묶어서` : ""}${
          d.members > 1 ? ` · 갈래 ${d.members}` : ""}</div>` +
@@ -1074,10 +1087,13 @@ function menuSuggest(ids, m) {
         const rep = repOf(x.id);
         const v = scale === "prob" ? (x.score * 100).toFixed(1) + "%"
                 : scale === "rank" ? `${i + 1}위` : x.score.toFixed(3);
+        const wpc = Math.max(2, Math.round((x.score / hi) * 100));
         return `<button class="sugrow" data-ind="${x.id}">${
           rep ? `<img src="/reid/chip/${rep}.png" loading="lazy" alt="">`
               : `<span class="no">빈 상자</span>`}
-          <span class="nm">${x.name}</span><span class="pc">${v}</span></button>`;
+          <span class="meta"><span class="nm">${x.name}</span>
+            <span class="pc">${v}</span>
+            <span class="bar"><i style="width:${wpc}%"></i></span></span></button>`;
       }).join("") +
       `<div class="sugwarn">여기 없을 수 있다 — 카탈로그가 개체군의 일부다.${
          scale === "rank" ? " 수는 확률이 아니다." : ""}</div>`;
