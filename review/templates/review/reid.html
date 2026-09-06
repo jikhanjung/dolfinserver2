@@ -584,8 +584,11 @@ const dayOf = i => String(i.at || i.day || "").slice(0, 10);
 // **한 상자만 볼 때는 날짜로 안 가른다.** 그 화면은 `view()` 가 정렬을 안 하고
 // 든 차례 그대로 내므로(그 상자를 통째로 훑는 자리다) 금을 그으면 같은 날이
 // 몇 번씩 다시 나와, 금이 날을 가르는 것이 아니라 어지럽히기만 한다.
+// **확신 제안에서도 안 긋는다** — 거기 차례는 날짜가 아니라 확신이라,
+// 금이 날을 가르는 것이 아니라 어지럽히기만 한다 (위와 같은 이유).
 const dayMode = () =>
-  focusOn === null && document.getElementById("sort").value === "day";
+  focusOn === null && !bulkIds
+  && document.getElementById("sort").value === "day";
 
 // **바뀐 것만 갈아 끼운다.** `innerHTML` 을 통째로 갈던 것을 걷었다 — 조각
 // 하나를 상자에 넣을 때 격자와 상자 목록을 **둘 다 처음부터 다시 지었고**,
