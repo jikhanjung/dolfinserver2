@@ -771,6 +771,7 @@ def _reid_pool():
     # 분류기 44.5% 로 거의 두 배다. 없으면 kNN 으로 떨어진다 — 화면이 멈추지는
     # 않되, 무엇으로 낸 것인지는 응답이 말한다
     cls = None
+    T = _ens_temp(root)
     for f, w_, X_ in _members(root, ids):
         z = np.load(f)
         head = {side: (z[f"{side}_W"], z[f"{side}_b"], z[f"{side}_cls"])
@@ -778,12 +779,31 @@ def _reid_pool():
         if not head:
             continue
         if cls is None:
-            cls = {"members": [], "_n_labeled": 0}
+            cls = {"members": [], "_n_labeled": 0, "T": T}
         cls["members"].append({"head": head, "w": w_, "X": X_, "name": f.stem})
         cls["_n_labeled"] = max(cls["_n_labeled"],
                                 int(z["n_labeled"][0]) if "n_labeled" in z else 0)
     return {"ids": ids, "day": day, "fac": fac, "emb": emb, "frame": frame,
             "cls": cls, "pos": {int(b): i for i, b in enumerate(ids)}}
+
+
+def _ens_temp(root):
+    """`ensemble.json` 의 온도 `T`. 없거나 못 읽으면 `None` (= 보정 없음).
+
+    **T 는 멤버 명단의 일부다** — 멤버 구성이 바뀌면 합친 로짓의 분포가
+    바뀌므로 T 도 그때 다시 잰다. 지금 값 0.65 는 세 멤버(fullL·cropL·megaL)
+    의 공유 자에서 폴드를 갈라 검증한 것이다 (`reid.softmax` 의 기록).
+    """
+    import json as _json
+
+    f = root / "ensemble.json"
+    if not f.exists():
+        return None
+    try:
+        v = _json.loads(f.read_text()).get("T")
+        return float(v) if v else None
+    except Exception:
+        return None      # 깨진 명단은 `_members` 가 이미 로그에 남긴다
 
 
 def _members(root, ids):
@@ -873,11 +893,16 @@ def _score(P, g, cat_idx, k=5):
         else:
             # **합치는 규칙은 `reid.ens_logits` 한 곳에 있다** — `reid_ensemble`
             # 이 같은 함수로 채점하므로 거기서 난 성적이 곧 이 화면의 순위다.
-            # **다만 그 수는 확률이 아니다** — z 척도 위의 softmax 라 납작하다.
-            # 온도 보정이 서기 전까지 화면은 이것을 퍼센트로 부르지 않는다
-            # (`TODOs` 의 그 항목 · `docs/닫힌_판과_열린_판…`).
-            score, kind = R.softmax(R.ens_logits(
-                [lg[None, :] for lg in logits], ws)[0]), "rank"
+            # `ensemble.json` 에 온도 `T` 가 있으면 그것으로 나눠 **정직한
+            # 퍼센트**가 된다 (검증: ECE 0.162 → 0.02~0.08, `reid.softmax`).
+            # 없으면 예전 그대로 `rank` 다 — z 척도 위의 softmax 라 납작해서
+            # 퍼센트로 부르면 안 되는 수.
+            merged = R.ens_logits([lg[None, :] for lg in logits], ws)[0]
+            T = P["cls"].get("T")
+            if T:
+                score, kind = R.softmax(merged, T=T), "prob"
+            else:
+                score, kind = R.softmax(merged), "rank"
         order = np.argsort(-score)[:k]
         return [(int(common[i]), float(score[i]), kind) for i in order], kind
     return [(ind, sc, "sim")

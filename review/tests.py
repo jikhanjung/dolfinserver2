@@ -2688,6 +2688,31 @@ class EnsembleMembersTests(TestCase):
                 self.assertEqual(V._members(root, ids), [])
             self.assertTrue(any("차례" in m for m in log.output))
 
+    def test_온도는_명단의_일부다(self):
+        """`T` 가 있으면 읽고, 없거나 깨지면 `None` — 보정 없이 `rank` 로 돈다."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from review import views as V
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertIsNone(V._ens_temp(root))                    # 파일 없음
+            (root / "ensemble.json").write_text(json.dumps(
+                {"members": [], "T": 0.65}))
+            self.assertEqual(V._ens_temp(root), 0.65)
+            (root / "ensemble.json").write_text("{ 깨진 글")
+            self.assertIsNone(V._ens_temp(root))
+
+    def test_온도가_있으면_퍼센트가_정직해지고_순위는_안_바뀐다(self):
+        import numpy as np
+
+        from finseg import reid as R
+        lg = np.array([2.0, 1.0, 0.0])
+        a, b = R.softmax(lg), R.softmax(lg, T=0.65)
+        self.assertTrue((np.argsort(a) == np.argsort(b)).all())
+        self.assertGreater(b[0], a[0])          # 납작한 것이 서야 한다
+
     def test_명단이_깨져도_한_벌로_돈다(self):
         import tempfile
         from pathlib import Path

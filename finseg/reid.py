@@ -525,14 +525,18 @@ def ens_logits(logits, weights=None):
     return out
 
 
-def softmax(logit, axis=-1):
+def softmax(logit, axis=-1, T=1.0):
     """로짓 → 확률. **화면이 내미는 퍼센트가 이것이다.**
 
-    지금 이 확률은 **21%p 부풀어 있다** (평균 확신 70.4% 대 실제 49.5% ·
-    ECE 0.210, 2026-08-29). 온도 보정이 `TODOs` 에 있고, 붙이면 여기에
-    나눗셈 한 줄이 는다 — 그래서 부르는 자리를 하나로 뒀다.
+    `T` 는 온도다 — 로짓을 T 로 나눈 뒤 지수화하므로 **순위는 안 바뀌고**
+    퍼센트의 정직함만 바뀐다. 앙상블(z 평균) 로짓은 납작해서 T<1 로 세워야
+    한다: 공유 자(질의 1,205 · as-of 2168)에서 **T=0.65** 가 ECE 를
+    0.162 → 0.024 로 내렸고, 폴드를 갈라 검증해도 0.60~0.70 에서 안정이다
+    (빠진 폴드 ECE 0.035~0.077 · 2026-09-06). 값은 `ensemble.json` 의 `T` 가
+    들고 다닌다 — 멤버 구성이 바뀌면 로짓 분포가 바뀌므로 **T 도 그 명단의
+    일부다.** T 없이(=1.0) 부르면 예전 그대로다.
     """
-    x = np.asarray(logit, dtype=np.float64)
+    x = np.asarray(logit, dtype=np.float64) / float(T)
     e = np.exp(x - x.max(axis=axis, keepdims=True))
     return e / e.sum(axis=axis, keepdims=True)
 
