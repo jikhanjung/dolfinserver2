@@ -293,6 +293,15 @@
               font-family:"IBM Plex Mono",monospace }
   .box .look { padding:1px 8px; font-size:12px; line-height:1.5 }
   .box.focus { border-color:var(--sel) }
+  /* **굴러간 곳이 어디인지 눈이 놓치지 않게** — 묶음을 넘기면 목록이 넣을
+     상자로 굴러가는데, 카드가 다 비슷해서 멈춘 자리를 다시 찾게 된다.
+     호박색(--pick, 고르기와 같은 색 — "이번 판의 주인공" 이라는 같은 뜻)으로
+     두 번 깜박이고 만다 */
+  @keyframes boxblink {
+    0%, 100% { box-shadow:none }
+    50% { box-shadow:0 0 0 3px var(--pick); border-color:var(--pick) } }
+  .box.blink { animation:boxblink .5s ease-in-out 2 }
+  @media (prefers-reduced-motion: reduce) { .box.blink { animation:none } }
   .box.hold { border-color:#7a5a1e; background:#1b1710 }
   .box.hold .nm { color:#ffd479 }
   .box.hold.over { border-color:#ffd479; background:#2a2314 }
@@ -1359,7 +1368,15 @@ function showGroup() {
   if (gMode === "bulk" && g.suggest.length) {
     const bx = document.querySelector(
         `#boxes .box[data-box="${g.suggest[0].id}"]`);
-    if (bx) bx.scrollIntoView({block: "center", behavior: "smooth"});
+    if (bx) {
+      bx.scrollIntoView({block: "center", behavior: "smooth"});
+      // 구르는 동안 깜박이면 못 본다 — 멈출 때쯤 시작한다
+      setTimeout(() => {
+        bx.classList.add("blink");
+        bx.addEventListener("animationend",
+            () => bx.classList.remove("blink"), {once: true});
+      }, 350);
+    }
   }
   if (first) {
     const el = document.querySelector(`[data-id="${first}"]`);
