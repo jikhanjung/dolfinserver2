@@ -848,10 +848,10 @@ function drawPager() {
     const opts = GROUPS.map((x, i) => `<option value="${i}" ${
         i === gAt ? "selected" : ""}>${x.suggest[0].name} · ${
         x.boxes.length}장 · ${x.facing === "left" ? "좌현" : "우현"}</option>`).join("");
-    const bh = `<button data-bg="${gAt - 1}" ${gAt ? "" : "disabled"}>‹ 이전 상자</button>
-       <select id="bjump" title="상자로 바로 간다">${opts}</select>
-       <span><b>${gAt + 1}</b> / ${GROUPS.length} 상자</span>
-       <button data-bg="${gAt + 1}" ${gAt < GROUPS.length - 1 ? "" : "disabled"}>다음 상자 ›</button>
+    const bh = `<button data-bg="${gAt - 1}" ${gAt ? "" : "disabled"}>‹ 이전 묶음</button>
+       <select id="bjump" title="묶음으로 바로 간다">${opts}</select>
+       <span><b>${gAt + 1}</b> / ${GROUPS.length} 묶음</span>
+       <button data-bg="${gAt + 1}" ${gAt < GROUPS.length - 1 ? "" : "disabled"}>다음 묶음 ›</button>
        <span style="flex:1"></span><span>${num(n)}장</span>`;
     if (bh !== pagerHtml) {
       pagerHtml = bh;
