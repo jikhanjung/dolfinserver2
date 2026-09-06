@@ -1,6 +1,6 @@
 {% load static %}<!doctype html>
 <meta charset="utf-8">
-<title>개체 분류</title>
+<title>{% if bulk_page %}묶음 제안{% else %}개체 분류{% endif %}</title>
 <style>
   :root { --bg:#0b0f14; --panel:#141b23; --line:#26303c; --ink:#e6edf3;
           --dim:#8b98a5; --ok:#4ade80; --no:#f87171; --sel:#60a5fa;
