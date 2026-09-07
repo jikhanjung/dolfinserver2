@@ -890,7 +890,7 @@ def dataset_state(goal=None):
     from django.conf import settings
 
     from finseg import rules
-    from finseg.models import Box, Individual
+    from finseg.models import Box, Identification, Individual
 
     g = dict(GOAL, **(goal or {}))
     cat = catalog()
@@ -908,6 +908,27 @@ def dataset_state(goal=None):
             facing[b.id] = rules.resolve(b).get("facing") or ""
     names = dict(Individual.objects.values_list("id", "name"))
     nicks = dict(Individual.objects.values_list("id", "nickname"))
+
+    # **개체가 아닌 자리로 간 조각도 센다.** 목표 둘(개체·조각)은 개체에 든
+    # 것만 세는데, 사람이 실제로 한 일은 그보다 크다 — 특히 `식별 불가능`
+    # (지느러미는 맞는데 이 사진으로는 누군지 모르는 것)이 앞으로 더 늘 자리다.
+    # 안 세면 조각 수백 장을 판단하고도 화면은 **"진척이 없다" 로 보인다** —
+    # `HANDOFF` 의 *"개체 판정 N 은 일한 양이 아니다"* 와 같은 종류의 어긋남이
+    # 반대 방향으로 나는 것이다.
+    #
+    # **`unid` 는 버리는 것이 아니다.** 사람이 보고도 못 알아본 조각이라
+    # **거절 문턱의 음성 예제**로 값이 있다 — 모델이 그것을 높은 확신으로
+    # 찍으면 그 확신이 못 믿을 것이라는 증거다 (`TODOs` 의 거절 문턱).
+    kind = dict(Individual.objects.values_list("id", "kind"))
+    last = {}
+    for b, i in (Identification.objects.order_by("id")
+                 .values_list("box_id", "individual_id")):
+        last[b] = i
+    side_n = {"unid": 0, "hold": 0, "notfin": 0}
+    for i in last.values():
+        k = kind.get(i) if i else None
+        if k in side_n:
+            side_n[k] += 1
 
     rows = []
     for ind, boxes in cat.items():
@@ -941,6 +962,13 @@ def dataset_state(goal=None):
         "at_both": sum(1 for r in rows if not (r["need_chips"] or r["need_days"])),
         "short_chips": sum(r["need_chips"] for r in rows),
         "n_unknown": sum(r["unknown"] for r in rows),
+        # 개체가 아닌 자리로 간 것 — 위 주석
+        "n_unid": side_n["unid"],
+        "n_hold": side_n["hold"],
+        "n_notfin": side_n["notfin"],
+        # **판단이 끝난 조각.** `임시보관함`(알아볼 수 있는데 자리를 모름)은
+        # 아직 남은 일이라 안 든다
+        "n_decided": sum(r["n"] for r in rows) + side_n["unid"] + side_n["notfin"],
     }
 
 
