@@ -1971,6 +1971,22 @@ class ContextMenuTests(TestCase):
         self.assertIn('id="menusug"', html)
         self.assertIn("menuSuggest(ids, m)", html)
 
+    def test_the_bulk_page_records_agreement_and_override_both(self):
+        """**제안대로 넣었나 뒤집었나를 가르되, 둘 다 남긴다.**
+
+        일치할 때만 표를 달면 **동의한 것만 쌓여 정답률이 100%로 나온다** —
+        분모가 사라지는 것이라, 모델이 고른 문제를 모델이 푼 셈이 된다.
+        `bulk / (bulk + bulk-x)` 가 되어야 제안의 정답률이 잰 값이 된다.
+
+        그리고 **표를 정하는 자리가 하나여야 한다** — 단추로 넣든 끌어 넣든
+        같은 규칙이라야, 사람이 제안을 보고 나서 끌었을 때도 갈래가 맞는다.
+        """
+        html = self.page("reid")
+        self.assertIn('return indId === top ? "bulk" : "bulk-x";', html)
+        self.assertIn("function suggestedInd()", html)
+        # `groupAssign` 이 제 손으로 "bulk" 을 박으면 뒤집은 것까지 동의가 된다
+        self.assertNotIn('gMode === "bulk" ? "bulk" : undefined', html)
+
     def test_the_menu_asks_about_the_whole_selection(self):
         """**고른 것이 여럿이면 묶어서 묻는다** — `menuTargets` 하나가 그 규칙이고
         머무름 툴팁도 같은 것을 부른다. 두 자리가 다른 답을 내면 안 된다.

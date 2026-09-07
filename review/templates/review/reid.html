@@ -1399,7 +1399,9 @@ async function groupAssign(indId) {
   // 들어간다. 묶음 제안은 원래대로 묶음 전부다(쪽 넘어간 것 포함 — 위 주석).
   const ids = gMode === "bulk" ? g.boxes.filter(b => sel.has(b)) : g.boxes;
   if (!ids.length) { gAt++; showGroup(); return; }
-  await assign(indId, ids, gMode === "bulk" ? "bulk" : undefined);
+  // **표는 `sourceOf` 한 곳이 정한다** — 여기서 `"bulk"` 를 박으면 제안을
+  // 뒤집은 것까지 동의로 찍힌다 (단추로 넣든 끌어 넣든 같은 규칙이어야 한다)
+  await assign(indId, ids);
   gAt++;
   showGroup();
 }
@@ -1488,17 +1490,34 @@ if (BC) BC.onmessage = e => {
 // 819건이 전부 `hand` 로 남았다 — 사람이 묶음 제안 화면에서 **보고 나서
 // 끌어 넣었기** 때문이다. 그러면 "어느 판정이 제안을 보고 내린 것인가" 를
 // 나중에 못 가린다. **판정에 남는 축은 그때 안 적으면 영영 못 만든다.**
-function sourceOf(explicit) {
+function sourceOf(explicit, indId) {
   if (explicit) return explicit;
   // **`gMode` 가 아니라 `BULK_PAGE` 다.** `gMode` 는 한 번 `bulk` 이 되면
   // 되돌아오는 자리가 없어서, 격자로 나와 끈 것까지 `bulk` 로 찍힌다.
   // 서버가 내리는 깃발은 **어느 화면인지**를 그대로 말한다.
-  return BULK_PAGE ? "bulk" : undefined;
+  if (!BULK_PAGE) return undefined;
+  // **제안대로 넣었나 다른 데로 넣었나를 가른다.** 묶음 제안 화면에서도
+  // 사람은 제안을 물리치고 다른 상자에 끌어 넣을 수 있다 — 그것까지 `bulk`
+  // 로 묶으면 "제안이 맞았다" 와 "제안을 뒤집었다" 가 한 칸에 들어간다.
+  //
+  // **그렇다고 일치할 때만 달면 안 된다** — 동의한 것만 남아 정답률이 100%
+  // 로 나온다. 분모가 사라지는 것이라 오늘 99.3% 를 못 믿게 된 것과 같은 꼴
+  // 이다. 그래서 **둘 다 남긴다**: `bulk / (bulk + bulk-x)` 가 곧 제안의
+  // 정답률이다.
+  const top = suggestedInd();
+  if (top == null) return "bulk-?";        // 제안이 없던 묶음
+  return indId === top ? "bulk" : "bulk-x";
+}
+
+// 지금 펼친 묶음의 1위 제안. 없으면 `null`.
+function suggestedInd() {
+  const g = (typeof GROUPS !== "undefined" && GROUPS) ? GROUPS[gAt] : null;
+  return g && g.suggest && g.suggest.length ? g.suggest[0].id : null;
 }
 
 async function assign(indId, ids, source) {
   const body = {individual: indId, boxes: ids};
-  const src = sourceOf(source);
+  const src = sourceOf(source, indId);
   if (src) body.source = src;
   const r = await post("/api/reid/assign", body);
   if (!r) return;
