@@ -455,7 +455,25 @@ class Identification(models.Model):
     # **무엇을 보고 정했나.** 군집이 보여 준 묶음에서 왔는지, 사람이 직접
     # 찾은 것인지. 나중에 "그 군집이 얼마나 맞았나" 를 이것으로 잰다
     source = models.CharField(max_length=20, default="human",
-                              help_text="human · cluster:<run> …")
+                              help_text="human · bulk · bulk-x · suggest …")
+    # **판정할 때 모델은 뭐라고 했나.** `reid_pred` 가 채운다.
+    #
+    # 이것이 없으면 "제안이 얼마나 맞나" 를 나중에 못 묻는다 — 모델이 바뀌면
+    # **그때 그 모델은 다시 못 만들기** 때문이다(블록·머리·`T` 가 다 바뀐다).
+    # 이 저장소가 `ip` 를 뒤늦게 붙여 옛 줄이 영영 빈 자리와 같은 종류다.
+    #
+    # **개체를 FK 로 안 건다.** 주고받기가 `Individual` 을 통째로 갈아 끼우는데
+    # (`import_from_reid_to_work`), FK 면 그때 무슨 일이 나는지가 한 겹 더
+    # 늘어난다. 여기 든 것은 재려고 적어 둔 값이지 관계가 아니다.
+    #
+    # **`pred_by` 가 없으면 위 둘은 못 읽는다** — 어느 모델이 한 말인지 모르면
+    # 정답률이 무엇의 정답률인지 갈리지 않는다.
+    pred = models.IntegerField(null=True, blank=True,
+                               help_text="모델의 1위 개체 id")
+    pred_p = models.FloatField(null=True, blank=True,
+                               help_text="그 확률 (온도 보정 뒤)")
+    pred_by = models.CharField(max_length=80, blank=True, default="",
+                               help_text="그 말을 한 모델 (`reid_pred` 가 적는다)")
     reviewer = models.ForeignKey(settings.AUTH_USER_MODEL,
                                  on_delete=models.PROTECT, null=True, blank=True,
                                  related_name="identifications")

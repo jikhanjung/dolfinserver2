@@ -110,6 +110,10 @@ python manage.py reid_cls --folds 5 --seeds 3   # **자를 돌려서 잰다** (�
 python manage.py reid_chips --out reid/v3 --pca 256 --pca-src emb-dinov2.npz \
     --pca-unlabeled --emb-name emb-s256-clean.npz   # **재는 자리에서는 정답을 빼고 축을 잡는다**
 python manage.py reid_cls --emb emb-s256-clean.npz --folds 5 --seeds 3 --l1 1e-5
+python manage.py reid_pred          # 판정마다 "그때 모델은 뭐라 했나" (하루 한 번)
+#   **읽을 때 셋을 가린다**: 상자별 **마지막 줄**만 · 블록이 본 정답(개체판정
+#   2,168 이하)은 자기 채점 · `source` 가 `bulk`·`suggest` 면 제안을 보고 고른 것.
+#   치우침 없는 자는 `source='hand'` 이고 그 번호를 넘는 것이다
 python manage.py reid_cls --folds 5 --seeds 3 --save-logits full.npz   # 앙상블 재료
 python manage.py reid_ensemble --logits full.npz crop.npz --each
 #   **합치는 규칙은 `reid.ens_logits` 한 곳이다** — 화면(`_score`)과 이 명령이
