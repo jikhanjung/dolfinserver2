@@ -924,10 +924,14 @@ def dataset_state(goal=None):
     for b, i in (Identification.objects.order_by("id")
                  .values_list("box_id", "individual_id")):
         last[b] = i
+    # **갈래 목록은 `Individual.UNID_KINDS` 하나를 본다** — 갈래가 늘 때마다
+    # 문자열을 여기저기 고치면 한 곳이 빠지고, 그때 그 조각이 조용히 샌다
     side_n = {"unid": 0, "hold": 0, "notfin": 0}
     for i in last.values():
         k = kind.get(i) if i else None
-        if k in side_n:
+        if k in Individual.UNID_KINDS:
+            side_n["unid"] += 1
+        elif k in side_n:
             side_n[k] += 1
 
     rows = []

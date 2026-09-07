@@ -1809,7 +1809,25 @@ class SpecialBoxTests(TestCase):
         self.assertEqual(
             sorted(Individual.objects.exclude(kind="").values_list("kind", "name")),
             [("hold", "임시보관함"), ("notfin", "지느러미 아님"),
-             ("unid", "식별 불가능")])
+             ("unid", "식별 불가능"),
+             ("unid_photo_qual", "식별 불가능 · 사진 품질"),
+             ("unid_too_smooth", "식별 불가능 · 뒷날이 밋밋")])
+        # **`unid` 갈래를 세는 자리가 목록 하나를 본다.** 갈래가 늘 때마다
+        # 문자열을 여기저기 고치면 한 곳이 빠지고, 그때 그 조각이 조용히
+        # 학습이나 성적에 든다
+        self.assertEqual(set(Individual.UNID_KINDS),
+                         {"unid", "unid_photo_qual", "unid_too_smooth"})
+
+    def test_the_new_unid_kinds_are_out_of_the_catalogue(self):
+        """**갈래를 늘려도 `catalog()` 이 안 센다.** `kind` 가 비지 않은 것을
+        통째로 빼므로 저절로 그렇게 되는데, 그것이 저절로인 것을 **재 둔다** —
+        나중에 누가 그 거르기를 갈래 목록으로 바꾸면 여기가 걸린다."""
+        from finseg.models import Identification
+        from finseg import reid
+        for kind in ("unid_photo_qual", "unid_too_smooth"):
+            ind = Individual.objects.get(kind=kind)
+            Identification.objects.create(box=self.box, individual=ind)
+            self.assertNotIn(ind.id, reid.catalog())
 
     def test_only_one_box_per_kind(self):
         """둘이 되면 어느 쪽에 넣었는지에 따라 결과가 갈리는데, **그 사실은
