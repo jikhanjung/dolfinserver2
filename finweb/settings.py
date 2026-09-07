@@ -180,7 +180,17 @@ FIN_PHOTOS = Path(os.environ.get("FIN_PHOTOS", "/srv/dolfinserver/uploads"))
 FIN_CROPS = Path(os.environ.get("FIN_CROPS", BASE_DIR / "crops"))
 # re-ID 조각 꾸러미. **격자를 갈아 끼울 수 있어야 한다** — 옛 상자에서 후보를
 # 더 뽑아 섞어 보는 일이 이 값을 바꿔 가며 도는 일이다 (`reid_chips --out`)
-FIN_REID = Path(os.environ.get("FIN_REID", BASE_DIR / "reid" / "v1"))
+#
+# **기본값이 `v1` 이던 것을 `v3` 로 옮겼다** (2026-09-07). `v1`·`v2` 는
+# 2026-08-26 에 지웠는데(`9fc484d`) 기본값만 거기 남아 있어서, 환경 변수를 안
+# 준 명령이 **없는 자리를 보고 멈추거나 조용히 빈 격자로 돌았다.** 그날 cron
+# 에 건 `reid_pred` 가 바로 그것으로 한 번 멎었다.
+# 갈아 끼우는 것은 그대로 `FIN_REID` 로 한다 — 기본값은 **지금 쓰는 격자**를
+# 가리키는 것이 맞고, 지운 자리를 가리킬 이유는 없다.
+FIN_REID = Path(os.environ.get("FIN_REID", BASE_DIR / "reid" / "v3"))
+# **시험은 이 기계의 자료를 안 본다** — 위 기본값을 옮기다 시험이 운영
+# 격자를 읽고 있던 것이 드러났다 (4.1초 → 9.7초). `finweb/testrunner.py`
+TEST_RUNNER = "finweb.testrunner.FinTestRunner"
 # DINOv3 가중치를 둔 자리. **라이선스에 동의해야 받을 수 있어** hub 가 못
 # 받아 온다 — 받아 둔 파일을 가리킨다 (`finseg/backbone.py`). NAS 를 기본으로
 # 두는 것은 형제 기계도 같은 것을 보게 하려는 것이다.
