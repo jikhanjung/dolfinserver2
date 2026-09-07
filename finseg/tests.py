@@ -326,3 +326,66 @@ class EnsLogitsTests(SimpleTestCase):
         from finseg import reid as R
         p = R.softmax(np.array([[1.0, 2, 3], [-5, 0, 5]]))
         self.assertTrue(np.allclose(p.sum(-1), 1.0))
+
+
+class SaveLogitsDayTests(SimpleTestCase):
+    """**덤프에 날이 함께 남아야 묶을 수 있다.**
+
+    묶는 단위가 (개체·날·쪽)이라 날이 없으면 `reid_ensemble --group` 이 못
+    묶는다 — 2026-09-07 에 그것 때문에 "묶어서 묻기가 앙상블에서 얼마나 버나"
+    를 못 물었다. 여기서 재는 것은 **날이 빠졌을 때 조용히 넘어가지 않는 것**
+    이다: 조용히 넘어가면 (개체) 하나로만 묶여 **다른 날 것이 한 묶음이 되고**,
+    그 수가 무엇인지 아무도 모른다.
+    """
+
+    def _dump(self, tmp, with_day=True):
+        import numpy as np
+        e = {"fold": 0, "seed": 0, "side": "left",
+             "te": np.arange(4), "y_ind": np.array([1, 1, 2, 2]),
+             "classes": np.array([1, 2]),
+             "logit": np.array([[2.0, 0], [2.0, 0], [0, 2.0], [0, 2.0]])}
+        if with_day:
+            e["day"] = np.array(["2020-01-01", "2020-01-02"] * 2)
+        f = tmp / f"lg-{'day' if with_day else 'noday'}.npz"
+        np.savez_compressed(f, entries=np.array([e], dtype=object))
+        return f
+
+    def test_grouping_stops_when_the_dump_has_no_day(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        with tempfile.TemporaryDirectory() as d:
+            f = self._dump(Path(d), with_day=False)
+            with self.assertRaises(CommandError) as cm:
+                call_command("reid_ensemble", "--logits", str(f), str(f),
+                             "--group", verbosity=0)
+            self.assertIn("day", str(cm.exception))
+
+    def test_grouping_folds_the_queries_into_cells(self):
+        """(개체·날) 이 넷이면 질의 4가 묶음 4다 — 여기서는 안 줄어든다.
+        같은 개체·같은 날이 여럿일 때 줄어드는 것이 요점이라, **줄어드는
+        쪽**도 함께 잰다."""
+        import io
+        import tempfile
+        from pathlib import Path
+
+        import numpy as np
+
+        from django.core.management import call_command
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            e = {"fold": 0, "seed": 0, "side": "left",
+                 "te": np.arange(4), "y_ind": np.array([1, 1, 2, 2]),
+                 "classes": np.array([1, 2]),
+                 "day": np.array(["2020-01-01"] * 4),      # 넷이 같은 날이다
+                 "logit": np.array([[2.0, 0], [2.0, 0], [0, 2.0], [0, 2.0]])}
+            f = tmp / "lg.npz"
+            np.savez_compressed(f, entries=np.array([e], dtype=object))
+            out = io.StringIO()
+            call_command("reid_ensemble", "--logits", str(f), str(f),
+                         "--group", stdout=out)
+            # 개체 둘 × 날 하나 = 묶음 2
+            self.assertIn("2", out.getvalue())
+            self.assertIn("묶음", out.getvalue())

@@ -218,7 +218,9 @@ class Command(BaseCommand):
                        help="폴드·씨앗마다 질의별 로짓을 npz 로 남긴다 — 두 갈래를 "
                             "따로 배워 로짓을 평균하는 **앙상블을 같은 자로 재기** "
                             "위한 것이다. 폴드 배정이 씨앗을 안 타므로 갈래끼리 "
-                            "같은 질의가 같은 줄에 선다")
+                            "같은 질의가 같은 줄에 선다. **질의의 날도 함께 "
+                            "남긴다** — 묶는 단위가 (개체·날·쪽)이라 날이 없으면 "
+                            "`reid_ensemble --group` 이 못 묶는다")
         p.add_argument("--group", action="store_true",
                        help="**묶어서 묻는다** — 같은 날·같은 쪽의 한 개체 조각을 "
                             "한 묶음으로 보고 표를 모은다. 실제 화면이 하는 일이 "
@@ -562,9 +564,16 @@ class Command(BaseCommand):
             if o.get("save_logits"):
                 # 묶기(`--group`) 전의 날것을 남긴다 — 앙상블은 질의 단위로
                 # 합친 뒤에 같은 규칙으로 묶어야 자가 하나가 된다
+                #
+                # **`day` 를 함께 남긴다.** 묶는 단위가 (개체·날·쪽)이라 날이
+                # 없으면 `reid_ensemble` 이 묶을 수가 없다 — 2026-09-07 에
+                # 그것 때문에 "묶어서 묻기가 앙상블에서 얼마나 버나" 를 못
+                # 물었다. 격자를 열어 날을 붙이는 길도 있지만 그러면 그 명령이
+                # **어느 격자로 쟀는지에 매인다.** 재는 자리에서 함께 적는다
                 o.setdefault("_dump", []).append(dict(
                     fold=o.get("_fold", -1), seed=seed, side=side,
                     te=te.copy(), y_ind=lab[te].copy(),
+                    day=np.asarray(day)[te].copy(),
                     classes=np.array(classes), logit=logit.copy()))
 
             # 기준선 — **배우는 날의 조각만** 후보로 둔다. 분류기가 본 것과

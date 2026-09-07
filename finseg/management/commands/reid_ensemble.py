@@ -13,10 +13,13 @@
 성적 셈은 `reid_cls` 와 같다: 폴드·씨앗마다 top-1/5/10 을 세고, 씨앗을 평균한
 뒤 폴드를 합친다. **질의 단위다** — 2026-09-03 의 89.2 도 그 자리의 숫자다.
 
-**묶어서 묻는 것(`--group`)은 여기서 못 한다.** 덤프가 `te`(줄번호)와 라벨은
-들고 있어도 **날을 안 들고 있어서**다 — 묶는 단위가 (개체·날·쪽)이라 날이
-없으면 묶을 수 없다. 격자를 열어 날을 붙이면 되지만, 그러면 이 명령이 어느
-격자로 쟀는지에 매이게 된다. 필요해지면 덤프에 날을 함께 남기는 쪽이 맞다.
+**묶어서 묻기(`--group`)** — 사람이 화면에서 고르는 단위가 (개체·날·쪽)이라
+그것으로 묶는다. **합친 뒤에 묶는다**: 멤버마다 묶어 놓고 합치면 표준화가
+묶음 전에 걸려 자가 갈린다.
+
+날은 `--save-logits` 가 함께 남긴다(2026-09-07부터). **그 전에 뜬 덤프에는
+날이 없고, 그때는 멈춘다** — 격자를 열어 붙이는 길도 있지만 그러면 이 명령이
+어느 격자로 쟀는지에 매인다.
 
 **멤버끼리 같은 질의가 같은 줄에 서야 한다.** 폴드 배정이 씨앗을 안 타므로
 (`reid_cls` 의 `--save-logits` 도움말) `(fold, seed, side)` 로 맞추고,
@@ -57,6 +60,11 @@ class Command(BaseCommand):
         p.add_argument("--weights", nargs="+", type=float, metavar="W",
                        help="멤버 가중치. 기본은 반반 — **지렛대가 아니다** "
                             "(실측에서 0.45~0.60 이 89.0~89.2 로 평평했다)")
+        p.add_argument("--group", action="store_true",
+                       help="**묶어서 묻는다** — 같은 (개체·날·쪽)의 질의를 한 "
+                            "묶음으로 보고 **합친 뒤에** 평균한다. 사람이 화면에서 "
+                            "고르는 단위와 같다. **낱장 성적과 나란히 놓지 말 것** "
+                            "— 분모(질의 수)가 달라지고 묶음 쪽이 문제 자체가 쉽다")
         p.add_argument("--each", action="store_true",
                        help="멤버 단독 성적도 함께 낸다 — 앙상블이 무엇을 "
                             "보탰는지 보려면 그 줄이 있어야 한다")
@@ -96,7 +104,10 @@ class Command(BaseCommand):
         for f in paths:
             w(f"  {f}")
 
-        w(f"\n{'':<10}{'질의':>7}{'top-1':>8}{'top-5':>8}{'top-10':>8}{'씨앗폭':>8}")
+        if o["group"]:
+            w("  **묶어서 묻는다** — 합친 뒤에 (개체·날)으로 묶는다."
+              " 질의 수가 줄므로 낱장 성적과 나란히 놓지 말 것")
+        w(f"\n{'':<10}{'질의' if not o['group'] else '묶음':>7}{'top-1':>8}{'top-5':>8}{'top-10':>8}{'씨앗폭':>8}")
         for name, sel in lanes:
             ws = None
             if o["weights"] and len(sel) > 1:
@@ -109,6 +120,17 @@ class Command(BaseCommand):
                 logit = R.ens_logits([mem[i][kk]["logit"] for i in sel], ws)
                 classes = list(e0["classes"])
                 y = np.array([classes.index(int(v)) for v in e0["y_ind"]])
+                if o["group"]:
+                    if "day" not in e0:
+                        raise CommandError(
+                            "덤프에 `day` 가 없다 — 2026-09-07 이전에 뜬 것이다. "
+                            "`--save-logits` 를 다시 돌려야 묶을 수 있다")
+                    cells = {}
+                    for r, (yy, dd) in enumerate(zip(e0["y_ind"], e0["day"])):
+                        cells.setdefault((int(yy), str(dd)), []).append(r)
+                    idx = sorted(cells)
+                    logit = np.stack([logit[cells[c]].mean(0) for c in idx])
+                    y = np.array([classes.index(c[0]) for c in idx])
                 h = _hits(logit, y)
                 s = by_seed.setdefault(kk[1], [0, 0, 0, 0])
                 for j in range(3):
