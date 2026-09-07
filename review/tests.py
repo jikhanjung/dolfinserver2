@@ -2759,3 +2759,59 @@ class EnsembleMembersTests(TestCase):
             with self.assertLogs("review.views", level="WARNING"):
                 got = V._members(root, ids)
             self.assertEqual(len(got), 1)
+
+
+class ReidPoolCacheTests(TestCase):
+    """**격자를 요청마다 다시 읽지 않되, 갈아 끼우면 저절로 켜진다.**
+
+    임베딩 세 벌이 105MB 라 읽는 데 1.1초가 든다 — 조각에 머무를 때마다 그
+    값을 물던 것이다. 그렇다고 그냥 캐시하면 **멤버 파일을 넣어도 안 켜진다**:
+    재배포 없이 켜지는 것이 이 구조의 값인데(`deploy/README`), 실제로 앙상블을
+    그렇게 켰다. 그래서 파일의 (크기·mtime) 으로 열쇠를 만든다.
+    """
+
+    def setUp(self):
+        import numpy as np
+        self.tmp = Path(tempfile.mkdtemp())
+        ids = np.array([1, 2, 3], dtype=np.int64)
+        (self.tmp / "items.json").write_text(json.dumps({"n": 3, "items": [
+            {"id": int(b), "day": "2020-01-01", "facing": "left"} for b in ids]}))
+        np.savez(self.tmp / "emb-dinov2.npz", box_id=ids,
+                 emb=np.eye(3, 4, dtype=np.float32))
+        np.savez(self.tmp / "cls-dinov2.npz",
+                 left_W=np.zeros((2, 4), dtype=np.float32),
+                 left_b=np.zeros(2, dtype=np.float32),
+                 left_cls=np.array([1, 2], dtype=np.int64),
+                 n_labeled=np.array([3]))
+
+    def test_it_reads_once_and_then_reuses(self):
+        from review import views as V
+        with self.settings(FIN_REID=self.tmp):
+            a = V._reid_pool()
+            b = V._reid_pool()
+        self.assertIs(a, b)          # 같은 객체 — 다시 안 읽었다
+
+    def test_swapping_a_member_file_takes_effect_without_a_redeploy(self):
+        """**이것이 깨지면 파일을 넣어도 안 켜진다.**"""
+        import time
+
+        from review import views as V
+        with self.settings(FIN_REID=self.tmp):
+            a = V._reid_pool()
+            time.sleep(0.01)
+            (self.tmp / "ensemble.json").write_text(json.dumps({"members": [
+                {"emb": "emb-dinov2.npz", "cls": "cls-dinov2.npz", "w": 1}],
+                "T": 0.65}))
+            b = V._reid_pool()
+        self.assertIsNot(a, b)       # 명단이 생겼으니 다시 읽었다
+
+    def test_a_different_grid_is_a_different_pool(self):
+        """`FIN_REID` 가 다르면 열쇠도 다르다 — 시험 자리와 운영이 섞이지 않는다."""
+        from review import views as V
+        with self.settings(FIN_REID=self.tmp):
+            a = V._reid_pool()
+        other = Path(tempfile.mkdtemp())
+        (other / "items.json").write_text('{"n": 0, "items": []}')
+        with self.settings(FIN_REID=other):
+            b = V._reid_pool()
+        self.assertIsNot(a, b)

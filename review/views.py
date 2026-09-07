@@ -16,6 +16,7 @@ SAM2 는 그 안의 것 하나를 딸 뿐이라, 사람이 하는 일은 틀린 
 import json
 import logging
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -747,7 +748,62 @@ def reid_box(request):
                          "nick": ind.nickname, "made": made})
 
 
+# **격자를 요청마다 다시 읽지 않는다.** 임베딩 세 벌이 105MB 라 읽고 정규화하는
+# 데만 0.68초, 통째로 1.1초가 든다 — 조각에 머무를 때마다, 우클릭할 때마다 그
+# 값을 물던 것이다(2026-09-07 에 재서 알았다).
+#
+# **그런데 "요청마다 새로 읽는다" 는 성질 자체는 지켜야 한다** — 멤버 파일과
+# `ensemble.json` 을 격자에 넣으면 **재배포 없이 켜지는 것**이 이 구조의 값이고
+# (`deploy/README` 가 `items.json` 에 대해 적어 둔 것과 같다), 실제로 앙상블을
+# 그렇게 켰다. 그래서 **파일의 (크기·mtime) 으로 열쇠를 만든다** — 갈아 끼우면
+# 열쇠가 달라져 저절로 다시 읽고, 안 바뀌면 안 읽는다.
+#
+# 캐시는 **일꾼마다 하나**다(gunicorn `--workers 2`) — 105MB × 2 로 약 210MB.
+# GCP 는 3.9GB 에 2.9GB 가 남아 있어 넉넉하다. 멤버를 더 얹거나 일꾼을
+# 늘릴 때 이 곱을 다시 볼 것.
+_POOL_LOCK = threading.Lock()
+_POOL = {"key": None, "val": None}
+
+
+def _pool_key(root):
+    """격자를 이루는 파일들의 (이름·크기·mtime). 하나라도 바뀌면 달라진다."""
+    import json as _json
+
+    names = ["items.json", "ensemble.json", "emb-dinov2.npz", "emb.npz",
+             "cls-dinov2.npz"]
+    f = root / "ensemble.json"
+    if f.exists():
+        try:
+            for m in _json.loads(f.read_text()).get("members", []):
+                names += [m.get("emb", ""), m.get("cls", "")]
+        except Exception:
+            pass                      # 깨졌으면 `_members` 가 말한다
+    out = []
+    for n in names:
+        if not n:
+            continue
+        p = root / n
+        try:
+            s = p.stat()
+            out.append((n, s.st_size, s.st_mtime_ns))
+        except OSError:
+            out.append((n, None, None))
+    return (str(root), tuple(out))
+
+
 def _reid_pool():
+    root = Path(settings.FIN_REID)
+    key = _pool_key(root)
+    with _POOL_LOCK:
+        if _POOL["key"] == key:
+            return _POOL["val"]
+    val = _build_reid_pool()
+    with _POOL_LOCK:
+        _POOL["key"], _POOL["val"] = key, val
+    return val
+
+
+def _build_reid_pool():
     """격자의 조각들과 그것을 묶는 데 필요한 축들. **자료를 읽는 자리는 여기 하나**."""
     import numpy as np
 
