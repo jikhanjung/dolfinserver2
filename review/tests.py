@@ -1818,6 +1818,29 @@ class SpecialBoxTests(TestCase):
         self.assertEqual(set(Individual.UNID_KINDS),
                          {"unid", "unid_photo_qual", "unid_too_smooth"})
 
+    def test_the_unid_boxes_sit_at_the_end_of_the_list(self):
+        """**`식별 불가능` 갈래는 위 고정칸이 아니라 목록 맨 끝이다.**
+
+        위 고정칸은 **판단이 남은 자리**(보류 · 되돌려 보낼 것)이고 이것은
+        판단이 **끝난 통**이라 늘 닿아 있을 이유가 없다 — `unid` 를 만들 때
+        정한 것이고, 갈래가 둘 더 늘어도 같다.
+
+        그리고 **갈래 목록은 서버가 준다** — 화면이 `"unid"` 를 박아 두면
+        갈래가 늘 때 한쪽만 고쳐진다(2026-09-07 에 실제로 두 자리를 찾아
+        고쳐야 했다).
+        """
+        with self.settings(FIN_REID=self.tmp, FIN_ROLE="reid",
+                           ROOT_URLCONF="review.tests"):
+            html = self.client.get("/reid").content.decode()
+        self.assertIn("const UNID_KINDS = ", html)
+        self.assertIn('"unid_photo_qual"', html)
+        self.assertIn('"unid_too_smooth"', html)
+        # 위 고정칸에서 빠지고, 목록 맨 끝에 붙는다
+        self.assertIn("b.hold && !isUnid(b)", html)
+        self.assertIn("BOXES.filter(isUnid)", html)
+        # **화면이 갈래를 제 손으로 적지 않는다**
+        self.assertNotIn('b.kind === "unid"', html)
+
     def test_the_new_unid_kinds_are_out_of_the_catalogue(self):
         """**갈래를 늘려도 `catalog()` 이 안 센다.** `kind` 가 비지 않은 것을
         통째로 빼므로 저절로 그렇게 되는데, 그것이 저절로인 것을 **재 둔다** —

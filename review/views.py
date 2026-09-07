@@ -531,6 +531,10 @@ def reid(request):
         "reid_dir": str(settings.FIN_REID),
         "ready": ready,
         "notfin_names": json.dumps(dict(CLASSES), ensure_ascii=False),
+        # **갈래 목록은 파이썬이 주인이다** (`Individual.UNID_KINDS`).
+        # 화면이 `"unid"` 를 박아 두면 갈래가 늘 때 한쪽만 고쳐진다 —
+        # 2026-09-07 에 둘을 더하며 실제로 두 자리를 찾아 고쳐야 했다
+        "unid_kinds": json.dumps(list(Individual.UNID_KINDS)),
         "items": json.dumps(items, ensure_ascii=False),
         "boxes": json.dumps(boxes, ensure_ascii=False),
         "n_items": len(items),
