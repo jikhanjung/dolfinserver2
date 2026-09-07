@@ -1148,7 +1148,9 @@ function menuSuggest(ids, m) {
     // **누르면 바로 넣는다.** 제안을 보고 다시 끌어야 하면 판단 한 번이
     // 저장 한 번이 안 된다 — `TODOs` 가 그것을 남은 일로 적어 두었다
     wrap.querySelectorAll(".sugrow").forEach(b => {
-      b.onclick = () => { hideMenu(); assign(+b.dataset.ind, ids); };
+      // **제안을 눌러 넣은 것**이라 갈래를 남긴다 — 끌어 넣은 것과 이것의
+      // 정답률이 갈리는지가 뒤에 물을 것이다
+      b.onclick = () => { hideMenu(); assign(+b.dataset.ind, ids, "suggest"); };
     });
     // 칸이 늘었으니 화면 밖으로 나갔을 수 있다
     const r = m.getBoundingClientRect();
@@ -1482,9 +1484,22 @@ if (BC) BC.onmessage = e => {
   }
 };
 
+// **표는 단추가 아니라 화면에 단다.** `groupAssign` 만 `bulk` 을 달던 때,
+// 819건이 전부 `hand` 로 남았다 — 사람이 묶음 제안 화면에서 **보고 나서
+// 끌어 넣었기** 때문이다. 그러면 "어느 판정이 제안을 보고 내린 것인가" 를
+// 나중에 못 가린다. **판정에 남는 축은 그때 안 적으면 영영 못 만든다.**
+function sourceOf(explicit) {
+  if (explicit) return explicit;
+  // **`gMode` 가 아니라 `BULK_PAGE` 다.** `gMode` 는 한 번 `bulk` 이 되면
+  // 되돌아오는 자리가 없어서, 격자로 나와 끈 것까지 `bulk` 로 찍힌다.
+  // 서버가 내리는 깃발은 **어느 화면인지**를 그대로 말한다.
+  return BULK_PAGE ? "bulk" : undefined;
+}
+
 async function assign(indId, ids, source) {
   const body = {individual: indId, boxes: ids};
-  if (source) body.source = source;
+  const src = sourceOf(source);
+  if (src) body.source = src;
   const r = await post("/api/reid/assign", body);
   if (!r) return;
   ids.forEach(id => { if (byId[id]) byId[id].in = indId; });
