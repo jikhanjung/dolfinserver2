@@ -77,6 +77,17 @@ cd /srv/dolfinserver2-test && docker compose up -d
 curl -s http://m710q:8086/healthz | python3 -m json.tool
 ```
 
+### 주고받기가 스키마를 함께 본다 — **한쪽만 마이그레이션하면 깨진다**
+
+`import_from_reid_to_work` 는 칸 목록을 **받는 쪽(m710q)** 에서 뽑아
+`select <칸들> from src` 를 한다. 그래서 **m710q 에만 새 칸이 있으면 다음
+회차가 `no such column` 으로 죽는다.** 2026-09-07 에 `Identification.pred` 를
+더하면서 걸릴 뻔했고, 그날 GCP 를 함께 올려 막았다.
+
+**개체·개체판정 테이블을 건드리는 마이그레이션은 두 자리에 함께 올린다.**
+그리고 그 테이블에 **m710q 에서 쓴 값은 아침마다 지워진다** — 되받기가
+`delete` 하고 GCP 것으로 채운다. 거기 채워야 할 값은 GCP 에서 채운다.
+
 ## 격자(`reid/<판>`)를 GCP 와 맞추기
 
 두 자리가 **같은 격자를 봐야 한다** — 조각·임베딩·분류기가 전부 `items.json` 의

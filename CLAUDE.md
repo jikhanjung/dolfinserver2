@@ -110,7 +110,9 @@ python manage.py reid_cls --folds 5 --seeds 3   # **자를 돌려서 잰다** (�
 python manage.py reid_chips --out reid/v3 --pca 256 --pca-src emb-dinov2.npz \
     --pca-unlabeled --emb-name emb-s256-clean.npz   # **재는 자리에서는 정답을 빼고 축을 잡는다**
 python manage.py reid_cls --emb emb-s256-clean.npz --folds 5 --seeds 3 --l1 1e-5
-python manage.py reid_pred          # 판정마다 "그때 모델은 뭐라 했나" (하루 한 번)
+python manage.py reid_pred          # 판정마다 "그때 모델은 뭐라 했나"
+#   **GCP 에서 돈다** (21:00 UTC · 주고받기 직전). `Identification` 의 주인이
+#   거기라, m710q 에서 채워도 **다음 되받기에 통째로 지워진다**
 #   **읽을 때 셋을 가린다**: 상자별 **마지막 줄**만 · 블록이 본 정답(개체판정
 #   2,168 이하)은 자기 채점 · `source` 가 `bulk`·`suggest` 면 제안을 보고 고른 것.
 #   치우침 없는 자는 `source='hand'` 이고 그 번호를 넘는 것이다
